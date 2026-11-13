@@ -941,12 +941,43 @@
     applyAccent();
     registerCustomWorkouts();
   }
+  const LOCAL_ACCOUNTS_KEY = 'localAccounts';
+  function readLocalAccounts() {
+    try { return JSON.parse(localStorage[LOCAL_ACCOUNTS_KEY] || '{}'); } catch { return {}; }
+  }
+  function writeLocalAccounts(obj) {
+    localStorage[LOCAL_ACCOUNTS_KEY] = JSON.stringify(obj);
+  }
+  function isLocalToken(tok) {
+    return typeof tok === 'string' && tok.startsWith('local:');
+  }
+  async function hashLocalPass(user, pass) {
+    const raw = user.toLowerCase() + ':' + pass;
+    if (window.crypto && crypto.subtle) {
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
+      return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+    let h = 0;
+    for (let i = 0; i < raw.length; i++) h = ((h << 5) - h + raw.charCodeAt(i)) | 0;
+    return 'h' + (h >>> 0).toString(16);
+  }
   let cloudSyncTimer = null;
   async function pushCloudSync() {
     const tok = localStorage.userToken;
     if (!tok) return false;
+    if (isLocalToken(tok)) {
+      const uname = tok.slice(6).toLowerCase();
+      const accs = readLocalAccounts();
+      if (!accs[uname]) return false;
+      const ts = Date.now();
+      accs[uname].state = collectLocalState();
+      accs[uname].updatedAt = ts;
+      writeLocalAccounts(accs);
+      localStorage.cloudSyncTs = String(ts);
+      return true;
+    }
     try {
-      const r = await fetch('/api/user/sync', {
+      const r = await fetch('api/user/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
         body: JSON.stringify({ state: collectLocalState() })
@@ -964,8 +995,26 @@
   async function pullCloudSync(force) {
     const tok = localStorage.userToken;
     if (!tok) return false;
+    if (isLocalToken(tok)) {
+      const uname = tok.slice(6).toLowerCase();
+      const accs = readLocalAccounts();
+      const acc = accs[uname];
+      if (!acc) {
+        localStorage.removeItem('userToken');
+        return false;
+      }
+      localStorage.userName = acc.username || uname;
+      const srvTs = +(acc.updatedAt || 0);
+      const locTs = +(localStorage.cloudSyncTs || 0);
+      if (srvTs > 0 && (force || srvTs > locTs) && acc.state && Object.keys(acc.state).length) {
+        applyServerState(acc.state, srvTs);
+        render();
+        return true;
+      }
+      return true;
+    }
     try {
-      const r = await fetch('/api/user/sync', { headers: { 'Authorization': 'Bearer ' + tok } });
+      const r = await fetch('api/user/sync', { headers: { 'Authorization': 'Bearer ' + tok } });
       if (r.status === 401) {
         localStorage.removeItem('userToken');
         return false;
@@ -3050,10 +3099,55 @@
             const password = bd.querySelector('#ca-pass').value;
             const errEl = bd.querySelector('#ca-err');
             errEl.textContent = '';
+            if (!/^[a-zA-Z0-9_]{3,24}$/.test(username)) {
+              errEl.textContent = L == 'ru' ? 'Логин: 3–24 символа (латиница, цифры, _)' : 'Username: 3-24 chars (a-z, 0-9, _)';
+              return;
+            }
+            if (password.length < 6) {
+              errEl.textContent = L == 'ru' ? 'Пароль должен быть не короче 6 символов' : 'Password must be at least 6 characters';
+              return;
+            }
+            const finishLocalAuth = async () => {
+              const key = username.toLowerCase();
+              const accs = readLocalAccounts();
+              const passHash = await hashLocalPass(key, password);
+              if (isReg) {
+                if (accs[key]) {
+                  errEl.textContent = L == 'ru' ? 'Такой логин уже есть на этом устройстве' : 'Username already exists on this device';
+                  return;
+                }
+                const ts = Date.now();
+                accs[key] = { username, passHash, state: collectLocalState(), updatedAt: ts };
+                writeLocalAccounts(accs);
+                localStorage.cloudSyncTs = String(ts);
+              } else {
+                const acc = accs[key];
+                if (!acc) {
+                  errEl.textContent = L == 'ru' ? 'Профиль не найден. Переключитесь на «Регистрация».' : 'Profile not found. Switch to Register.';
+                  return;
+                }
+                if (acc.passHash !== passHash) {
+                  errEl.textContent = L == 'ru' ? 'Неверный пароль' : 'Wrong password';
+                  return;
+                }
+                if (acc.state && Object.keys(acc.state).length) applyServerState(acc.state, acc.updatedAt);
+              }
+              localStorage.userToken = 'local:' + key;
+              localStorage.userName = accs[key].username;
+              vib(35);
+              bd.remove();
+              render();
+              showAppToast(CFG.brand || 'FLEXA', L == 'ru' ? 'Локальный профиль подключён' : 'Local profile connected');
+            };
             try {
-              const endpoint = isReg ? '/api/user/register' : '/api/user/login';
+              const endpoint = isReg ? 'api/user/register' : 'api/user/login';
               const body = isReg ? { username, password, state: collectLocalState() } : { username, password };
               const r = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+              const ct = r.headers.get('content-type') || '';
+              if (!ct.includes('application/json')) {
+                await finishLocalAuth();
+                return;
+              }
               const j = await r.json();
               if (!r.ok) { errEl.textContent = j.error || 'Error'; return; }
               localStorage.userToken = j.token;
@@ -3065,7 +3159,7 @@
               render();
               showAppToast(CFG.brand || 'FLEXA', L == 'ru' ? 'Синхронизация подключена' : 'Cloud sync connected');
             } catch (e) {
-              errEl.textContent = L == 'ru' ? 'Нет связи с сервером' : 'Server unreachable';
+              await finishLocalAuth();
             }
           };
         };
@@ -3077,15 +3171,19 @@
       if (cloudSyncBtn) cloudSyncBtn.onclick = async () => {
         vib(20);
         cloudSyncBtn.disabled = true;
+        const tok = localStorage.userToken;
         const okPush = await pushCloudSync();
-        if (okPush) showAppToast(CFG.brand || 'FLEXA', L == 'ru' ? 'Данные сохранены в базе сервера' : 'Synced to server DB');
+        if (okPush) showAppToast(CFG.brand || 'FLEXA', isLocalToken(tok)
+          ? (L == 'ru' ? 'Профиль сохранён на устройстве' : 'Profile saved on device')
+          : (L == 'ru' ? 'Данные сохранены в базе сервера' : 'Synced to server DB'));
         render();
       };
       const cloudLogoutBtn = document.getElementById('cloud-logout-btn');
       if (cloudLogoutBtn) cloudLogoutBtn.onclick = async () => {
         vib(20);
         const tok = localStorage.userToken;
-        if (tok) fetch('/api/user/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + tok } }).catch(() => {});
+        if (tok && isLocalToken(tok)) await pushCloudSync();
+        else if (tok) fetch('api/user/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + tok } }).catch(() => {});
         localStorage.removeItem('userToken');
         localStorage.removeItem('userName');
         localStorage.removeItem('cloudSyncTs');
