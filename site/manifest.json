@@ -1,0 +1,18 @@
+{
+  "name": "Flexa — Тренировки и калистеника",
+  "short_name": "Flexa",
+  "description": "Программы, тренировки, конструктор и база упражнений",
+  "start_url": "./#/",
+  "display": "standalone",
+  "background_color": "#0F1218",
+  "theme_color": "#0F1218",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "img/logo.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

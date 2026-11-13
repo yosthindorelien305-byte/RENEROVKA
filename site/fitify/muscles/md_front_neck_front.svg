@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 175 330" fill="none">
+  <!-- md_front_neck_front -->
+  <g id="md_front_neck_front" fill="#00e699">
+    <path d="M78.361,41.113l6.933,13.11l0,6.388l-6.933,-13.028z" />
+    <path d="M87.047,43.787l-3.488,0l1.669,5.839l1.998,3.888z" />
+    <path d="M87.089,43.787l3.581,0l-1.669,5.839l-1.799,3.749z" />
+    <path d="M95.869,41.113l-6.933,13.11l-0,6.388l6.933,-13.028z" />
+  </g>
+</svg>

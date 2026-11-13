@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0d1614">
+<title>Fitify — Видео база упражнений и тренировок</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0c1412;
+  --surface: #14211e;
+  --surface-2: #1b2e2a;
+  --border: rgba(255, 255, 255, 0.08);
+  --accent: #00e699;
+  --accent-glow: rgba(0, 230, 153, 0.25);
+  --text: #f0fdf4;
+  --text-muted: #94a3b8;
+  --card-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --radius: 16px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif; }
+body { background: var(--bg); color: var(--text); min-height: 100vh; padding-bottom: 60px; -webkit-tap-highlight-color: transparent; }
+
+/* Top Header */
+header {
+  position: sticky; top: 0; z-index: 40;
+  background: rgba(12, 20, 18, 0.92);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 20px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+}
+.brand-group { display: flex; align-items: center; gap: 12px; }
+.logo-badge {
+  background: linear-gradient(135deg, #00e699, #059669);
+  color: #052e16; font-weight: 900; font-size: 15px;
+  padding: 6px 12px; border-radius: 10px; display: flex; align-items: center; gap: 6px;
+  box-shadow: 0 4px 14px var(--accent-glow);
+}
+.back-btn {
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 8px 14px; font-size: 13px; font-weight: 600; text-decoration: none;
+  display: inline-flex; align-items: center; gap: 6px; transition: 0.2s;
+}
+.back-btn:hover { background: rgba(255,255,255,0.12); }
+
+/* Hero Section */
+.hero {
+  padding: 24px 20px 16px;
+  max-width: 1200px; margin: 0 auto;
+}
+.hero-title { font-size: 26px; font-weight: 800; line-height: 1.2; margin-bottom: 6px; }
+.hero-title span { color: var(--accent); }
+.hero-desc { color: var(--text-muted); font-size: 14px; margin-bottom: 16px; line-height: 1.5; }
+
+.stats-row {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px; margin-bottom: 20px;
+}
+.stat-box {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 12px 14px; text-align: left;
+}
+.stat-val { font-size: 20px; font-weight: 800; color: var(--accent); }
+.stat-lbl { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+
+/* Quick Action Banner */
+.action-banner {
+  background: linear-gradient(135deg, #133a30, #0d2822);
+  border: 1px solid rgba(0, 230, 153, 0.3); border-radius: var(--radius);
+  padding: 16px 20px; margin-bottom: 20px;
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+}
+.action-banner h3 { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+.action-banner p { font-size: 13px; color: #a7f3d0; }
+.btn-primary {
+  background: var(--accent); color: #042f2e; border: none; font-weight: 800; font-size: 14px;
+  padding: 10px 18px; border-radius: 10px; cursor: pointer; transition: 0.2s;
+  display: inline-flex; align-items: center; gap: 8px;
+  box-shadow: 0 4px 16px var(--accent-glow);
+}
+.btn-primary:hover { transform: translateY(-1px); filter: brightness(1.1); }
+
+/* Filter Tabs & Search */
+.controls-wrap { max-width: 1200px; margin: 0 auto; padding: 0 20px 16px; }
+.search-input {
+  width: 100%; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 12px 16px; color: #fff; font-size: 14px;
+  outline: none; margin-bottom: 12px; transition: 0.2s;
+}
+.search-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+
+.chips-scroll {
+  display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px;
+  scrollbar-width: none; -ms-overflow-style: none;
+}
+.chips-scroll::-webkit-scrollbar { display: none; }
+.chip {
+  background: var(--surface); color: var(--text-muted); border: 1px solid var(--border);
+  padding: 8px 14px; border-radius: 20px; font-size: 13px; font-weight: 600;
+  white-space: nowrap; cursor: pointer; transition: 0.2s;
+}
+.chip.active, .chip:hover {
+  background: var(--accent); color: #042f2e; border-color: var(--accent); font-weight: 700;
+}
+
+/* Exercises Grid */
+.grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px; max-width: 1200px; margin: 0 auto; padding: 0 20px;
+}
+.ex-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden; cursor: pointer;
+  transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+  display: flex; flex-direction: column;
+}
+.ex-card:hover {
+  transform: translateY(-3px); border-color: rgba(0, 230, 153, 0.4);
+  box-shadow: var(--card-shadow);
+}
+.thumb-wrap {
+  position: relative; width: 100%; aspect-ratio: 16/9; background: #000;
+  overflow: hidden;
+}
+.thumb-wrap img {
+  width: 100%; height: 100%; object-fit: cover; transition: transform 0.3s;
+}
+.ex-card:hover .thumb-wrap img { transform: scale(1.04); }
+.play-badge {
+  position: absolute; bottom: 8px; right: 8px;
+  background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(4px);
+  color: #fff; font-size: 11px; font-weight: 700;
+  padding: 4px 8px; border-radius: 6px; display: flex; align-items: center; gap: 4px;
+}
+.play-badge span { color: var(--accent); }
+.card-content { padding: 14px; display: flex; flex-direction: column; flex-grow: 1; }
+.card-title-ru { font-size: 15px; font-weight: 700; line-height: 1.3; margin-bottom: 2px; }
+.card-title-en { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
+.card-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; }
+.card-tag {
+  background: var(--surface-2); color: #a7f3d0; font-size: 11px;
+  font-weight: 600; padding: 3px 8px; border-radius: 6px;
+}
+
+/* Modal Player */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(12px);
+  display: none; align-items: center; justify-content: center; padding: 16px;
+}
+.modal-overlay.open { display: flex; }
+.modal-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 20px; width: 100%; max-width: 640px; max-height: 92vh;
+  display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6); animation: popIn 0.25s ease-out;
+}
+@keyframes popIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+
+.modal-header {
+  padding: 14px 18px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.modal-title-box h3 { font-size: 17px; font-weight: 800; }
+.modal-title-box p { font-size: 12px; color: var(--text-muted); }
+.close-btn {
+  background: var(--surface-2); border: none; color: #fff;
+  width: 32px; height: 32px; border-radius: 50%; font-size: 16px;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+
+.modal-body { overflow-y: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; }
+
+/* Video Player Container */
+.video-box {
+  width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px;
+  overflow: hidden; position: relative; border: 1px solid var(--border);
+}
+.video-box video { width: 100%; height: 100%; object-fit: contain; }
+
+/* Audio & Timer Controls */
+.controls-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+}
+.timer-display {
+  font-size: 28px; font-weight: 900; color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.action-buttons { display: flex; gap: 8px; }
+.action-btn {
+  background: var(--surface-2); border: 1px solid var(--border); color: #fff;
+  padding: 8px 14px; border-radius: 10px; font-size: 13px; font-weight: 600;
+  cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: 0.2s;
+}
+.action-btn:hover { background: rgba(255,255,255,0.12); }
+.action-btn.active { background: var(--accent); color: #042f2e; border-color: var(--accent); }
+
+/* Muscles Breakdown */
+.muscles-box {
+  background: var(--surface-2); border-radius: 12px; padding: 14px;
+}
+.muscles-box h4 { font-size: 13px; font-weight: 700; margin-bottom: 10px; color: #a7f3d0; }
+.muscle-meters { display: flex; flex-direction: column; gap: 8px; }
+.meter-row { display: flex; align-items: center; justify-content: space-between; font-size: 12px; }
+.meter-bar-wrap { width: 120px; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden; }
+.meter-bar { height: 100%; background: var(--accent); border-radius: 3px; }
+
+/* Navigation buttons in modal */
+.modal-nav {
+  padding: 12px 18px; border-top: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.nav-btn {
+  background: var(--surface-2); border: 1px solid var(--border); color: #fff;
+  padding: 10px 16px; border-radius: 10px; font-size: 13px; font-weight: 700;
+  cursor: pointer; flex: 1; text-align: center;
+}
+.nav-btn.primary { background: var(--accent); color: #042f2e; border-color: var(--accent); }
+
+/* Workout Overlay / Runner */
+.runner-overlay {
+  position: fixed; inset: 0; z-index: 60; background: #060e0c;
+  display: none; flex-direction: column; padding: 20px;
+}
+.runner-overlay.active { display: flex; }
+.runner-header {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;
+}
+.runner-progress {
+  font-size: 14px; font-weight: 700; color: var(--accent);
+}
+.runner-content {
+  flex-grow: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  max-width: 600px; margin: 0 auto; width: 100%;
+}
+.runner-video {
+  width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 16px;
+  overflow: hidden; margin-bottom: 16px; box-shadow: 0 12px 30px rgba(0,0,0,0.5);
+}
+.runner-timer {
+  font-size: 64px; font-weight: 900; color: #fff; margin-bottom: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.runner-name { font-size: 22px; font-weight: 800; text-align: center; margin-bottom: 4px; }
+.runner-sub { font-size: 14px; color: var(--text-muted); margin-bottom: 20px; }
+.runner-controls { display: flex; gap: 12px; width: 100%; }
+.runner-controls button { flex: 1; padding: 14px; font-size: 15px; border-radius: 12px; font-weight: 800; cursor: pointer; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand-group">
+    <div class="logo-badge">⚡ FITIFY</div>
+    <span style="font-size: 14px; font-weight: 700;">Bodyweight Library</span>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;">
+    <a class="back-btn" href="muscles.html" style="background:linear-gradient(135deg,#00e699,#059669);color:#042f2e;border:none;">🧍 Силуэт мышц</a>
+    <a class="back-btn" href="../index.html">← Во Flexa</a>
+  </div>
+</header>
+
+<div class="hero">
+  <h1 class="hero-title">Распакованные материалы <span>Fitify Workouts</span></h1>
+  <p class="hero-desc">
+    268 полных циклических HD-видео упражнений, студийная озвучка тренера ElevenLabs, целевые мышечные карты и таймеры. Запускайте любое упражнение или включите готовый тренировочный комплекс!
+  </p>
+
+  <div class="stats-row">
+    <div class="stat-box">
+      <div class="stat-val" id="stat-videos">268</div>
+      <div class="stat-lbl">HD-видео MP4</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-val" id="stat-audio">268</div>
+      <div class="stat-lbl">Озвучка ElevenLabs</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-val" id="stat-posters">270</div>
+      <div class="stat-lbl">WebP постеров</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-val">100%</div>
+      <div class="stat-lbl">Автономная работа</div>
+    </div>
+  </div>
+
+  <div class="action-banner">
+    <div>
+      <h3>⚡ Запустить экспресс-тренировку Fitify</h3>
+      <p>5 упражнений по 30 секунд с видео-петлями, голосом тренера и автоматическим таймером</p>
+    </div>
+    <button class="btn-primary" onclick="startCircuitWorkout()">▶ Начать тренировку</button>
+  </div>
+</div>
+
+<div class="controls-wrap">
+  <input type="text" id="searchInput" class="search-input" placeholder="🔍 Поиск упражнения (планка, приседания, отжимания, plank, squat...)" oninput="filterCatalog()">
+  
+  <div class="chips-scroll" id="chipsScroll">
+    <button class="chip active" onclick="setCategory('all', this)">Все (268)</button>
+    <button class="chip" onclick="setCategory('core', this)">🔥 Пресс и Кор</button>
+    <button class="chip" onclick="setCategory('legs', this)">🦵 Ноги и Ягодицы</button>
+    <button class="chip" onclick="setCategory('upper', this)">💪 Руки и Грудь</button>
+    <button class="chip" onclick="setCategory('back', this)">🏋️ Спина и Плечи</button>
+    <button class="chip" onclick="setCategory('cardio', this)">⚡ Кардио и HIIT</button>
+  </div>
+</div>
+
+<div class="grid" id="exercisesGrid">
+  <!-- Filled dynamically by JavaScript -->
+</div>
+
+<!-- Modal Player -->
+<div class="modal-overlay" id="modalOverlay" onclick="handleOverlayClick(event)">
+  <div class="modal-card">
+    <div class="modal-header">
+      <div class="modal-title-box">
+        <h3 id="modalTitleRu">Упражнение</h3>
+        <p id="modalTitleEn">Exercise title</p>
+      </div>
+      <button class="close-btn" onclick="closeModal()">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="video-box">
+        <video id="modalVideo" autoplay loop muted playsinline poster=""></video>
+      </div>
+
+      <div class="controls-row">
+        <div class="timer-display" id="modalTimer">00:30</div>
+        <div class="action-buttons">
+          <button class="action-btn" id="voiceBtn" onclick="playVoiceCoach()">🎙️ Озвучить</button>
+          <button class="action-btn active" id="timerToggleBtn" onclick="toggleTimer()">▶ Старт</button>
+          <button class="action-btn" onclick="resetTimer()">↺ Сброс</button>
+        </div>
+      </div>
+
+      <div class="muscles-box">
+        <h4>Целевые группы мышц:</h4>
+        <div class="muscle-meters" id="modalMuscles">
+          <!-- Muscle bars -->
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-nav">
+      <button class="nav-btn" onclick="navigateModal(-1)">← Предыдущее</button>
+      <button class="nav-btn primary" onclick="navigateModal(1)">Следующее →</button>
+    </div>
+  </div>
+</div>
+
+<!-- Circuit Runner Screen -->
+<div class="runner-overlay" id="runnerOverlay">
+  <div class="runner-header">
+    <div class="logo-badge">⚡ ТРЕНИРОВКА FITIFY</div>
+    <div class="runner-progress" id="runnerProgress">Упражнение 1 из 5</div>
+    <button class="close-btn" onclick="stopCircuitWorkout()">✕</button>
+  </div>
+
+  <div class="runner-content">
+    <div class="runner-video">
+      <video id="runnerVideo" autoplay loop muted playsinline></video>
+    </div>
+    <div class="runner-timer" id="runnerTimer">30</div>
+    <h2 class="runner-name" id="runnerNameRu">Название</h2>
+    <p class="runner-sub" id="runnerNameEn">Subtitle</p>
+
+    <div class="runner-controls">
+      <button class="nav-btn" onclick="skipCircuitExercise()">Пропустить ⏭</button>
+      <button class="nav-btn primary" id="runnerPauseBtn" onclick="toggleCircuitPause()">Пауза ⏸</button>
+    </div>
+  </div>
+</div>
+
+<!-- Hidden audio element for voice coach -->
+<audio id="coachAudio" preload="auto"></audio>
+
+<script>
+let catalog = [];
+let filtered = [];
+let currentCategory = 'all';
+let currentModalIndex = 0;
+let timerSeconds = 30;
+let timerInterval = null;
+let isTimerRunning = false;
+
+// Robust URL helper ensuring correct path to /fitify/...
+function fixUrl(url) {
+  if (!url) return '';
+  url = url.trim();
+  if (url.startsWith('http')) return url;
+  const clean = url.replace(/^\/+/, '').replace(/^fitify\/+/, '');
+  return '/fitify/' + clean;
+}
+
+// Circuit runner state
+let circuitActive = false;
+let circuitExercises = [];
+let circuitCurrentIdx = 0;
+let circuitTimer = null;
+let circuitTimeLeft = 30;
+let isCircuitPaused = false;
+let isRestPhase = false;
+
+// Audio context for sound beeps
+let audioCtx = null;
+function playBeep(freq = 600, duration = 0.15) {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.frequency.value = freq;
+    osc.type = 'sine';
+    gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + duration);
+  } catch(e){}
+}
+
+async function loadData() {
+  try {
+    const res = await fetch('/fitify/data/catalog.json?v=' + Date.now());
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    catalog = await res.json();
+    filtered = [...catalog];
+    renderGrid();
+  } catch(e) {
+    console.error('Error loading catalog:', e);
+    document.getElementById('exercisesGrid').innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 40px; color: #ef4444;">Ошибка загрузки каталога: ' + e.message + '</div>';
+  }
+}
+
+function renderGrid() {
+  const grid = document.getElementById('exercisesGrid');
+  if (!filtered.length) {
+    grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 40px; color: var(--text-muted);">Ничего не найдено</div>';
+    return;
+  }
+  
+  grid.innerHTML = filtered.map((item, idx) => `
+    <div class="ex-card" onclick="openModalByIndex(${idx})">
+      <div class="thumb-wrap">
+        <img src="${fixUrl(item.thumbnail)}" alt="${item.title}" loading="lazy" onerror="this.onerror=null;this.src='/fitify/thumbnails/${item.code}.webp'">
+        <div class="play-badge"><span>▶</span> ${item.duration}с</div>
+      </div>
+      <div class="card-content">
+        <div class="card-title-ru">${item.title_ru || item.title}</div>
+        <div class="card-title-en">${item.title}</div>
+        <div class="card-tags">
+          <span class="card-tag">${item.primary_muscle_ru || 'Все тело'}</span>
+          <span class="card-tag" style="background: rgba(255,255,255,0.06); color: #cbd5e1;">${item.reps} повт.</span>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function setCategory(cat, btn) {
+  currentCategory = cat;
+  document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+  btn.classList.add('active');
+  filterCatalog();
+}
+
+function filterCatalog() {
+  const q = document.getElementById('searchInput').value.trim().toLowerCase();
+  filtered = catalog.filter(item => {
+    // Category check
+    let catMatch = true;
+    if (currentCategory === 'core') {
+      catMatch = item.category?.core > 0 || item.muscle_intensity?.abs > 0 || item.muscle_intensity?.obliques > 0;
+    } else if (currentCategory === 'legs') {
+      catMatch = item.category?.lower_body > 0 || item.muscle_intensity?.glutes > 0 || item.muscle_intensity?.quads > 0 || item.muscle_intensity?.calves > 0;
+    } else if (currentCategory === 'upper') {
+      catMatch = item.category?.upper_body > 0 || item.muscle_intensity?.chest > 0 || item.muscle_intensity?.triceps > 0 || item.muscle_intensity?.biceps > 0;
+    } else if (currentCategory === 'back') {
+      catMatch = item.category?.shoulder_and_back > 0 || item.muscle_intensity?.back > 0 || item.muscle_intensity?.traps > 0 || item.muscle_intensity?.shoulders_front > 0;
+    } else if (currentCategory === 'cardio') {
+      catMatch = item.category?.cardio > 0 || item.category?.plyometric > 0;
+    }
+    
+    // Search check
+    let searchMatch = true;
+    if (q) {
+      searchMatch = item.title.toLowerCase().includes(q) || 
+                    (item.title_ru && item.title_ru.toLowerCase().includes(q)) ||
+                    (item.primary_muscle_ru && item.primary_muscle_ru.toLowerCase().includes(q));
+    }
+    return catMatch && searchMatch;
+  });
+  renderGrid();
+}
+
+function openModalByIndex(idx) {
+  currentModalIndex = idx;
+  const item = filtered[idx];
+  if (!item) return;
+
+  document.getElementById('modalTitleRu').innerText = item.title_ru || item.title;
+  document.getElementById('modalTitleEn').innerText = item.title;
+
+  const video = document.getElementById('modalVideo');
+  video.src = fixUrl(item.video);
+  video.poster = fixUrl(item.thumbnail);
+  video.play().catch(()=>{});
+
+  // Load voice audio
+  const audio = document.getElementById('coachAudio');
+  if (item.audio) {
+    audio.src = fixUrl(item.audio);
+  }
+
+  // Render muscle meters
+  const musclesBox = document.getElementById('modalMuscles');
+  const muscles = item.muscle_intensity || {};
+  const entries = Object.entries(muscles).sort((a,b) => b[1] - a[1]);
+  if (!entries.length) {
+    musclesBox.innerHTML = '<div style="color: var(--text-muted); font-size: 12px;">Общая нагрузка на все тело</div>';
+  } else {
+    musclesBox.innerHTML = entries.slice(0, 4).map(([m, val]) => `
+      <div class="meter-row">
+        <span>${formatMuscleName(m)}</span>
+        <div class="meter-bar-wrap">
+          <div class="meter-bar" style="width: ${Math.min(100, val * 10)}%;"></div>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  resetTimer(item.duration || 30);
+  document.getElementById('modalOverlay').classList.add('open');
+}
+
+function formatMuscleName(m) {
+  const map = {
+    abs: 'Пресс', obliques: 'Косые мышцы', lower_back: 'Поясница',
+    chest: 'Грудные мышцы', back: 'Спина', traps: 'Трапеции',
+    shoulders_front: 'Передние дельты', shoulders_side: 'Средние дельты',
+    triceps: 'Трицепс', biceps: 'Бицепс', glutes: 'Ягодицы',
+    quads: 'Квадрицепсы', hams: 'Бицепс бедра', calves: 'Икры'
+  };
+  return map[m] || m;
+}
+
+function playVoiceCoach() {
+  const audio = document.getElementById('coachAudio');
+  if (audio && audio.src) {
+    audio.currentTime = 0;
+    audio.play().catch(()=>{});
+  }
+}
+
+function toggleTimer() {
+  if (isTimerRunning) {
+    clearInterval(timerInterval);
+    isTimerRunning = false;
+    document.getElementById('timerToggleBtn').innerText = '▶ Старт';
+  } else {
+    isTimerRunning = true;
+    document.getElementById('timerToggleBtn').innerText = '⏸ Пауза';
+    timerInterval = setInterval(() => {
+      if (timerSeconds > 0) {
+        timerSeconds--;
+        updateTimerDisplay();
+        if (timerSeconds <= 3 && timerSeconds > 0) playBeep(520, 0.1);
+        if (timerSeconds === 0) {
+          playBeep(880, 0.3);
+          clearInterval(timerInterval);
+          isTimerRunning = false;
+          document.getElementById('timerToggleBtn').innerText = '↺ Заново';
+        }
+      }
+    }, 1000);
+  }
+}
+
+function resetTimer(secs = 30) {
+  clearInterval(timerInterval);
+  isTimerRunning = false;
+  timerSeconds = secs;
+  updateTimerDisplay();
+  document.getElementById('timerToggleBtn').innerText = '▶ Старт';
+}
+
+function updateTimerDisplay() {
+  const m = Math.floor(timerSeconds / 60).toString().padStart(2, '0');
+  const s = (timerSeconds % 60).toString().padStart(2, '0');
+  document.getElementById('modalTimer').innerText = `${m}:${s}`;
+}
+
+function navigateModal(direction) {
+  const newIdx = currentModalIndex + direction;
+  if (newIdx >= 0 && newIdx < filtered.length) {
+    openModalByIndex(newIdx);
+  }
+}
+
+function closeModal() {
+  document.getElementById('modalOverlay').classList.remove('open');
+  const video = document.getElementById('modalVideo');
+  video.pause();
+  video.src = '';
+  clearInterval(timerInterval);
+  isTimerRunning = false;
+  const audio = document.getElementById('coachAudio');
+  audio.pause();
+}
+
+function handleOverlayClick(e) {
+  if (e.target.id === 'modalOverlay') closeModal();
+}
+
+// Circuit Workout Implementation
+function startCircuitWorkout() {
+  // Take 5 exercises from current filtered list or whole catalog
+  const pool = filtered.length >= 5 ? filtered : catalog;
+  circuitExercises = [...pool].sort(() => 0.5 - Math.random()).slice(0, 5);
+  circuitCurrentIdx = 0;
+  circuitActive = true;
+  isCircuitPaused = false;
+  isRestPhase = false;
+  document.getElementById('runnerOverlay').classList.add('active');
+  runExercisePhase();
+}
+
+function runExercisePhase() {
+  const ex = circuitExercises[circuitCurrentIdx];
+  if (!ex) {
+    finishCircuitWorkout();
+    return;
+  }
+  isRestPhase = false;
+  circuitTimeLeft = 30;
+
+  document.getElementById('runnerProgress').innerText = `Упражнение ${circuitCurrentIdx + 1} из ${circuitExercises.length}`;
+  document.getElementById('runnerNameRu').innerText = ex.title_ru || ex.title;
+  document.getElementById('runnerNameEn').innerText = ex.title;
+
+  const vid = document.getElementById('runnerVideo');
+  vid.src = fixUrl(ex.video);
+  vid.play().catch(()=>{});
+
+  // Play voice
+  const audio = document.getElementById('coachAudio');
+  if (ex.audio) {
+    audio.src = fixUrl(ex.audio);
+    audio.currentTime = 0;
+    audio.play().catch(()=>{});
+  }
+
+  updateCircuitTimer();
+  clearInterval(circuitTimer);
+  circuitTimer = setInterval(circuitTick, 1000);
+}
+
+function circuitTick() {
+  if (isCircuitPaused) return;
+  if (circuitTimeLeft > 0) {
+    circuitTimeLeft--;
+    updateCircuitTimer();
+    if (circuitTimeLeft <= 3 && circuitTimeLeft > 0) playBeep(520, 0.1);
+    if (circuitTimeLeft === 0) {
+      playBeep(880, 0.35);
+      if (!isRestPhase) {
+        startRestPhase();
+      } else {
+        circuitCurrentIdx++;
+        runExercisePhase();
+      }
+    }
+  }
+}
+
+function startRestPhase() {
+  if (circuitCurrentIdx >= circuitExercises.length - 1) {
+    finishCircuitWorkout();
+    return;
+  }
+  isRestPhase = true;
+  circuitTimeLeft = 10;
+  const nextEx = circuitExercises[circuitCurrentIdx + 1];
+  document.getElementById('runnerNameRu').innerText = 'Отдых 10 секунд';
+  document.getElementById('runnerNameEn').innerText = `Следующее: ${nextEx.title_ru || nextEx.title}`;
+  updateCircuitTimer();
+}
+
+function updateCircuitTimer() {
+  document.getElementById('runnerTimer').innerText = circuitTimeLeft;
+}
+
+function toggleCircuitPause() {
+  isCircuitPaused = !isCircuitPaused;
+  document.getElementById('runnerPauseBtn').innerText = isCircuitPaused ? 'Продолжить ▶' : 'Пауза ⏸';
+}
+
+function skipCircuitExercise() {
+  clearInterval(circuitTimer);
+  circuitCurrentIdx++;
+  runExercisePhase();
+}
+
+function stopCircuitWorkout() {
+  clearInterval(circuitTimer);
+  circuitActive = false;
+  document.getElementById('runnerOverlay').classList.remove('active');
+  const vid = document.getElementById('runnerVideo');
+  vid.pause();
+  vid.src = '';
+}
+
+function finishCircuitWorkout() {
+  clearInterval(circuitTimer);
+  circuitActive = false;
+  alert('🎉 Поздравляем! Экспресс-тренировка Fitify успешно завершена!');
+  stopCircuitWorkout();
+}
+
+window.addEventListener('DOMContentLoaded', loadData);
+</script>
+</body>
+</html>

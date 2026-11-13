@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0c1412">
+<title>Fitify — Анатомический силуэт и карта мышц</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0c1412;
+  --surface: #14211e;
+  --surface-2: #1b2e2a;
+  --border: rgba(255, 255, 255, 0.08);
+  --accent: #00e699;
+  --accent-glow: rgba(0, 230, 153, 0.35);
+  --text: #f0fdf4;
+  --text-muted: #94a3b8;
+  --radius: 16px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', system-ui, sans-serif; }
+body { background: var(--bg); color: var(--text); min-height: 100vh; padding-bottom: 60px; }
+
+header {
+  position: sticky; top: 0; z-index: 40;
+  background: rgba(12, 20, 18, 0.94);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 20px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.brand-group { display: flex; align-items: center; gap: 10px; }
+.logo-badge {
+  background: linear-gradient(135deg, #00e699, #059669);
+  color: #052e16; font-weight: 900; font-size: 14px;
+  padding: 6px 12px; border-radius: 10px;
+}
+.nav-link {
+  background: var(--surface-2); color: #fff; text-decoration: none;
+  font-size: 13px; font-weight: 600; padding: 8px 14px; border-radius: 10px;
+  border: 1px solid var(--border); transition: 0.2s;
+}
+.nav-link:hover { background: rgba(255,255,255,0.12); }
+
+.container { max-width: 1100px; margin: 0 auto; padding: 24px 20px; }
+.title-box { text-align: center; margin-bottom: 24px; }
+.title-box h1 { font-size: 28px; font-weight: 800; margin-bottom: 8px; }
+.title-box h1 span { color: var(--accent); }
+.title-box p { color: var(--text-muted); font-size: 14px; }
+
+/* Mannequin Stage */
+.stage {
+  display: flex; justify-content: center; align-items: center; gap: 32px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 24px; padding: 30px 20px; margin-bottom: 24px;
+  flex-wrap: wrap; box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+}
+.mannequin-col {
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+}
+.mannequin-label {
+  font-size: 13px; font-weight: 800; letter-spacing: 0.08em;
+  color: var(--text-muted); text-transform: uppercase;
+}
+.svg-wrap {
+  width: 180px; max-width: 42vw; height: auto;
+  filter: drop-shadow(0 8px 20px rgba(0,0,0,0.5));
+}
+.svg-wrap svg { width: 100%; height: auto; display: block; }
+
+/* Muscle Layer States in SVG */
+.muscle-layer {
+  cursor: pointer;
+  transition: opacity 0.25s, fill 0.25s, filter 0.25s;
+}
+.muscle-layer:hover {
+  opacity: 0.7 !important;
+  fill: #34d399 !important;
+}
+.muscle-layer.active {
+  opacity: 1 !important;
+  fill: #00e699 !important;
+  filter: url(#glow);
+}
+.muscle-layer.highlight-secondary {
+  opacity: 0.65 !important;
+  fill: #38bdf8 !important;
+}
+
+/* Chips */
+.muscle-chips {
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-bottom: 24px;
+}
+.m-chip {
+  background: var(--surface); border: 1px solid var(--border); color: #cbd5e1;
+  padding: 8px 16px; border-radius: 20px; font-size: 13px; font-weight: 700;
+  cursor: pointer; transition: 0.2s;
+}
+.m-chip:hover, .m-chip.active {
+  background: var(--accent); color: #042f2e; border-color: var(--accent);
+  box-shadow: 0 4px 14px var(--accent-glow);
+}
+
+/* Exercises matching section */
+.exercises-section { margin-top: 30px; }
+.section-head {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;
+}
+.section-head h2 { font-size: 20px; font-weight: 800; }
+.section-head span { color: var(--accent); font-weight: 700; font-size: 14px; }
+
+.grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px;
+}
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  overflow: hidden; cursor: pointer; transition: 0.2s;
+}
+.card:hover { transform: translateY(-3px); border-color: rgba(0,230,153,0.4); }
+.thumb-box { position: relative; aspect-ratio: 16/9; background: #000; }
+.thumb-box img { width: 100%; height: 100%; object-fit: cover; }
+.c-body { padding: 12px; }
+.c-title { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+.c-sub { font-size: 12px; color: var(--text-muted); }
+
+/* Video modal preview */
+.v-modal {
+  position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,0.85);
+  backdrop-filter: blur(8px); display: none; align-items: center; justify-content: center; padding: 20px;
+}
+.v-modal.open { display: flex; }
+.v-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 20px;
+  width: 100%; max-width: 540px; overflow: hidden;
+}
+.v-head {
+  padding: 14px 18px; display: flex; justify-content: space-between; align-items: center;
+  border-bottom: 1px solid var(--border);
+}
+.v-box { width: 100%; aspect-ratio: 16/9; background: #000; }
+.v-box video { width: 100%; height: 100%; object-fit: contain; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand-group">
+    <div class="logo-badge">⚡ FITIFY</div>
+    <span style="font-weight: 700; font-size: 14px;">Muscle Anatomy Map</span>
+  </div>
+  <div style="display:flex;gap:8px;">
+    <a class="nav-link" href="index.html">← Библиотека видео</a>
+    <a class="nav-link" href="../index.html">Во Flexa</a>
+  </div>
+</header>
+
+<div class="container">
+  <div class="title-box">
+    <h1>Оригинальный анатомический <span>силуэт мышц Fitify</span></h1>
+    <p>Нажмите на любую группу мышц на силуэте или выберите кнопку ниже, чтобы увидеть целевые упражнения</p>
+  </div>
+
+  <div class="stage">
+    <div class="mannequin-col">
+      <div class="mannequin-label">Спереди</div>
+      <div class="svg-wrap" id="frontWrap">
+        <!-- Loaded via fetch/inline -->
+      </div>
+    </div>
+    <div class="mannequin-col">
+      <div class="mannequin-label">Сзади</div>
+      <div class="svg-wrap" id="backWrap">
+        <!-- Loaded via fetch/inline -->
+      </div>
+    </div>
+  </div>
+
+  <div class="muscle-chips" id="chipsContainer">
+    <button class="m-chip active" onclick="selectMuscle('all', this)">Все мышцы</button>
+    <button class="m-chip" onclick="selectMuscle('chest', this)">Грудные мышцы</button>
+    <button class="m-chip" onclick="selectMuscle('abs', this)">Пресс и Кор</button>
+    <button class="m-chip" onclick="selectMuscle('biceps', this)">Бицепс</button>
+    <button class="m-chip" onclick="selectMuscle('triceps', this)">Трицепс</button>
+    <button class="m-chip" onclick="selectMuscle('shoulders', this)">Плечи (Дельты)</button>
+    <button class="m-chip" onclick="selectMuscle('lats', this)">Спина (Широчайшие)</button>
+    <button class="m-chip" onclick="selectMuscle('traps', this)">Трапеции</button>
+    <button class="m-chip" onclick="selectMuscle('glutes', this)">Ягодицы</button>
+    <button class="m-chip" onclick="selectMuscle('quads', this)">Квадрицепсы</button>
+    <button class="m-chip" onclick="selectMuscle('hams', this)">Бицепс бедра</button>
+    <button class="m-chip" onclick="selectMuscle('calves', this)">Икры</button>
+  </div>
+
+  <div class="exercises-section">
+    <div class="section-head">
+      <h2 id="sectionTitle">Упражнения для всех групп мышц</h2>
+      <span id="exCount">268 упражнений</span>
+    </div>
+    <div class="grid" id="exGrid"></div>
+  </div>
+</div>
+
+<div class="v-modal" id="videoModal" onclick="closeVideo(event)">
+  <div class="v-card">
+    <div class="v-head">
+      <b id="vTitle">Упражнение</b>
+      <button style="background:none;border:none;color:#fff;font-size:18px;cursor:pointer;" onclick="closeVideoModal()">✕</button>
+    </div>
+    <div class="v-box">
+      <video id="playerVid" autoplay loop muted playsinline></video>
+    </div>
+  </div>
+</div>
+
+<script>
+let catalog = [];
+let currentMuscle = 'all';
+
+async function init() {
+  // 1. Load Master Front SVG
+  const fRes = await fetch('muscles/master_mannequin_front.svg');
+  document.getElementById('frontWrap').innerHTML = await fRes.text();
+
+  // 2. Load Master Back SVG
+  const bRes = await fetch('muscles/master_mannequin_back.svg');
+  document.getElementById('backWrap').innerHTML = await bRes.text();
+
+  // Wire click events on SVG layers
+  wireSvgClicks();
+
+  // 3. Load catalog
+  const cRes = await fetch('data/catalog.json');
+  catalog = await cRes.json();
+  renderExercises();
+}
+
+function wireSvgClicks() {
+  const mapFront = {
+    'front_chest': 'chest',
+    'front_abs': 'abs',
+    'front_obliques': 'abs',
+    'front_biceps': 'biceps',
+    'front_quads': 'quads',
+    'front_shoulders_front': 'shoulders',
+    'front_shoulders_side': 'shoulders',
+    'front_lats': 'lats'
+  };
+
+  const mapBack = {
+    'back_glutes': 'glutes',
+    'back_hams': 'hams',
+    'back_calves': 'calves',
+    'back_triceps': 'triceps',
+    'back_traps': 'traps',
+    'back_lats': 'lats',
+    'back_lower_back': 'lats',
+    'back_shoulders_back': 'shoulders'
+  };
+
+  Object.entries(mapFront).forEach(([id, muscle]) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.onclick = () => highlightFromSvg(muscle);
+    }
+  });
+
+  Object.entries(mapBack).forEach(([id, muscle]) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.onclick = () => highlightFromSvg(muscle);
+    }
+  });
+}
+
+function highlightFromSvg(muscle) {
+  const btn = Array.from(document.querySelectorAll('.m-chip')).find(b => b.getAttribute('onclick')?.includes(`'${muscle}'`));
+  selectMuscle(muscle, btn);
+}
+
+function selectMuscle(muscle, btn) {
+  currentMuscle = muscle;
+  document.querySelectorAll('.m-chip').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+
+  // Update SVG layers
+  document.querySelectorAll('.muscle-layer').forEach(l => l.classList.remove('active'));
+
+  if (muscle === 'all') {
+    document.querySelectorAll('.muscle-layer').forEach(l => l.classList.add('active'));
+    document.getElementById('sectionTitle').innerText = 'Все упражнения каталога';
+  } else {
+    // Front targets
+    if (muscle === 'chest') document.getElementById('front_chest')?.classList.add('active');
+    if (muscle === 'abs') {
+      document.getElementById('front_abs')?.classList.add('active');
+      document.getElementById('front_obliques')?.classList.add('active');
+    }
+    if (muscle === 'biceps') document.getElementById('front_biceps')?.classList.add('active');
+    if (muscle === 'quads') document.getElementById('front_quads')?.classList.add('active');
+    if (muscle === 'shoulders') {
+      document.getElementById('front_shoulders_front')?.classList.add('active');
+      document.getElementById('front_shoulders_side')?.classList.add('active');
+      document.getElementById('back_shoulders_back')?.classList.add('active');
+    }
+    if (muscle === 'triceps') document.getElementById('back_triceps')?.classList.add('active');
+    if (muscle === 'lats') {
+      document.getElementById('back_lats')?.classList.add('active');
+      document.getElementById('back_lower_back')?.classList.add('active');
+    }
+    if (muscle === 'traps') document.getElementById('back_traps')?.classList.add('active');
+    if (muscle === 'glutes') document.getElementById('back_glutes')?.classList.add('active');
+    if (muscle === 'hams') document.getElementById('back_hams')?.classList.add('active');
+    if (muscle === 'calves') document.getElementById('back_calves')?.classList.add('active');
+
+    const names = {
+      chest: 'Грудные мышцы', abs: 'Мышцы пресса и кора', biceps: 'Бицепс',
+      triceps: 'Трицепс', shoulders: 'Плечи (Дельтовидные мышцы)', lats: 'Спина и широчайшие',
+      traps: 'Трапециевидные мышцы', glutes: 'Ягодичные мышцы', quads: 'Квадрицепсы (передняя часть бедра)',
+      hams: 'Бицепс бедра (задняя часть)', calves: 'Икроножные мышцы'
+    };
+    document.getElementById('sectionTitle').innerText = `Упражнения: ${names[muscle] || muscle}`;
+  }
+  renderExercises();
+}
+
+function renderExercises() {
+  const filtered = catalog.filter(item => {
+    if (currentMuscle === 'all') return true;
+    const m = item.muscle_intensity || {};
+    if (currentMuscle === 'chest') return (m.chest || 0) > 0;
+    if (currentMuscle === 'abs') return (m.abs || 0) > 0 || (m.obliques || 0) > 0;
+    if (currentMuscle === 'biceps') return (m.biceps || 0) > 0;
+    if (currentMuscle === 'triceps') return (m.triceps || 0) > 0;
+    if (currentMuscle === 'shoulders') return (m.shoulders_front || 0) > 0 || (m.shoulders_side || 0) > 0 || (m.shoulders_rear || 0) > 0;
+    if (currentMuscle === 'lats') return (m.back || 0) > 0 || (m.lower_back || 0) > 0;
+    if (currentMuscle === 'traps') return (m.traps || 0) > 0;
+    if (currentMuscle === 'glutes') return (m.glutes || 0) > 0;
+    if (currentMuscle === 'quads') return (m.quads || 0) > 0;
+    if (currentMuscle === 'hams') return (m.hams || 0) > 0;
+    if (currentMuscle === 'calves') return (m.calves || 0) > 0;
+    return true;
+  });
+
+  document.getElementById('exCount').innerText = `${filtered.length} упражнений`;
+  const grid = document.getElementById('exGrid');
+  grid.innerHTML = filtered.map(item => `
+    <div class="card" onclick="openVideo('${item.video}', '${item.title_ru || item.title}')">
+      <div class="thumb-box">
+        <img src="${item.thumbnail}" alt="" loading="lazy">
+      </div>
+      <div class="c-body">
+        <div class="c-title">${item.title_ru || item.title}</div>
+        <div class="c-sub">${item.title}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function openVideo(src, title) {
+  document.getElementById('vTitle').innerText = title;
+  const vid = document.getElementById('playerVid');
+  vid.src = src;
+  vid.play().catch(()=>{});
+  document.getElementById('videoModal').classList.add('open');
+}
+
+function closeVideo(e) {
+  if (e.target.id === 'videoModal') closeVideoModal();
+}
+
+function closeVideoModal() {
+  document.getElementById('videoModal').classList.remove('open');
+  const vid = document.getElementById('playerVid');
+  vid.pause();
+  vid.src = '';
+}
+
+window.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>

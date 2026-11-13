@@ -1,0 +1,14 @@
+# Secrets & local runtime data
+server_data/
+ADMIN_PASSWORD.txt
+.netlify/
+__pycache__/
+*.pyc
+
+# Heavy extracted archives / APK sources
+apk_extract/
+decoded/
+fitify_all_extracted/
+fitify_extracted/
+fitify.xapk
+stayfit.zip
