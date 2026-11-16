@@ -834,4 +834,6 @@ if __name__ == '__main__':
     init_admin()
     init_db()
     print('Flexa: http://localhost:%d   Admin: http://localhost:%d/admin.html' % (PORT, PORT))
-    ThreadingHTTPServer(('0.0.0.0', PORT), H).serve_forever()
+    ThreadingHTTPServer.allow_reuse_address = True
+    httpd = ThreadingHTTPServer(('0.0.0.0', PORT), H)
+    httpd.serve_forever()
