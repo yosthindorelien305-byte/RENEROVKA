@@ -30,7 +30,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/flexa
-Environment=PORT=8080
+Environment=PORT=8095
 ExecStart=/usr/bin/python3 /opt/flexa/server.py
 Restart=always
 RestartSec=3
@@ -50,7 +50,7 @@ server {
     client_max_body_size 25M;
 
     location / {
-        proxy_pass http://127.0.0.1:8080;
+        proxy_pass http://127.0.0.1:8095;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
