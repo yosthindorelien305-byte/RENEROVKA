@@ -13,14 +13,14 @@
   ];
 
   const DEFAULTS = {
-    name: 'Mr.Bobrovsky',
-    handle: '@mr.bobrovsky',
+    name: 'Атлет',
+    handle: '@athlete',
     avatar: '',
-    points: 20710,
+    points: 0,
     winRate: 70,
-    level: 8,
-    days: 76,
-    streakDays: 35,
+    level: 1,
+    days: 0,
+    streakDays: 0,
     friendsOnline: 14,
     friendsLabelRu: 'Друзья',
     friendsLabelEn: 'Friends',
@@ -498,6 +498,20 @@
 
   function merge(cfgAthlete, live) {
     const a = Object.assign({ duelReward: 500, questReward: 500 }, DEFAULTS, cfgAthlete || {});
+    const uName = (localStorage.getItem('userName') || '').trim();
+    let locProf = {};
+    try { locProf = JSON.parse(localStorage.getItem('athleteProfile') || '{}'); } catch (e) {}
+    if (uName) {
+      if (!locProf.name || locProf.name === 'Mr.Bobrovsky' || locProf.name === 'Атлет') {
+        a.name = uName;
+      }
+      if (!locProf.handle || locProf.handle === '@mr.bobrovsky' || locProf.handle === '@athlete') {
+        a.handle = '@' + uName.toLowerCase();
+      }
+    } else {
+      if (a.name === 'Mr.Bobrovsky') a.name = 'Атлет';
+      if (a.handle === '@mr.bobrovsky') a.handle = '@athlete';
+    }
     const ds = getDuelStats();
     const qs = getQuestStats();
     const fz = getFreezeState();

@@ -2,7 +2,7 @@
   const app = document.getElementById('app');
   const nc = u => fetch(u + '?v=' + Date.now()).then(r => r.ok ? r.json() : null).catch(() => null);
   const [D, CFG0, OV0] = await Promise.all([fetch('data.json').then(r => r.json()), nc('content/config.json'), nc('content/overrides.json')]);
-  const CFG = Object.assign({ brand: 'Flexa', accent: '#F0A830', logo: '', heroProgram: 2, goal: 5, hidden: [], sections: {}, t: {}, ptitle: {}, athlete: {} }, CFG0 || {});
+  const CFG = Object.assign({ brand: 'RizzaFit', accent: '#F0A830', logo: '', heroProgram: 2, goal: 5, hidden: [], sections: {}, t: {}, ptitle: {}, athlete: {} }, CFG0 || {});
   let L = localStorage.lang || 'ru';
   const COACH = await fetch('api/coach/status').then(r => r.ok ? r.json() : { enabled: false }).catch(() => ({ enabled: false }));
   const T = window.TEXTS;
@@ -43,7 +43,7 @@
     document.querySelector('link[rel=icon]').href = logo;
     const bImg = document.querySelector('.brand img');
     if (bImg) bImg.src = logo;
-    const nm = CFG.brand || 'Flexa';
+    const nm = CFG.brand || 'RizzaFit';
     const bName = document.querySelector('.brand-name') || document.querySelector('.brand span');
     if (bName) bName.innerHTML = nm.length > 1 ? esc0(nm.slice(0, -1)) + '<em>' + esc0(nm.slice(-1)) + '</em>' : esc0(nm);
     if (!COACH.enabled) (CFG.hidden = (CFG.hidden || []).concat('coach'));
@@ -973,7 +973,14 @@
   }
   function saveUserMeta(u) {
     if (!u || typeof u !== 'object') return;
-    if (u.username) localStorage.userName = u.username;
+    if (u.username) {
+      localStorage.userName = u.username;
+      let loc = {};
+      try { loc = JSON.parse(localStorage.athleteProfile || '{}'); } catch (e) {}
+      if (!loc.name || loc.name === 'Mr.Bobrovsky' || loc.name === 'Атлет') loc.name = u.displayName || u.username;
+      if (!loc.handle || loc.handle === '@mr.bobrovsky' || loc.handle === '@athlete') loc.handle = '@' + u.username.toLowerCase();
+      localStorage.athleteProfile = JSON.stringify(loc);
+    }
     localStorage.userEmail = u.email || '';
     localStorage.userPlan = u.plan || 'free';
     localStorage.userPlanExp = String(u.planExpiresAt || 0);
