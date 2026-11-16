@@ -888,22 +888,32 @@
     const cUser = localStorage.userName || '';
     const cTs = +(localStorage.cloudSyncTs || 0);
     const cTime = cTs ? new Date(cTs * 1000).toLocaleTimeString(L, { hour: '2-digit', minute: '2-digit' }) : '';
+    const uEmail = localStorage.userEmail || '';
+    const isPro = localStorage.userIsPro === '1';
+    const uPlanExp = +(localStorage.userPlanExp || 0);
+    const planText = isPro
+      ? (uPlanExp ? `PRO до ${new Date(uPlanExp * 1000).toLocaleDateString(L)}` : 'PRO ∞')
+      : 'FREE';
     return `
       <div class="ss-card prof-tools">
         <div class="ss-card-title">
-          <b>${uiSvg('users', 15)} ${L == 'ru' ? 'Синхронизация (ПК ↔ Телефон)' : 'Cloud Sync (SQLite)'}</b>
-          ${cTok ? `<span class="tag pro">@${esc(cUser)}</span>` : ''}
+          <b>${uiSvg('users', 15)} ${L == 'ru' ? 'Аккаунт и синхронизация' : 'Account & Cloud Sync'}</b>
+          ${cTok ? `<span style="display:flex;gap:6px;align-items:center;"><span class="tag ${isPro ? 'pro' : ''}" style="${isPro ? 'background:var(--acc);color:#000;' : ''}">${planText}</span><span class="tag pro">@${esc(cUser)}</span></span>` : ''}
         </div>
         ${cTok ? `
           <div style="font-size:12px;color:var(--mut);margin-bottom:8px;">
-            ${cTime ? (L == 'ru' ? `Синхронизировано в ${cTime}` : `Synced at ${cTime}`) : (L == 'ru' ? 'Аккаунт подключён' : 'Account connected')}
+            ${uEmail ? esc(uEmail) + ' · ' : ''}${cTime ? (L == 'ru' ? `Синхронизировано в ${cTime}` : `Synced at ${cTime}`) : (L == 'ru' ? 'Аккаунт подключён' : 'Account connected')}
+          </div>
+          <div class="prof-tools-row" style="margin-bottom:8px;">
+            <button type="button" class="btn" id="cloud-sync-btn">${uiSvg('repeat', 14)} ${L == 'ru' ? 'Синхронизировать' : 'Sync now'}</button>
+            <button type="button" class="btn alt" id="cloud-acct-btn">${L == 'ru' ? 'Пароль / Email' : 'Password / Email'}</button>
           </div>
           <div class="prof-tools-row" style="margin-bottom:12px;">
-            <button type="button" class="btn" id="cloud-sync-btn">${uiSvg('repeat', 14)} ${L == 'ru' ? 'Синхронизировать' : 'Sync now'}</button>
+            ${!isPro ? `<button type="button" class="btn alt" id="cloud-pro-btn" style="border-color:var(--acc);color:var(--acc);">${uiSvg('bolt', 14)} ${L == 'ru' ? 'Получить PRO' : 'Upgrade to PRO'}</button>` : ''}
             <button type="button" class="btn alt" id="cloud-logout-btn">${L == 'ru' ? 'Выйти' : 'Sign out'}</button>
           </div>` : `
           <div style="font-size:12px;color:var(--mut);margin-bottom:8px;">
-            ${L == 'ru' ? 'Войдите, чтобы прогресс, веса и план сохранялись в базе сервера между ПК и телефоном.' : 'Sign in to sync workouts, weights, and plan between devices.'}
+            ${L == 'ru' ? 'Войдите или создайте аккаунт, чтобы прогресс, веса и подписка сохранялись в базе сервера.' : 'Sign in or register to save progress and subscription in the database.'}
           </div>
           <button type="button" class="btn block" id="cloud-auth-btn" style="margin-bottom:12px;">${uiSvg('users', 14)} ${L == 'ru' ? 'Войти / Создать аккаунт' : 'Sign in / Register'}</button>`}
         <div class="ss-card-title" style="padding-top:8px;border-top:1px solid var(--line);">
@@ -960,6 +970,17 @@
     let h = 0;
     for (let i = 0; i < raw.length; i++) h = ((h << 5) - h + raw.charCodeAt(i)) | 0;
     return 'h' + (h >>> 0).toString(16);
+  }
+  function saveUserMeta(u) {
+    if (!u || typeof u !== 'object') return;
+    if (u.username) localStorage.userName = u.username;
+    localStorage.userEmail = u.email || '';
+    localStorage.userPlan = u.plan || 'free';
+    localStorage.userPlanExp = String(u.planExpiresAt || 0);
+    localStorage.userIsPro = u.isPro ? '1' : '0';
+  }
+  function clearUserMeta() {
+    ['userToken', 'userName', 'userEmail', 'userPlan', 'userPlanExp', 'userIsPro', 'cloudSyncTs'].forEach(k => localStorage.removeItem(k));
   }
   let cloudSyncTimer = null;
   async function pushCloudSync() {
@@ -1021,7 +1042,7 @@
       }
       if (!r.ok) return false;
       const j = await r.json();
-      if (j.user && j.user.username) localStorage.userName = j.user.username;
+      if (j.user) saveUserMeta(j.user);
       const srvTs = +(j.updatedAt || 0);
       const locTs = +(localStorage.cloudSyncTs || 0);
       if (srvTs > 0 && (force || srvTs > locTs) && j.state && Object.keys(j.state).length) {
@@ -3072,35 +3093,79 @@
       const cloudAuthBtn = document.getElementById('cloud-auth-btn');
       if (cloudAuthBtn) cloudAuthBtn.onclick = () => {
         vib(20);
-        let mode = 'login';
+        let mode = 'login'; // login | register | reset
         const bd = document.createElement('div');
         bd.className = 'ap-modal-backdrop';
         const drawAuth = () => {
           const isReg = mode === 'register';
+          const isReset = mode === 'reset';
+          const title = isReg
+            ? (L == 'ru' ? 'Создать аккаунт' : 'Create Account')
+            : isReset
+              ? (L == 'ru' ? 'Сброс пароля' : 'Reset Password')
+              : (L == 'ru' ? 'Вход в аккаунт' : 'Sign In');
           bd.innerHTML = `<div class="ap-modal">
-            <h3>${uiSvg('users', 17)} ${isReg ? (L == 'ru' ? 'Создать аккаунт' : 'Create Account') : (L == 'ru' ? 'Вход в аккаунт' : 'Sign In')}</h3>
+            <h3>${uiSvg('users', 17)} ${title}</h3>
             <div class="act-seg" style="margin-bottom:12px;">
-              <button type="button" class="act-seg-btn ${!isReg ? 'on' : ''}" id="ca-tab-login">${L == 'ru' ? 'Вход' : 'Sign In'}</button>
+              <button type="button" class="act-seg-btn ${mode === 'login' ? 'on' : ''}" id="ca-tab-login">${L == 'ru' ? 'Вход' : 'Sign In'}</button>
               <button type="button" class="act-seg-btn ${isReg ? 'on' : ''}" id="ca-tab-reg">${L == 'ru' ? 'Регистрация' : 'Register'}</button>
             </div>
-            <label>${L == 'ru' ? 'Логин (латиница, цифры, _)' : 'Username (a-z, 0-9, _)'}<input id="ca-user" autocomplete="username" placeholder="alex_fit"></label>
-            <label>${L == 'ru' ? 'Пароль (мин. 6 символов)' : 'Password (min 6 chars)'}<input id="ca-pass" type="password" autocomplete="${isReg ? 'new-password' : 'current-password'}"></label>
+            ${isReset ? `
+              <div style="font-size:12px;color:var(--mut);margin-bottom:10px;">
+                ${L == 'ru' ? 'Введите одноразовый код сброса (выдаётся администратором) и новый пароль.' : 'Enter the one-time reset code and your new password.'}
+              </div>
+              <label>${L == 'ru' ? 'Код сброса' : 'Reset code'}<input id="ca-code" placeholder="A1B2C3D4" style="text-transform:uppercase"></label>
+              <label>${L == 'ru' ? 'Новый пароль (мин. 6 символов)' : 'New password (min 6 chars)'}<input id="ca-pass" type="password" autocomplete="new-password"></label>
+            ` : `
+              <label>${isReg ? (L == 'ru' ? 'Логин (латиница, цифры, _)' : 'Username (a-z, 0-9, _)') : (L == 'ru' ? 'Логин или Email' : 'Username or Email')}<input id="ca-user" autocomplete="username" placeholder="${isReg ? 'alex_fit' : 'alex_fit / mail@site.ru'}"></label>
+              ${isReg ? `<label>Email<input id="ca-email" type="email" autocomplete="email" placeholder="alex@mail.ru"></label>` : ''}
+              <label>${L == 'ru' ? 'Пароль (мин. 6 символов)' : 'Password (min 6 chars)'}<input id="ca-pass" type="password" autocomplete="${isReg ? 'new-password' : 'current-password'}"></label>
+              ${!isReg ? `<button type="button" id="ca-forgot" style="background:none;border:0;padding:4px 0;color:var(--acc);font-size:12px;cursor:pointer;text-align:left;">${L == 'ru' ? 'Забыли пароль? Ввести код сброса' : 'Forgot password? Use reset code'}</button>` : ''}
+            `}
             <div id="ca-err" style="font-size:12px;color:#f87171;min-height:16px;margin-top:4px;"></div>
             <div class="ap-modal-actions">
               <button type="button" class="btn alt" id="ca-cancel">${L == 'ru' ? 'Отмена' : 'Cancel'}</button>
-              <button type="button" class="btn" id="ca-go">${isReg ? (L == 'ru' ? 'Создать' : 'Register') : (L == 'ru' ? 'Войти' : 'Sign In')}</button>
+              <button type="button" class="btn" id="ca-go">${isReg ? (L == 'ru' ? 'Создать' : 'Register') : isReset ? (L == 'ru' ? 'Сохранить' : 'Reset') : (L == 'ru' ? 'Войти' : 'Sign In')}</button>
             </div>
           </div>`;
           bd.querySelector('#ca-tab-login').onclick = () => { mode = 'login'; drawAuth(); };
           bd.querySelector('#ca-tab-reg').onclick = () => { mode = 'register'; drawAuth(); };
+          const forgotBtn = bd.querySelector('#ca-forgot');
+          if (forgotBtn) forgotBtn.onclick = () => { mode = 'reset'; drawAuth(); };
           bd.querySelector('#ca-cancel').onclick = () => bd.remove();
           bd.querySelector('#ca-go').onclick = async () => {
-            const username = bd.querySelector('#ca-user').value.trim();
-            const password = bd.querySelector('#ca-pass').value;
             const errEl = bd.querySelector('#ca-err');
             errEl.textContent = '';
-            if (!/^[a-zA-Z0-9_]{3,24}$/.test(username)) {
+            if (isReset) {
+              const code = bd.querySelector('#ca-code').value.trim().toUpperCase();
+              const newPassword = bd.querySelector('#ca-pass').value;
+              if (!code) { errEl.textContent = L == 'ru' ? 'Введите код сброса' : 'Enter reset code'; return; }
+              if (newPassword.length < 6) { errEl.textContent = L == 'ru' ? 'Пароль должен быть не короче 6 символов' : 'Password must be at least 6 chars'; return; }
+              try {
+                const r = await fetch('api/user/reset/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, newPassword }) });
+                const j = await r.json();
+                if (!r.ok) { errEl.textContent = j.error || 'Error'; return; }
+                mode = 'login';
+                drawAuth();
+                showAppToast(CFG.brand || 'FLEXA', L == 'ru' ? 'Пароль обновлён, войдите' : 'Password updated, please sign in');
+              } catch (e) {
+                errEl.textContent = L == 'ru' ? 'Нет связи с сервером' : 'Server unreachable';
+              }
+              return;
+            }
+            const username = bd.querySelector('#ca-user').value.trim();
+            const email = isReg ? bd.querySelector('#ca-email').value.trim().toLowerCase() : '';
+            const password = bd.querySelector('#ca-pass').value;
+            if (isReg && !/^[a-zA-Z0-9_]{3,24}$/.test(username)) {
               errEl.textContent = L == 'ru' ? 'Логин: 3–24 символа (латиница, цифры, _)' : 'Username: 3-24 chars (a-z, 0-9, _)';
+              return;
+            }
+            if (!isReg && username.length < 3) {
+              errEl.textContent = L == 'ru' ? 'Введите логин или Email' : 'Enter username or email';
+              return;
+            }
+            if (isReg && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+              errEl.textContent = L == 'ru' ? 'Укажите корректный Email' : 'Enter a valid Email';
               return;
             }
             if (password.length < 6) {
@@ -3117,23 +3182,26 @@
                   return;
                 }
                 const ts = Date.now();
-                accs[key] = { username, passHash, state: collectLocalState(), updatedAt: ts };
+                accs[key] = { username, email, passHash, state: collectLocalState(), updatedAt: ts };
                 writeLocalAccounts(accs);
                 localStorage.cloudSyncTs = String(ts);
               } else {
-                const acc = accs[key];
+                const acc = accs[key] || Object.values(accs).find(a => (a.email || '').toLowerCase() === key);
+                const accKey = acc ? acc.username.toLowerCase() : key;
                 if (!acc) {
                   errEl.textContent = L == 'ru' ? 'Профиль не найден. Переключитесь на «Регистрация».' : 'Profile not found. Switch to Register.';
                   return;
                 }
-                if (acc.passHash !== passHash) {
+                const chkHash = await hashLocalPass(accKey, password);
+                if (acc.passHash !== chkHash) {
                   errEl.textContent = L == 'ru' ? 'Неверный пароль' : 'Wrong password';
                   return;
                 }
                 if (acc.state && Object.keys(acc.state).length) applyServerState(acc.state, acc.updatedAt);
               }
-              localStorage.userToken = 'local:' + key;
-              localStorage.userName = accs[key].username;
+              const active = accs[key] || Object.values(accs).find(a => (a.email || '').toLowerCase() === key);
+              localStorage.userToken = 'local:' + active.username.toLowerCase();
+              saveUserMeta({ username: active.username, email: active.email || '', plan: 'free', planExpiresAt: 0, isPro: false });
               vib(35);
               bd.remove();
               render();
@@ -3141,7 +3209,7 @@
             };
             try {
               const endpoint = isReg ? 'api/user/register' : 'api/user/login';
-              const body = isReg ? { username, password, state: collectLocalState() } : { username, password };
+              const body = isReg ? { username, email, password, state: collectLocalState() } : { username, password };
               const r = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
               const ct = r.headers.get('content-type') || '';
               if (!ct.includes('application/json')) {
@@ -3151,7 +3219,7 @@
               const j = await r.json();
               if (!r.ok) { errEl.textContent = j.error || 'Error'; return; }
               localStorage.userToken = j.token;
-              localStorage.userName = j.user.username;
+              saveUserMeta(j.user);
               if (j.state && Object.keys(j.state).length) applyServerState(j.state, j.updatedAt);
               else if (Object.keys(collectLocalState()).length) await pushCloudSync();
               vib(35);
@@ -3166,6 +3234,76 @@
         document.body.appendChild(bd);
         bd.onclick = ev => { if (ev.target === bd) bd.remove(); };
         drawAuth();
+      };
+      const cloudAcctBtn = document.getElementById('cloud-acct-btn');
+      if (cloudAcctBtn) cloudAcctBtn.onclick = () => {
+        vib(20);
+        const bd = document.createElement('div');
+        bd.className = 'ap-modal-backdrop';
+        bd.innerHTML = `<div class="ap-modal">
+          <h3>${uiSvg('users', 17)} ${L == 'ru' ? 'Настройки аккаунта' : 'Account Settings'}</h3>
+          <label>Email<input id="ac-email" type="email" value="${esc(localStorage.userEmail || '')}" placeholder="alex@mail.ru"></label>
+          <label>${L == 'ru' ? 'Текущий пароль (если меняете)' : 'Current password (if changing)'}<input id="ac-old" type="password" autocomplete="current-password"></label>
+          <label>${L == 'ru' ? 'Новый пароль (мин. 6 символов)' : 'New password (min 6 chars)'}<input id="ac-new" type="password" autocomplete="new-password"></label>
+          <div id="ac-err" style="font-size:12px;color:#f87171;min-height:16px;margin-top:4px;"></div>
+          <div class="ap-modal-actions">
+            <button type="button" class="btn alt" id="ac-cancel">${L == 'ru' ? 'Отмена' : 'Cancel'}</button>
+            <button type="button" class="btn" id="ac-save">${L == 'ru' ? 'Сохранить' : 'Save'}</button>
+          </div>
+        </div>`;
+        document.body.appendChild(bd);
+        bd.onclick = ev => { if (ev.target === bd) bd.remove(); };
+        bd.querySelector('#ac-cancel').onclick = () => bd.remove();
+        bd.querySelector('#ac-save').onclick = async () => {
+          const errEl = bd.querySelector('#ac-err');
+          errEl.textContent = '';
+          const tok = localStorage.userToken;
+          if (isLocalToken(tok)) {
+            errEl.textContent = L == 'ru' ? 'Доступно на серверной версии сайта' : 'Available on server deployment';
+            return;
+          }
+          const payload = { email: bd.querySelector('#ac-email').value.trim().toLowerCase() };
+          const npw = bd.querySelector('#ac-new').value;
+          if (npw) {
+            payload.oldPassword = bd.querySelector('#ac-old').value;
+            payload.newPassword = npw;
+          }
+          try {
+            const r = await fetch('api/user/profile', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
+              body: JSON.stringify(payload)
+            });
+            const j = await r.json();
+            if (!r.ok) { errEl.textContent = j.error || 'Error'; return; }
+            saveUserMeta(j.user);
+            bd.remove();
+            render();
+            showAppToast(CFG.brand || 'FLEXA', L == 'ru' ? 'Данные аккаунта обновлены' : 'Account updated');
+          } catch (e) {
+            errEl.textContent = L == 'ru' ? 'Нет связи с сервером' : 'Server unreachable';
+          }
+        };
+      };
+      const cloudProBtn = document.getElementById('cloud-pro-btn');
+      if (cloudProBtn) cloudProBtn.onclick = () => {
+        vib(20);
+        const bd = document.createElement('div');
+        bd.className = 'ap-modal-backdrop';
+        bd.innerHTML = `<div class="ap-modal">
+          <h3>${uiSvg('bolt', 17)} ${esc(CFG.brand || 'FLEXA')} PRO</h3>
+          <div style="font-size:13px;color:var(--mut);line-height:1.5;margin-bottom:12px;">
+            ${L == 'ru'
+              ? '• Безлимитная синхронизация прогресса между ПК и телефоном<br>• Доступ к персональному AI-тренеру<br>• Расширенные программы и аналитика<br><br>Ваш логин: <b>@' + esc(localStorage.userName || '') + '</b><br>Статус PRO выдаётся администратором после оплаты (скоро подключим автооплату).'
+              : '• Full cross-device sync<br>• AI Coach access<br>• All programs & analytics'}
+          </div>
+          <div class="ap-modal-actions">
+            <button type="button" class="btn" id="pro-ok">${L == 'ru' ? 'Понятно' : 'OK'}</button>
+          </div>
+        </div>`;
+        document.body.appendChild(bd);
+        bd.onclick = ev => { if (ev.target === bd) bd.remove(); };
+        bd.querySelector('#pro-ok').onclick = () => bd.remove();
       };
       const cloudSyncBtn = document.getElementById('cloud-sync-btn');
       if (cloudSyncBtn) cloudSyncBtn.onclick = async () => {
@@ -3184,9 +3322,7 @@
         const tok = localStorage.userToken;
         if (tok && isLocalToken(tok)) await pushCloudSync();
         else if (tok) fetch('api/user/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + tok } }).catch(() => {});
-        localStorage.removeItem('userToken');
-        localStorage.removeItem('userName');
-        localStorage.removeItem('cloudSyncTs');
+        clearUserMeta();
         render();
       };
       const pwaBtn = document.getElementById('pwa-install-btn');

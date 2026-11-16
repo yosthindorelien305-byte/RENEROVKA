@@ -67,7 +67,27 @@ def init_db():
             'pw_salt TEXT NOT NULL, '
             'pw_hash TEXT NOT NULL, '
             'display_name TEXT NOT NULL DEFAULT "", '
+            'email TEXT NOT NULL DEFAULT "", '
+            'plan TEXT NOT NULL DEFAULT "free", '
+            'plan_expires_at INTEGER NOT NULL DEFAULT 0, '
+            'is_blocked INTEGER NOT NULL DEFAULT 0, '
+            'last_login_at INTEGER NOT NULL DEFAULT 0, '
             'created_at INTEGER NOT NULL)'
+        )
+        cols = {r[1] for r in conn.execute('PRAGMA table_info(users)').fetchall()}
+        migrations = [
+            ('email', 'TEXT NOT NULL DEFAULT ""'),
+            ('plan', 'TEXT NOT NULL DEFAULT "free"'),
+            ('plan_expires_at', 'INTEGER NOT NULL DEFAULT 0'),
+            ('is_blocked', 'INTEGER NOT NULL DEFAULT 0'),
+            ('last_login_at', 'INTEGER NOT NULL DEFAULT 0'),
+        ]
+        for col, ddl in migrations:
+            if col not in cols:
+                conn.execute(f'ALTER TABLE users ADD COLUMN {col} {ddl}')
+        conn.execute(
+            'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email '
+            'ON users(email) WHERE email != ""'
         )
         conn.execute(
             'CREATE TABLE IF NOT EXISTS user_sessions ('
@@ -81,7 +101,47 @@ def init_db():
             'data_json TEXT NOT NULL, '
             'updated_at INTEGER NOT NULL)'
         )
+        conn.execute(
+            'CREATE TABLE IF NOT EXISTS password_resets ('
+            'code TEXT PRIMARY KEY, '
+            'user_id INTEGER NOT NULL, '
+            'expires_at INTEGER NOT NULL, '
+            'used INTEGER NOT NULL DEFAULT 0, '
+            'created_at INTEGER NOT NULL)'
+        )
+        conn.execute(
+            'CREATE TABLE IF NOT EXISTS payments ('
+            'id INTEGER PRIMARY KEY AUTOINCREMENT, '
+            'user_id INTEGER NOT NULL, '
+            'plan TEXT NOT NULL, '
+            'days INTEGER NOT NULL DEFAULT 0, '
+            'amount INTEGER NOT NULL DEFAULT 0, '
+            'currency TEXT NOT NULL DEFAULT "RUB", '
+            'provider TEXT NOT NULL DEFAULT "manual", '
+            'status TEXT NOT NULL DEFAULT "paid", '
+            'note TEXT NOT NULL DEFAULT "", '
+            'created_at INTEGER NOT NULL)'
+        )
         conn.commit()
+
+EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
+
+def user_dto(row):
+    """row: (id, username, display_name, email, plan, plan_expires_at, is_blocked)"""
+    now = int(time.time())
+    plan = row[4] or 'free'
+    exp = int(row[5] or 0)
+    is_pro = (plan == 'pro') and (exp == 0 or exp > now)
+    return {
+        'id': row[0],
+        'username': row[1],
+        'displayName': row[2] or row[1],
+        'email': row[3] or '',
+        'plan': 'pro' if is_pro else 'free',
+        'planExpiresAt': exp if is_pro else 0,
+        'isPro': is_pro,
+        'isBlocked': bool(row[6]),
+    }
 
 def sanitize_state(raw):
     if not isinstance(raw, dict):
@@ -94,17 +154,17 @@ def get_user_by_token(token):
     now = int(time.time())
     with db_lock, sqlite3.connect(DB_FILE) as conn:
         row = conn.execute(
-            'SELECT u.id, u.username, u.display_name, s.expires_at '
+            'SELECT u.id, u.username, u.display_name, u.email, u.plan, u.plan_expires_at, u.is_blocked, s.expires_at '
             'FROM user_sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?',
             (token,)
         ).fetchone()
         if not row:
             return None
-        if row[3] < now:
+        if row[7] < now or row[6]:
             conn.execute('DELETE FROM user_sessions WHERE token = ?', (token,))
             conn.commit()
             return None
-        return {'id': row[0], 'username': row[1], 'displayName': row[2]}
+        return user_dto(row[:7])
 
 def write_json(name, obj):
     tmp = os.path.join(CONTENT, name + '.tmp')
@@ -356,6 +416,52 @@ class H(SimpleHTTPRequestHandler):
                 return self.send_j(200, {'provider': c['provider'], 'baseUrl': c.get('base_url', ''), 'hasKey': bool(c.get('key')), 'keyHint': ('…' + c['key'][-4:]) if c.get('key') else '', 'model': c['model'], 'enabled': c['enabled'], 'prompt': c.get('prompt', '')})
             if p == '/api/uploads' and self.authed():
                 return self.send_j(200, sorted(os.listdir(UPLOADS)))
+            if p == '/api/admin/users' and self.authed():
+                q = parse_qs(urlparse(self.path).query).get('q', [''])[0].strip().lower()
+                now = int(time.time())
+                with db_lock, sqlite3.connect(DB_FILE) as conn:
+                    if q:
+                        like = '%' + q + '%'
+                        rows = conn.execute(
+                            'SELECT id, username, display_name, email, plan, plan_expires_at, is_blocked, created_at, last_login_at '
+                            'FROM users WHERE lower(username) LIKE ? OR lower(email) LIKE ? ORDER BY id DESC LIMIT 200',
+                            (like, like)
+                        ).fetchall()
+                    else:
+                        rows = conn.execute(
+                            'SELECT id, username, display_name, email, plan, plan_expires_at, is_blocked, created_at, last_login_at '
+                            'FROM users ORDER BY id DESC LIMIT 200'
+                        ).fetchall()
+                    tot = conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]
+                    pro_cnt = conn.execute(
+                        'SELECT COUNT(*) FROM users WHERE plan = "pro" AND is_blocked = 0 AND (plan_expires_at = 0 OR plan_expires_at > ?)',
+                        (now,)
+                    ).fetchone()[0]
+                    blk_cnt = conn.execute('SELECT COUNT(*) FROM users WHERE is_blocked = 1').fetchone()[0]
+                    pays = conn.execute(
+                        'SELECT p.id, u.username, p.plan, p.days, p.amount, p.currency, p.provider, p.status, p.note, p.created_at '
+                        'FROM payments p LEFT JOIN users u ON u.id = p.user_id ORDER BY p.id DESC LIMIT 40'
+                    ).fetchall()
+                users_list = []
+                for r in rows:
+                    dto = user_dto(r[:7])
+                    dto['createdAt'] = r[7]
+                    dto['lastLoginAt'] = r[8]
+                    users_list.append(dto)
+                pay_list = [
+                    {
+                        'id': x[0], 'username': x[1] or '?', 'plan': x[2], 'days': x[3],
+                        'amount': x[4], 'currency': x[5], 'provider': x[6], 'status': x[7],
+                        'note': x[8], 'createdAt': x[9]
+                    } for x in pays
+                ]
+                return self.send_j(200, {'users': users_list, 'stats': {'total': tot, 'pro': pro_cnt, 'blocked': blk_cnt}, 'payments': pay_list})
+            if p == '/api/user/me':
+                tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
+                usr = get_user_by_token(tok)
+                if not usr:
+                    return self.send_j(401, {'error': 'unauthorized'})
+                return self.send_j(200, {'user': usr})
             if p == '/api/user/sync':
                 tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
                 usr = get_user_by_token(tok)
@@ -407,6 +513,10 @@ class H(SimpleHTTPRequestHandler):
             except Exception:
                 return self.send_j(400, {'error': 'Некорректный запрос'})
         if p == '/api/user/register':
+            ip = self.headers.get('X-Real-IP') or self.client_address[0]
+            c, last = fails.get('reg:' + ip, (0, 0))
+            if c >= 10 and time.time() - last < 300:
+                return self.send_j(429, {'error': 'Слишком много регистраций, подождите 5 минут'})
             try:
                 raw_b = self.body(2 * 1024 * 1024)
                 if raw_b is None:
@@ -415,10 +525,13 @@ class H(SimpleHTTPRequestHandler):
             except Exception:
                 return self.send_j(400, {'error': 'bad json'})
             uname = re.sub(r'[^a-z0-9_]', '', str(j.get('username') or '').strip().lower())
+            email = str(j.get('email') or '').strip().lower()
             pw = str(j.get('password') or '')
             dname = str(j.get('displayName') or uname)[:40].strip()
             if len(uname) < 3 or len(uname) > 24:
                 return self.send_j(400, {'error': 'Логин: от 3 до 24 латинских букв/цифр/_'})
+            if not EMAIL_RE.match(email):
+                return self.send_j(400, {'error': 'Укажите корректный Email'})
             if len(pw) < 6:
                 return self.send_j(400, {'error': 'Пароль: минимум 6 символов'})
             salt = secrets.token_hex(16)
@@ -429,18 +542,25 @@ class H(SimpleHTTPRequestHandler):
             with db_lock, sqlite3.connect(DB_FILE) as conn:
                 if conn.execute('SELECT 1 FROM users WHERE username = ?', (uname,)).fetchone():
                     return self.send_j(409, {'error': 'Такой логин уже занят'})
+                if conn.execute('SELECT 1 FROM users WHERE email = ?', (email,)).fetchone():
+                    return self.send_j(409, {'error': 'Этот Email уже зарегистрирован'})
                 cur = conn.execute(
-                    'INSERT INTO users (username, pw_salt, pw_hash, display_name, created_at) VALUES (?, ?, ?, ?, ?)',
-                    (uname, salt, pwh, dname, now)
+                    'INSERT INTO users (username, pw_salt, pw_hash, display_name, email, plan, plan_expires_at, is_blocked, last_login_at, created_at) '
+                    'VALUES (?, ?, ?, ?, ?, "free", 0, 0, ?, ?)',
+                    (uname, salt, pwh, dname, email, now, now)
                 )
                 uid = cur.lastrowid
                 conn.execute('INSERT INTO user_sessions (token, user_id, expires_at) VALUES (?, ?, ?)', (tok, uid, now + 30 * 86400))
                 if state:
                     conn.execute('INSERT INTO user_state (user_id, data_json, updated_at) VALUES (?, ?, ?)', (uid, json.dumps(state, ensure_ascii=False), now))
                 conn.commit()
-            return self.send_j(200, {'token': tok, 'user': {'id': uid, 'username': uname, 'displayName': dname}, 'state': state, 'updatedAt': now if state else 0})
+            if len(fails) > 400:
+                fails.clear()
+            fails['reg:' + ip] = (c + 1, time.time())
+            usr = user_dto((uid, uname, dname, email, 'free', 0, 0))
+            return self.send_j(200, {'token': tok, 'user': usr, 'state': state, 'updatedAt': now if state else 0})
         if p == '/api/user/login':
-            ip = self.client_address[0]
+            ip = self.headers.get('X-Real-IP') or self.client_address[0]
             c, last = fails.get(ip, (0, 0))
             if c >= 8 and time.time() - last < 60:
                 return self.send_j(429, {'error': 'Слишком много попыток, подождите минуту'})
@@ -448,25 +568,95 @@ class H(SimpleHTTPRequestHandler):
                 j = json.loads(self.body(4096) or b'{}')
             except Exception:
                 return self.send_j(400, {'error': 'bad json'})
-            uname = re.sub(r'[^a-z0-9_]', '', str(j.get('username') or '').strip().lower())
+            raw_login = str(j.get('username') or j.get('email') or '').strip().lower()
             pw = str(j.get('password') or '')
             with db_lock, sqlite3.connect(DB_FILE) as conn:
-                row = conn.execute('SELECT id, username, pw_salt, pw_hash, display_name FROM users WHERE username = ?', (uname,)).fetchone()
-                if not row or not hmac.compare_digest(hash_pw(pw, row[2]), row[3]):
-                    if len(fails) > 200:
+                if '@' in raw_login:
+                    row = conn.execute(
+                        'SELECT id, username, display_name, email, plan, plan_expires_at, is_blocked, pw_salt, pw_hash '
+                        'FROM users WHERE email = ?', (raw_login,)
+                    ).fetchone()
+                else:
+                    uname = re.sub(r'[^a-z0-9_]', '', raw_login)
+                    row = conn.execute(
+                        'SELECT id, username, display_name, email, plan, plan_expires_at, is_blocked, pw_salt, pw_hash '
+                        'FROM users WHERE username = ?', (uname,)
+                    ).fetchone()
+                if not row or not hmac.compare_digest(hash_pw(pw, row[7]), row[8]):
+                    if len(fails) > 400:
                         fails.clear()
                     fails[ip] = (c + 1, time.time())
                     time.sleep(0.5)
-                    return self.send_j(401, {'error': 'Неверный логин или пароль'})
+                    return self.send_j(401, {'error': 'Неверный логин/email или пароль'})
+                if row[6]:
+                    return self.send_j(403, {'error': 'Аккаунт заблокирован администратором'})
                 fails.pop(ip, None)
                 now = int(time.time())
                 tok = secrets.token_urlsafe(32)
+                conn.execute('UPDATE users SET last_login_at = ? WHERE id = ?', (now, row[0]))
                 conn.execute('INSERT INTO user_sessions (token, user_id, expires_at) VALUES (?, ?, ?)', (tok, row[0], now + 30 * 86400))
                 st_row = conn.execute('SELECT data_json, updated_at FROM user_state WHERE user_id = ?', (row[0],)).fetchone()
                 conn.commit()
             state = json.loads(st_row[0]) if st_row else {}
             updated_at = st_row[1] if st_row else 0
-            return self.send_j(200, {'token': tok, 'user': {'id': row[0], 'username': row[1], 'displayName': row[4]}, 'state': state, 'updatedAt': updated_at})
+            return self.send_j(200, {'token': tok, 'user': user_dto(row[:7]), 'state': state, 'updatedAt': updated_at})
+        if p == '/api/user/profile':
+            tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
+            usr = get_user_by_token(tok)
+            if not usr:
+                return self.send_j(401, {'error': 'unauthorized'})
+            try:
+                j = json.loads(self.body(4096) or b'{}')
+            except Exception:
+                return self.send_j(400, {'error': 'bad json'})
+            with db_lock, sqlite3.connect(DB_FILE) as conn:
+                if 'email' in j:
+                    em = str(j.get('email') or '').strip().lower()
+                    if not EMAIL_RE.match(em):
+                        return self.send_j(400, {'error': 'Укажите корректный Email'})
+                    exists = conn.execute('SELECT id FROM users WHERE email = ? AND id != ?', (em, usr['id'])).fetchone()
+                    if exists:
+                        return self.send_j(409, {'error': 'Этот Email уже используется'})
+                    conn.execute('UPDATE users SET email = ? WHERE id = ?', (em, usr['id']))
+                if j.get('newPassword'):
+                    old_pw = str(j.get('oldPassword') or '')
+                    new_pw = str(j.get('newPassword') or '')
+                    if len(new_pw) < 6:
+                        return self.send_j(400, {'error': 'Новый пароль: минимум 6 символов'})
+                    pw_row = conn.execute('SELECT pw_salt, pw_hash FROM users WHERE id = ?', (usr['id'],)).fetchone()
+                    if not pw_row or not hmac.compare_digest(hash_pw(old_pw, pw_row[0]), pw_row[1]):
+                        return self.send_j(400, {'error': 'Старый пароль указан неверно'})
+                    nsalt = secrets.token_hex(16)
+                    conn.execute('UPDATE users SET pw_salt = ?, pw_hash = ? WHERE id = ?', (nsalt, hash_pw(new_pw, nsalt), usr['id']))
+                row = conn.execute('SELECT id, username, display_name, email, plan, plan_expires_at, is_blocked FROM users WHERE id = ?', (usr['id'],)).fetchone()
+                conn.commit()
+            return self.send_j(200, {'ok': True, 'user': user_dto(row)})
+        if p == '/api/user/reset/confirm':
+            ip = self.headers.get('X-Real-IP') or self.client_address[0]
+            c, last = fails.get('rst:' + ip, (0, 0))
+            if c >= 8 and time.time() - last < 300:
+                return self.send_j(429, {'error': 'Слишком много попыток, подождите 5 минут'})
+            try:
+                j = json.loads(self.body(4096) or b'{}')
+            except Exception:
+                return self.send_j(400, {'error': 'bad json'})
+            code = str(j.get('code') or '').strip().upper()
+            new_pw = str(j.get('newPassword') or '')
+            if len(new_pw) < 6:
+                return self.send_j(400, {'error': 'Пароль: минимум 6 символов'})
+            now = int(time.time())
+            with db_lock, sqlite3.connect(DB_FILE) as conn:
+                r = conn.execute('SELECT user_id, expires_at, used FROM password_resets WHERE code = ?', (code,)).fetchone()
+                if not r or r[2] or r[1] < now:
+                    fails['rst:' + ip] = (c + 1, time.time())
+                    return self.send_j(400, {'error': 'Неверный или просроченный код сброса'})
+                nsalt = secrets.token_hex(16)
+                conn.execute('UPDATE users SET pw_salt = ?, pw_hash = ? WHERE id = ?', (nsalt, hash_pw(new_pw, nsalt), r[0]))
+                conn.execute('UPDATE password_resets SET used = 1 WHERE code = ?', (code,))
+                conn.execute('DELETE FROM user_sessions WHERE user_id = ?', (r[0],))
+                conn.commit()
+            fails.pop('rst:' + ip, None)
+            return self.send_j(200, {'ok': True})
         if p == '/api/user/logout':
             tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
             if tok:
@@ -577,6 +767,67 @@ class H(SimpleHTTPRequestHandler):
                 return self.send_j(400, {'error': 'Минимум 6 символов'})
             set_pw(pw)
             return self.send_j(200, {'ok': True})
+        if p == '/api/admin/user/plan':
+            try:
+                j = json.loads(self.body(4096) or b'{}')
+                uid = int(j.get('userId') or 0)
+                plan = 'pro' if j.get('plan') == 'pro' else 'free'
+                days = int(j.get('days') or 0)
+                amount = int(j.get('amount') or 0)
+                note = str(j.get('note') or '')[:120]
+            except Exception:
+                return self.send_j(400, {'error': 'bad request'})
+            now = int(time.time())
+            with db_lock, sqlite3.connect(DB_FILE) as conn:
+                row = conn.execute('SELECT plan, plan_expires_at FROM users WHERE id = ?', (uid,)).fetchone()
+                if not row:
+                    return self.send_j(404, {'error': 'user not found'})
+                if plan == 'free':
+                    exp = 0
+                elif days <= 0:
+                    exp = 0     # lifetime PRO
+                else:
+                    base = max(now, int(row[1] or 0)) if row[0] == 'pro' and int(row[1] or 0) > now else now
+                    exp = base + days * 86400
+                conn.execute('UPDATE users SET plan = ?, plan_expires_at = ? WHERE id = ?', (plan, exp, uid))
+                conn.execute(
+                    'INSERT INTO payments (user_id, plan, days, amount, currency, provider, status, note, created_at) '
+                    'VALUES (?, ?, ?, ?, "RUB", "admin", "paid", ?, ?)',
+                    (uid, plan, days, amount, note, now)
+                )
+                conn.commit()
+            return self.send_j(200, {'ok': True, 'plan': plan, 'planExpiresAt': exp})
+        if p == '/api/admin/user/block':
+            try:
+                j = json.loads(self.body(4096) or b'{}')
+                uid = int(j.get('userId') or 0)
+                blk = 1 if j.get('blocked') else 0
+            except Exception:
+                return self.send_j(400, {'error': 'bad request'})
+            with db_lock, sqlite3.connect(DB_FILE) as conn:
+                conn.execute('UPDATE users SET is_blocked = ? WHERE id = ?', (blk, uid))
+                if blk:
+                    conn.execute('DELETE FROM user_sessions WHERE user_id = ?', (uid,))
+                conn.commit()
+            return self.send_j(200, {'ok': True, 'blocked': bool(blk)})
+        if p == '/api/admin/user/reset-code':
+            try:
+                j = json.loads(self.body(4096) or b'{}')
+                uid = int(j.get('userId') or 0)
+            except Exception:
+                return self.send_j(400, {'error': 'bad request'})
+            code = secrets.token_hex(4).upper()
+            now = int(time.time())
+            with db_lock, sqlite3.connect(DB_FILE) as conn:
+                if not conn.execute('SELECT 1 FROM users WHERE id = ?', (uid,)).fetchone():
+                    return self.send_j(404, {'error': 'user not found'})
+                conn.execute('DELETE FROM password_resets WHERE user_id = ?', (uid,))
+                conn.execute(
+                    'INSERT INTO password_resets (code, user_id, expires_at, used, created_at) VALUES (?, ?, ?, 0, ?)',
+                    (code, uid, now + 86400, now)
+                )
+                conn.commit()
+            return self.send_j(200, {'ok': True, 'code': code})
         self.send_j(404, {'error': 'not found'})
 
 if __name__ == '__main__':

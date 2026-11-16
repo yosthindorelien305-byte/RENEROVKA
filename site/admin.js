@@ -136,6 +136,7 @@
       ['programs', '📋 Программы'],
       ['workouts', '🏋️ Тренировки'],
       ['exercises', '🤸 Упражнения & Видео'],
+      ['users', '👥 Пользователи'],
       ['ai', '🤖 AI-тренер'],
       ['settings', '⚙️ Настройки']
     ].map(([k, n]) => `<button data-t="${k}" class="${tab == k ? 'on' : ''}">${n}</button>`).join('')}</div><div id="tabc"></div></div>`;
@@ -143,7 +144,7 @@
     $('#lo').onclick = () => { token = ''; sessionStorage.removeItem('atok'); showLogin(); };
     $$('.tabs button').forEach(b => b.onclick = () => { tab = b.dataset.t; sub = null; shell(); });
 
-    const tabs = { athlete: tabAthlete, ui: tabUI, programs: tabPrograms, workouts: tabWorkouts, exercises: tabExercises, ai: tabAI, settings: tabSettings };
+    const tabs = { athlete: tabAthlete, ui: tabUI, programs: tabPrograms, workouts: tabWorkouts, exercises: tabExercises, users: tabUsers, ai: tabAI, settings: tabSettings };
     if (tabs[tab]) tabs[tab]($('#tabc'));
   }
 
@@ -936,6 +937,91 @@
     $('#ai-save').onclick = () => save();
     const cl = $('#ai-clr');
     if (cl) cl.onclick = () => confirm('Удалить ключ?') && save({ clearKey: true, key: '' });
+  }
+
+  // ---------- tab: users & subscriptions ----------
+  let uQuery = '';
+  async function tabUsers(el) {
+    el.innerHTML = `<div class="box"><p style="color:var(--mut)">Загрузка пользователей из базы данных...</p></div>`;
+    let data;
+    try {
+      data = await api('admin/users' + (uQuery ? '?q=' + encodeURIComponent(uQuery) : ''));
+    } catch (e) {
+      el.innerHTML = `<div class="box"><p style="color:#ff8f8f">Ошибка загрузки: ${esc(e.message)}</p></div>`;
+      return;
+    }
+    const st = data.stats || { total: 0, pro: 0, blocked: 0 };
+    const fmtDate = ts => ts ? new Date(ts * 1000).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+    el.innerHTML = `
+      <div class="box">
+        <h2 style="margin-top:0">Пользователи и подписки</h2>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
+          <div style="padding:10px 14px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid var(--line)">Всего: <b>${st.total}</b></div>
+          <div style="padding:10px 14px;border-radius:12px;background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.35)">Активных PRO: <b>${st.pro}</b></div>
+          <div style="padding:10px 14px;border-radius:12px;background:rgba(244,63,94,.12);border:1px solid rgba(244,63,94,.35)">Заблокировано: <b>${st.blocked}</b></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:14px;">
+          <input id="u-q" value="${esc(uQuery)}" placeholder="Поиск по логину или email..." style="flex:1;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--txt)">
+          <button class="btn" id="u-search" style="animation:none">Найти</button>
+          <button class="btn alt" id="u-reset-q">Сброс</button>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          ${(data.users || []).map(u => {
+            const planLabel = u.isPro ? (u.planExpiresAt ? 'PRO до ' + fmtDate(u.planExpiresAt) : 'PRO навсегда') : 'FREE';
+            const planColor = u.isPro ? '#10b981' : '#9ca3af';
+            return `<div style="padding:12px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.02);display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center;">
+              <div>
+                <div style="font-weight:700;font-size:15px;">
+                  @${esc(u.username)}
+                  <span style="margin-left:8px;font-size:11px;padding:2px 8px;border-radius:99px;border:1px solid ${planColor};color:${planColor}">${esc(planLabel)}</span>
+                  ${u.isBlocked ? '<span style="margin-left:6px;font-size:11px;padding:2px 8px;border-radius:99px;background:#ef4444;color:#fff">БЛОК</span>' : ''}
+                </div>
+                <div style="font-size:12px;color:var(--mut);margin-top:4px;">
+                  Email: <b>${esc(u.email || 'не указан')}</b> · Рег: ${fmtDate(u.createdAt)} · Вход: ${fmtDate(u.lastLoginAt)}
+                </div>
+              </div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                <button class="btn alt u-act" data-act="pro30" data-id="${u.id}" style="padding:6px 10px;font-size:12px">+30д PRO</button>
+                <button class="btn alt u-act" data-act="pro365" data-id="${u.id}" style="padding:6px 10px;font-size:12px">+365д PRO</button>
+                <button class="btn alt u-act" data-act="pro0" data-id="${u.id}" style="padding:6px 10px;font-size:12px">PRO навсегда</button>
+                <button class="btn alt u-act" data-act="free" data-id="${u.id}" style="padding:6px 10px;font-size:12px">Free</button>
+                <button class="btn alt u-act" data-act="reset" data-id="${u.id}" style="padding:6px 10px;font-size:12px">Код сброса</button>
+                <button class="btn alt u-act" data-act="${u.isBlocked ? 'unblock' : 'block'}" data-id="${u.id}" style="padding:6px 10px;font-size:12px;color:${u.isBlocked ? '#10b981' : '#f87171'}">${u.isBlocked ? 'Разблок' : 'Блок'}</button>
+              </div>
+            </div>`;
+          }).join('') || '<p style="color:var(--mut)">Пользователей пока нет.</p>'}
+        </div>
+      </div>
+      <div class="box">
+        <h3 style="margin-top:0">История подписок и выдач</h3>
+        ${(data.payments || []).length ? `<div style="display:flex;flex-direction:column;gap:6px;font-size:12px;">
+          ${data.payments.map(p => `<div style="padding:8px 10px;border-radius:8px;background:rgba(255,255,255,.02);border:1px solid var(--line);">
+            <b>@${esc(p.username)}</b> → <b>${esc(p.plan.toUpperCase())}</b> (${p.days > 0 ? p.days + ' дн.' : 'бессрочно'}) · ${p.amount} ${esc(p.currency)} · <i>${esc(p.provider)}</i> · ${fmtDate(p.createdAt)}
+          </div>`).join('')}
+        </div>` : '<p style="color:var(--mut);font-size:13px">Записей пока нет.</p>'}
+      </div>`;
+    $('#u-search').onclick = () => { uQuery = $('#u-q').value.trim(); tabUsers(el); };
+    $('#u-reset-q').onclick = () => { uQuery = ''; tabUsers(el); };
+    $('#u-q').onkeydown = e => { if (e.key === 'Enter') { uQuery = $('#u-q').value.trim(); tabUsers(el); } };
+    $$('.u-act', el).forEach(btn => btn.onclick = async () => {
+      const uid = +btn.dataset.id;
+      const act = btn.dataset.act;
+      try {
+        if (act === 'pro30') await post('admin/user/plan', { userId: uid, plan: 'pro', days: 30, note: 'Выдано в админке' });
+        else if (act === 'pro365') await post('admin/user/plan', { userId: uid, plan: 'pro', days: 365, note: 'Выдано в админке' });
+        else if (act === 'pro0') await post('admin/user/plan', { userId: uid, plan: 'pro', days: 0, note: 'Навсегда в админке' });
+        else if (act === 'free') await post('admin/user/plan', { userId: uid, plan: 'free', days: 0, note: 'Сброс в админке' });
+        else if (act === 'block' || act === 'unblock') await post('admin/user/block', { userId: uid, blocked: act === 'block' });
+        else if (act === 'reset') {
+          const res = await post('admin/user/reset-code', { userId: uid });
+          alert('Одноразовый код сброса пароля (действует 24 часа):\n\n' + res.code);
+        }
+        toast('Готово ✓');
+        tabUsers(el);
+      } catch (e) {
+        toast(e.message, 1);
+      }
+    });
   }
 
   // ---------- tab: settings ----------
