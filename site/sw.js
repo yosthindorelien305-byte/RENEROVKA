@@ -1,4 +1,4 @@
-const CACHE_NAME = 'flexa-shell-v47';
+const CACHE_NAME = 'flexa-shell-v48';
 const CORE_ASSETS = [
   './',
   './index.html',

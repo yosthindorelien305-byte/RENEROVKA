@@ -1082,6 +1082,594 @@
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
   }
 
+  function importBackupJsonFile(file, cb) {
+    if (!file) return;
+    const r = new FileReader();
+    r.onload = () => {
+      try {
+        const parsed = JSON.parse(r.result);
+        if (!parsed || typeof parsed.data !== 'object' || Array.isArray(parsed.data)) throw new Error('bad');
+        Object.entries(parsed.data).forEach(([k, v]) => {
+          if (BACKUP_KEYS.includes(k) && typeof v === 'string') localStorage.setItem(k, v);
+        });
+        applyAccent();
+        registerCustomWorkouts();
+        vib(40);
+        render();
+        showAppToast(CFG.brand || 'RizzaFit', L == 'ru' ? 'Прогресс восстановлен' : 'Progress restored');
+        if (typeof cb === 'function') cb();
+      } catch (err) {
+        alert(L == 'ru' ? 'Неверный формат файла резервной копии' : 'Invalid backup file');
+      }
+    };
+    r.readAsText(file);
+  }
+
+  async function performOfflineCache(btnEl) {
+    vib(20);
+    if (btnEl) {
+      btnEl.textContent = L == 'ru' ? 'Кеширование…' : 'Caching…';
+    }
+    try {
+      if ('caches' in window) {
+        const c = await caches.open('flexa-offline-assets');
+        const urls = ['./', './index.html', './style.css', './app.js', './texts.js', './muscles.js', './athlete_profile.js', './data.json'];
+        await Promise.all(urls.map(u => fetch(u).then(r => r.ok ? c.put(u, r) : null).catch(() => null)));
+      }
+      if (btnEl) {
+        btnEl.textContent = '✓ ' + (L == 'ru' ? 'Готово к залу' : 'Ready for gym');
+      }
+      vib(35);
+      showAppToast(CFG.brand || 'RizzaFit', L == 'ru' ? 'Приложение кешировано для зала' : 'App cached for offline use');
+    } catch (e) {
+      if (btnEl) {
+        btnEl.textContent = L == 'ru' ? 'Повторить кеш' : 'Retry offline cache';
+      }
+    }
+  }
+
+  async function performCloudLogout() {
+    vib(20);
+    const tok = localStorage.userToken;
+    if (tok && isLocalToken(tok)) await pushCloudSync();
+    else if (tok) fetch('api/user/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + tok } }).catch(() => {});
+    clearUserMeta();
+    render();
+    showAppToast(CFG.brand || 'RizzaFit', L == 'ru' ? 'Вы вышли из аккаунта' : 'Signed out');
+  }
+
+  function openCloudProModal() {
+    vib(20);
+    const bd = document.createElement('div');
+    bd.className = 'ap-modal-backdrop';
+    bd.innerHTML = `<div class="ap-modal">
+      <h3>${uiSvg('bolt', 17)} ${esc(CFG.brand || 'RizzaFit')} PRO</h3>
+      <div style="font-size:13px;color:var(--mut);line-height:1.55;margin-bottom:14px;">
+        ${L == 'ru'
+          ? '• Безлимитная синхронизация прогресса между ПК и телефоном<br>• Доступ к персональному AI-тренеру<br>• Расширенные программы тренировок и аналитика<br><br>Ваш логин: <b>@' + esc(localStorage.userName || '') + '</b><br>Статус PRO выдаётся администратором после оплаты (скоро подключим автооплату).'
+          : '• Full cross-device sync<br>• AI Coach access<br>• All programs & analytics'}
+      </div>
+      <div class="ap-modal-actions">
+        <button type="button" class="btn" id="pro-ok">${L == 'ru' ? 'Понятно' : 'OK'}</button>
+      </div>
+    </div>`;
+    document.body.appendChild(bd);
+    bd.onclick = ev => { if (ev.target === bd) bd.remove(); };
+    bd.querySelector('#pro-ok').onclick = () => bd.remove();
+  }
+
+  function openCloudAcctModal(cb) {
+    vib(20);
+    const bd = document.createElement('div');
+    bd.className = 'ap-modal-backdrop';
+    bd.innerHTML = `<div class="ap-modal">
+      <h3>${uiSvg('users', 17)} ${L == 'ru' ? 'Настройки аккаунта' : 'Account Settings'}</h3>
+      <label>Email<input id="ac-email" type="email" value="${esc(localStorage.userEmail || '')}" placeholder="alex@mail.ru"></label>
+      <label>${L == 'ru' ? 'Текущий пароль (если меняете)' : 'Current password (if changing)'}<input id="ac-old" type="password" autocomplete="current-password"></label>
+      <label>${L == 'ru' ? 'Новый пароль (мин. 6 символов)' : 'New password (min 6 chars)'}<input id="ac-new" type="password" autocomplete="new-password"></label>
+      <div id="ac-err" style="font-size:12px;color:#f87171;min-height:16px;margin-top:4px;"></div>
+      <div class="ap-modal-actions">
+        <button type="button" class="btn alt" id="ac-cancel">${L == 'ru' ? 'Отмена' : 'Cancel'}</button>
+        <button type="button" class="btn" id="ac-save">${L == 'ru' ? 'Сохранить' : 'Save'}</button>
+      </div>
+    </div>`;
+    document.body.appendChild(bd);
+    bd.onclick = ev => { if (ev.target === bd) bd.remove(); };
+    bd.querySelector('#ac-cancel').onclick = () => bd.remove();
+    bd.querySelector('#ac-save').onclick = async () => {
+      const errEl = bd.querySelector('#ac-err');
+      errEl.textContent = '';
+      const tok = localStorage.userToken;
+      if (isLocalToken(tok)) {
+        errEl.textContent = L == 'ru' ? 'Доступно на серверной версии сайта' : 'Available on server deployment';
+        return;
+      }
+      const payload = { email: bd.querySelector('#ac-email').value.trim().toLowerCase() };
+      const npw = bd.querySelector('#ac-new').value;
+      if (npw) {
+        payload.oldPassword = bd.querySelector('#ac-old').value;
+        payload.newPassword = npw;
+      }
+      try {
+        const r = await fetch('api/user/profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
+          body: JSON.stringify(payload)
+        });
+        const j = await r.json();
+        if (!r.ok) { errEl.textContent = j.error || 'Error'; return; }
+        saveUserMeta(j.user);
+        bd.remove();
+        render();
+        showAppToast(CFG.brand || 'RizzaFit', L == 'ru' ? 'Данные аккаунта обновлены' : 'Account updated');
+        if (typeof cb === 'function') cb(j.user);
+      } catch (e) {
+        errEl.textContent = L == 'ru' ? 'Нет связи с сервером' : 'Server unreachable';
+      }
+    };
+  }
+
+  function openCloudAuthModal(cb) {
+    vib(20);
+    let mode = 'login';
+    const bd = document.createElement('div');
+    bd.className = 'ap-modal-backdrop';
+    const drawAuth = () => {
+      const isReg = mode === 'register';
+      const isReset = mode === 'reset';
+      const title = isReg
+        ? (L == 'ru' ? 'Создать аккаунт' : 'Create Account')
+        : isReset
+          ? (L == 'ru' ? 'Сброс пароля' : 'Reset Password')
+          : (L == 'ru' ? 'Вход в аккаунт' : 'Sign In');
+      bd.innerHTML = `<div class="ap-modal">
+        <h3>${uiSvg('users', 17)} ${title}</h3>
+        <div class="act-seg" style="margin-bottom:12px;">
+          <button type="button" class="act-seg-btn ${mode === 'login' ? 'on' : ''}" id="ca-tab-login">${L == 'ru' ? 'Вход' : 'Sign In'}</button>
+          <button type="button" class="act-seg-btn ${isReg ? 'on' : ''}" id="ca-tab-reg">${L == 'ru' ? 'Регистрация' : 'Register'}</button>
+        </div>
+        ${isReset ? `
+          <div style="font-size:12px;color:var(--mut);margin-bottom:10px;">
+            ${L == 'ru' ? 'Введите одноразовый код сброса (выдаётся администратором) и новый пароль.' : 'Enter the one-time reset code and your new password.'}
+          </div>
+          <label>${L == 'ru' ? 'Код сброса' : 'Reset code'}<input id="ca-code" placeholder="A1B2C3D4" style="text-transform:uppercase"></label>
+          <label>${L == 'ru' ? 'Новый пароль (мин. 6 символов)' : 'New password (min 6 chars)'}<input id="ca-pass" type="password" autocomplete="new-password"></label>
+        ` : `
+          <label>${isReg ? (L == 'ru' ? 'Логин (латиница, цифры, _)' : 'Username (a-z, 0-9, _)') : (L == 'ru' ? 'Логин или Email' : 'Username or Email')}<input id="ca-user" autocomplete="username" placeholder="${isReg ? 'alex_fit' : 'alex_fit / mail@site.ru'}"></label>
+          ${isReg ? `<label>Email<input id="ca-email" type="email" autocomplete="email" placeholder="alex@mail.ru"></label>` : ''}
+          <label>${L == 'ru' ? 'Пароль (мин. 6 символов)' : 'Password (min 6 chars)'}<input id="ca-pass" type="password" autocomplete="${isReg ? 'new-password' : 'current-password'}"></label>
+          ${!isReg ? `<button type="button" id="ca-forgot" style="background:none;border:0;padding:4px 0;color:var(--acc);font-size:12px;cursor:pointer;text-align:left;">${L == 'ru' ? 'Забыли пароль? Ввести код сброса' : 'Forgot password? Use reset code'}</button>` : ''}
+        `}
+        <div id="ca-err" style="font-size:12px;color:#f87171;min-height:16px;margin-top:4px;"></div>
+        <div class="ap-modal-actions">
+          <button type="button" class="btn alt" id="ca-cancel">${L == 'ru' ? 'Отмена' : 'Cancel'}</button>
+          <button type="button" class="btn" id="ca-go">${isReg ? (L == 'ru' ? 'Создать' : 'Register') : isReset ? (L == 'ru' ? 'Сохранить' : 'Reset') : (L == 'ru' ? 'Войти' : 'Sign In')}</button>
+        </div>
+      </div>`;
+      bd.querySelector('#ca-tab-login').onclick = () => { mode = 'login'; drawAuth(); };
+      bd.querySelector('#ca-tab-reg').onclick = () => { mode = 'register'; drawAuth(); };
+      const forgotBtn = bd.querySelector('#ca-forgot');
+      if (forgotBtn) forgotBtn.onclick = () => { mode = 'reset'; drawAuth(); };
+      bd.querySelector('#ca-cancel').onclick = () => bd.remove();
+      bd.querySelector('#ca-go').onclick = async () => {
+        const errEl = bd.querySelector('#ca-err');
+        errEl.textContent = '';
+        if (isReset) {
+          const code = bd.querySelector('#ca-code').value.trim().toUpperCase();
+          const newPassword = bd.querySelector('#ca-pass').value;
+          if (!code) { errEl.textContent = L == 'ru' ? 'Введите код сброса' : 'Enter reset code'; return; }
+          if (newPassword.length < 6) { errEl.textContent = L == 'ru' ? 'Пароль должен быть не короче 6 символов' : 'Password must be at least 6 chars'; return; }
+          try {
+            const r = await fetch('api/user/reset/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, newPassword }) });
+            const j = await r.json();
+            if (!r.ok) { errEl.textContent = j.error || 'Error'; return; }
+            mode = 'login';
+            drawAuth();
+            showAppToast(CFG.brand || 'RizzaFit', L == 'ru' ? 'Пароль обновлён, войдите' : 'Password updated, please sign in');
+          } catch (e) {
+            errEl.textContent = L == 'ru' ? 'Нет связи с сервером' : 'Server unreachable';
+          }
+          return;
+        }
+        const username = bd.querySelector('#ca-user').value.trim();
+        const email = isReg ? bd.querySelector('#ca-email').value.trim().toLowerCase() : '';
+        const password = bd.querySelector('#ca-pass').value;
+        if (isReg && !/^[a-zA-Z0-9_]{3,24}$/.test(username)) {
+          errEl.textContent = L == 'ru' ? 'Логин: 3–24 символа (латиница, цифры, _)' : 'Username: 3-24 chars (a-z, 0-9, _)';
+          return;
+        }
+        if (!isReg && username.length < 3) {
+          errEl.textContent = L == 'ru' ? 'Введите логин или Email' : 'Enter username or email';
+          return;
+        }
+        if (isReg && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+          errEl.textContent = L == 'ru' ? 'Укажите корректный Email' : 'Enter a valid Email';
+          return;
+        }
+        if (password.length < 6) {
+          errEl.textContent = L == 'ru' ? 'Пароль должен быть не короче 6 символов' : 'Password must be at least 6 characters';
+          return;
+        }
+        const finishLocalAuth = async () => {
+          const key = username.toLowerCase();
+          const accs = readLocalAccounts();
+          const passHash = await hashLocalPass(key, password);
+          if (isReg) {
+            if (accs[key]) {
+              errEl.textContent = L == 'ru' ? 'Такой логин уже есть на этом устройстве' : 'Username already exists on this device';
+              return;
+            }
+            const ts = Date.now();
+            accs[key] = { username, email, passHash, state: collectLocalState(), updatedAt: ts };
+            writeLocalAccounts(accs);
+            localStorage.cloudSyncTs = String(ts);
+          } else {
+            const acc = accs[key] || Object.values(accs).find(a => (a.email || '').toLowerCase() === key);
+            const accKey = acc ? acc.username.toLowerCase() : key;
+            if (!acc) {
+              errEl.textContent = L == 'ru' ? 'Профиль не найден. Переключитесь на «Регистрация».' : 'Profile not found. Switch to Register.';
+              return;
+            }
+            const chkHash = await hashLocalPass(accKey, password);
+            if (acc.passHash !== chkHash) {
+              errEl.textContent = L == 'ru' ? 'Неверный пароль' : 'Wrong password';
+              return;
+            }
+            if (acc.state && Object.keys(acc.state).length) applyServerState(acc.state, acc.updatedAt);
+          }
+          const active = accs[key] || Object.values(accs).find(a => (a.email || '').toLowerCase() === key);
+          localStorage.userToken = 'local:' + active.username.toLowerCase();
+          saveUserMeta({ username: active.username, email: active.email || '', plan: 'free', planExpiresAt: 0, isPro: false });
+          vib(35);
+          bd.remove();
+          render();
+          showAppToast(CFG.brand || 'RizzaFit', L == 'ru' ? 'Локальный профиль подключён' : 'Local profile connected');
+          if (typeof cb === 'function') cb(active);
+        };
+        try {
+          const endpoint = isReg ? 'api/user/register' : 'api/user/login';
+          const body = isReg ? { username, email, password, state: collectLocalState() } : { username, password };
+          const r = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+          const ct = r.headers.get('content-type') || '';
+          if (!ct.includes('application/json')) {
+            await finishLocalAuth();
+            return;
+          }
+          const j = await r.json();
+          if (!r.ok) { errEl.textContent = j.error || 'Error'; return; }
+          localStorage.userToken = j.token;
+          saveUserMeta(j.user);
+          if (j.state && Object.keys(j.state).length) applyServerState(j.state, j.updatedAt);
+          else if (Object.keys(collectLocalState()).length) await pushCloudSync();
+          vib(35);
+          bd.remove();
+          render();
+          showAppToast(CFG.brand || 'RizzaFit', L == 'ru' ? 'Синхронизация подключена' : 'Cloud sync connected');
+          if (typeof cb === 'function') cb(j.user);
+        } catch (e) {
+          await finishLocalAuth();
+        }
+      };
+    };
+    document.body.appendChild(bd);
+    bd.onclick = ev => { if (ev.target === bd) bd.remove(); };
+    drawAuth();
+  }
+
+  function openSettingsSheet() {
+    vib(20);
+    let cur = {};
+    try { cur = JSON.parse(localStorage.athleteProfile || '{}'); } catch (e) {}
+    const base = Object.assign({}, window.AthleteProfile ? window.AthleteProfile.DEFAULTS : {}, CFG.athlete || {}, cur);
+    let pendingAv = base.avatar || '';
+
+    const isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+    const canPrompt = !!deferredInstallPrompt && !isStandalone;
+
+    const cTok = localStorage.userToken || '';
+    const cUser = localStorage.userName || '';
+    const uEmail = localStorage.userEmail || '';
+    const isPro = localStorage.userIsPro === '1';
+    const uPlanExp = +(localStorage.userPlanExp || 0);
+    const planText = isPro
+      ? (uPlanExp ? `PRO до ${new Date(uPlanExp * 1000).toLocaleDateString(L)}` : 'PRO ∞')
+      : 'FREE';
+    const planSubtitle = isPro
+      ? (L == 'ru' ? 'Премиум подписка активна' : 'Premium subscription active')
+      : (L == 'ru' ? 'Синхронизация и AI-тренер' : 'Sync & AI Coach');
+
+    const cTs = +(localStorage.cloudSyncTs || 0);
+    const cTime = cTs ? new Date(cTs * 1000).toLocaleTimeString(L, { hour: '2-digit', minute: '2-digit' }) : '';
+
+    const bd = document.createElement('div');
+    bd.className = 'ap-modal-backdrop';
+    bd.innerHTML = `
+      <div class="ap-modal ap-settings-sheet">
+        <div class="ap-settings-header">
+          <div style="display:flex;align-items:center;gap:8px;">
+            ${uiSvg('settings', 18)}
+            <h3 style="margin:0;font-size:17px;font-weight:800;">${L == 'ru' ? 'Настройки' : 'Settings'}</h3>
+          </div>
+          <button type="button" class="ap-settings-close" id="ap-set-close">✕</button>
+        </div>
+
+        <div class="ap-settings-scroll">
+          <!-- Секция 1: Профиль и оформление -->
+          <div class="ap-set-group-title">${L == 'ru' ? 'Профиль и оформление' : 'Profile & Look'}</div>
+          <div class="ap-set-card">
+            <div style="display:flex;align-items:center;gap:14px;padding:12px;">
+              <div style="width:58px;height:58px;border-radius:50%;border:2px dashed var(--ac);padding:2px;flex:none;overflow:hidden;background:#141a13;">
+                <img id="ap-m-av-prev" src="${esc(pendingAv || 'img/logo.svg')}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;" onerror="this.src='img/logo.svg'">
+              </div>
+              <div style="display:flex;flex-direction:column;gap:6px;flex:1;">
+                <label class="btn alt" style="padding:7px 10px;font-size:12px;cursor:pointer;margin:0;text-align:center;display:flex;align-items:center;justify-content:center;gap:6px;">
+                  ${uiSvg('upload', 12)} ${L == 'ru' ? 'Загрузить фото' : 'Upload photo'}
+                  <input type="file" id="ap-m-av-file" accept="image/*" style="display:none">
+                </label>
+                <button type="button" class="btn alt" id="ap-m-av-del" style="padding:5px 10px;font-size:11.5px;color:var(--mut);">${L == 'ru' ? 'Убрать фото' : 'Remove'}</button>
+              </div>
+            </div>
+            <div style="padding:0 12px 12px;">
+              <label class="ap-set-field-label">${L == 'ru' ? 'Имя спортсмена' : 'Name'}
+                <input id="ap-m-name" value="${esc(base.name || '')}" class="ap-set-input">
+              </label>
+              <label class="ap-set-field-label" style="margin-top:8px;">@username
+                <input id="ap-m-handle" value="${esc(base.handle || '')}" class="ap-set-input">
+              </label>
+              <div class="theme-row" style="margin-top:12px;">
+                <span style="font-size:12px;color:var(--mut);font-weight:700;">${L == 'ru' ? 'Цвет акцента' : 'Accent theme'}</span>
+                <div class="theme-swatches">${renderThemeSwatchesHtml()}</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Секция 2: Подписка -->
+          <div class="ap-set-group-title">${L == 'ru' ? 'Подписка' : 'Subscription'}</div>
+          <div class="ap-set-card">
+            <div class="ap-set-row" style="${!isPro ? '' : 'border:none;'}">
+              <div style="display:flex;align-items:center;gap:10px;">
+                <span class="ap-set-icon-box" style="background:rgba(var(--green-r, 34), 197, 94, 0.15);color:var(--ac);">${uiSvg('bolt', 16)}</span>
+                <div>
+                  <div style="font-weight:800;font-size:13.5px;">${esc(CFG.brand || 'RizzaFit')} PRO</div>
+                  <div style="font-size:11.5px;color:var(--mut);">${planSubtitle}</div>
+                </div>
+              </div>
+              <span class="tag ${isPro ? 'pro' : ''}" style="${isPro ? 'background:var(--acc);color:#000;' : ''}">${planText}</span>
+            </div>
+            ${!isPro ? `
+            <div style="padding:0 12px 12px;">
+              <button type="button" class="btn block" id="set-cloud-pro-btn" style="font-size:12.5px;padding:9px 12px;">
+                ${uiSvg('bolt', 14)} ${L == 'ru' ? 'Узнать о возможностях PRO' : 'Upgrade to PRO'}
+              </button>
+            </div>` : ''}
+          </div>
+
+          <!-- Секция 3: Аккаунт и облако -->
+          <div class="ap-set-group-title">${L == 'ru' ? 'Аккаунт и синхронизация' : 'Account & Sync'}</div>
+          <div class="ap-set-card">
+            ${cTok ? `
+              <div class="ap-set-row">
+                <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+                  <span class="ap-set-icon-box">${uiSvg('users', 16)}</span>
+                  <div style="min-width:0;">
+                    <div style="font-weight:800;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${uEmail ? esc(uEmail) : '@' + esc(cUser)}</div>
+                    <div style="font-size:11px;color:var(--mut);" id="set-sync-time-lbl">${cTime ? (L == 'ru' ? `Синхронизировано в ${cTime}` : `Synced at ${cTime}`) : (L == 'ru' ? 'Подключён к серверу' : 'Connected')}</div>
+                  </div>
+                </div>
+                <button type="button" class="btn alt" id="set-cloud-sync-btn" style="padding:6px 10px;font-size:11.5px;white-space:nowrap;">
+                  ${uiSvg('repeat', 13)} ${L == 'ru' ? 'Обновить' : 'Sync'}
+                </button>
+              </div>
+              <div class="ap-set-item-btn" id="set-cloud-acct-btn">
+                <span style="display:flex;align-items:center;gap:10px;">
+                  <span class="ap-set-icon-box">${uiSvg('lock', 15)}</span>
+                  <span>${L == 'ru' ? 'Сменить пароль или Email' : 'Change Password / Email'}</span>
+                </span>
+                <span class="ap-set-arrow">›</span>
+              </div>
+            ` : `
+              <div style="padding:12px;">
+                <div style="font-size:12px;color:var(--mut);margin-bottom:10px;line-height:1.4;">
+                  ${L == 'ru' ? 'Войдите или зарегистрируйтесь, чтобы сохранять тренировки и рекорды в облаке сервера.' : 'Sign in or register to sync your workouts to the cloud.'}
+                </div>
+                <button type="button" class="btn block" id="set-cloud-auth-btn" style="font-size:12.5px;padding:9px 12px;">
+                  ${uiSvg('users', 14)} ${L == 'ru' ? 'Войти / Создать аккаунт' : 'Sign in / Register'}
+                </button>
+              </div>
+            `}
+          </div>
+
+          <!-- Секция 4: Данные и память -->
+          <div class="ap-set-group-title">${L == 'ru' ? 'Данные и память' : 'Data & Storage'}</div>
+          <div class="ap-set-card">
+            <div class="ap-set-item-btn" id="set-offline-btn">
+              <span style="display:flex;align-items:center;gap:10px;">
+                <span class="ap-set-icon-box">${uiSvg('bolt', 15)}</span>
+                <span id="set-offline-label">${L == 'ru' ? 'Подготовить для зала (офлайн-кеш)' : 'Cache for Offline Gym'}</span>
+              </span>
+              <span class="ap-set-arrow">⚡</span>
+            </div>
+            <div class="ap-set-item-btn" id="set-bk-export">
+              <span style="display:flex;align-items:center;gap:10px;">
+                <span class="ap-set-icon-box">${uiSvg('download', 15)}</span>
+                <span>${L == 'ru' ? 'Экспорт данных (резервная копия)' : 'Export Backup (JSON)'}</span>
+              </span>
+              <span class="ap-set-arrow">›</span>
+            </div>
+            <div class="ap-set-item-btn" id="set-bk-import-btn" style="border:none;">
+              <span style="display:flex;align-items:center;gap:10px;">
+                <span class="ap-set-icon-box">${uiSvg('upload', 15)}</span>
+                <span>${L == 'ru' ? 'Импорт резервной копии' : 'Import Backup'}</span>
+              </span>
+              <span class="ap-set-arrow">›</span>
+            </div>
+            <input type="file" id="set-bk-import-file" accept=".json,application/json" style="display:none">
+
+            ${!isStandalone && canPrompt ? `
+              <div class="ap-set-item-btn" id="set-pwa-btn" style="border-top:1px solid var(--line);">
+                <span style="display:flex;align-items:center;gap:10px;">
+                  <span class="ap-set-icon-box">${uiSvg('plus', 15)}</span>
+                  <span>${L == 'ru' ? 'Установить на домашний экран' : 'Install to Home Screen'}</span>
+                </span>
+                <span class="ap-set-arrow">›</span>
+              </div>
+            ` : ''}
+          </div>
+
+          <!-- Секция 5: Сессия -->
+          ${cTok ? `
+          <div style="margin-top:14px;">
+            <button type="button" class="ap-set-logout-btn" id="set-cloud-logout-btn">
+              ${uiSvg('exit', 14)} ${L == 'ru' ? 'Выйти из аккаунта' : 'Sign out'}
+            </button>
+          </div>` : ''}
+
+          <div style="margin-top:16px;display:flex;gap:8px;">
+            <button type="button" class="btn" style="flex:1;padding:11px;" id="ap-m-save">${L == 'ru' ? 'Сохранить изменения' : 'Save Changes'}</button>
+            <button type="button" class="btn alt" style="padding:11px 16px;" id="ap-m-reset">${L == 'ru' ? 'Сброс' : 'Reset'}</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(bd);
+    bd.onclick = ev => { if (ev.target === bd) bd.remove(); };
+    bd.querySelector('#ap-set-close').onclick = () => bd.remove();
+
+    bd.querySelector('#ap-m-av-file').onchange = ev => {
+      const file = ev.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const max = 256;
+          const scale = Math.min(1, max / Math.max(img.width, img.height));
+          const w = Math.max(1, Math.round(img.width * scale));
+          const h = Math.max(1, Math.round(img.height * scale));
+          const cv = document.createElement('canvas');
+          cv.width = w; cv.height = h;
+          cv.getContext('2d').drawImage(img, 0, 0, w, h);
+          pendingAv = cv.toDataURL('image/jpeg', 0.85);
+          bd.querySelector('#ap-m-av-prev').src = pendingAv;
+        };
+        img.onerror = () => {
+          pendingAv = reader.result;
+          bd.querySelector('#ap-m-av-prev').src = pendingAv;
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    };
+
+    bd.querySelector('#ap-m-av-del').onclick = () => {
+      pendingAv = '';
+      bd.querySelector('#ap-m-av-prev').src = 'img/logo.svg';
+    };
+
+    bd.querySelectorAll('[data-theme-hex]').forEach(btn => {
+      btn.onclick = () => {
+        vib(20);
+        const hex = btn.dataset.themeHex;
+        localStorage.accentTheme = hex;
+        applyAccent(hex);
+        bd.querySelectorAll('[data-theme-hex]').forEach(b => b.classList.toggle('on', b.dataset.themeHex === hex));
+      };
+    });
+
+    bd.querySelector('#ap-m-save').onclick = () => {
+      const next = {
+        name: bd.querySelector('#ap-m-name').value.trim() || base.name,
+        handle: bd.querySelector('#ap-m-handle').value.trim() || base.handle,
+        avatar: pendingAv
+      };
+      localStorage.athleteProfile = JSON.stringify(next);
+      scheduleCloudSync();
+      bd.remove();
+      render();
+      showAppToast(CFG.brand || 'RizzaFit', L == 'ru' ? 'Настройки сохранены' : 'Settings saved');
+    };
+
+    bd.querySelector('#ap-m-reset').onclick = () => {
+      localStorage.removeItem('athleteProfile');
+      localStorage.removeItem('accentTheme');
+      applyAccent();
+      bd.remove();
+      render();
+    };
+
+    const proBtn = bd.querySelector('#set-cloud-pro-btn');
+    if (proBtn) proBtn.onclick = () => { openCloudProModal(); };
+
+    const authBtn = bd.querySelector('#set-cloud-auth-btn');
+    if (authBtn) authBtn.onclick = () => {
+      bd.remove();
+      openCloudAuthModal(() => openSettingsSheet());
+    };
+
+    const acctBtn = bd.querySelector('#set-cloud-acct-btn');
+    if (acctBtn) acctBtn.onclick = () => {
+      bd.remove();
+      openCloudAcctModal(() => openSettingsSheet());
+    };
+
+    const syncBtn = bd.querySelector('#set-cloud-sync-btn');
+    if (syncBtn) syncBtn.onclick = async () => {
+      vib(20);
+      syncBtn.disabled = true;
+      syncBtn.textContent = '…';
+      const ok = await pushCloudSync();
+      if (ok) {
+        showAppToast(CFG.brand || 'RizzaFit', L == 'ru' ? 'Данные синхронизированы' : 'Synced');
+        const newTs = +(localStorage.cloudSyncTs || 0);
+        const newTime = newTs ? new Date(newTs * 1000).toLocaleTimeString(L, { hour: '2-digit', minute: '2-digit' }) : '';
+        const syncLbl = bd.querySelector('#set-sync-time-lbl');
+        if (syncLbl && newTime) syncLbl.textContent = L == 'ru' ? `Синхронизировано в ${newTime}` : `Synced at ${newTime}`;
+      }
+      syncBtn.disabled = false;
+      syncBtn.innerHTML = `${uiSvg('check', 13)} ${L == 'ru' ? 'Готово' : 'Done'}`;
+    };
+
+    const offBtn = bd.querySelector('#set-offline-btn');
+    if (offBtn) offBtn.onclick = () => {
+      performOfflineCache(bd.querySelector('#set-offline-label'));
+    };
+
+    const expBtn = bd.querySelector('#set-bk-export');
+    if (expBtn) expBtn.onclick = () => {
+      vib(25);
+      exportBackupJson();
+      showAppToast(CFG.brand || 'RizzaFit', L == 'ru' ? 'Резервная копия сохранена' : 'Backup saved');
+    };
+
+    const impBtn = bd.querySelector('#set-bk-import-btn');
+    const impFile = bd.querySelector('#set-bk-import-file');
+    if (impBtn && impFile) {
+      impBtn.onclick = () => impFile.click();
+      impFile.onchange = ev => {
+        const f = ev.target.files && ev.target.files[0];
+        if (f) importBackupJsonFile(f, () => bd.remove());
+      };
+    }
+
+    const pwaBtn = bd.querySelector('#set-pwa-btn');
+    if (pwaBtn) pwaBtn.onclick = async () => {
+      if (!deferredInstallPrompt) return;
+      vib(25);
+      deferredInstallPrompt.prompt();
+      try { await deferredInstallPrompt.userChoice; } catch (e) {}
+      deferredInstallPrompt = null;
+      bd.remove();
+      render();
+    };
+
+    const logoutBtn = bd.querySelector('#set-cloud-logout-btn');
+    if (logoutBtn) logoutBtn.onclick = () => {
+      bd.remove();
+      performCloudLogout();
+    };
+  }
+
   function generateWorkoutShareCard(opts) {
     return new Promise(resolve => {
       try {
@@ -1800,7 +2388,6 @@
           ${renderMuscleBalanceHtml(allH)}
         </div>`;
       const bodyCard = renderBodyMetricsCard();
-      const toolsCard = renderBackupAndPwaCard();
 
       let prsHtml = '';
       if (prEntries.length) {
@@ -1853,7 +2440,7 @@
         histHtml = `<div class="empty">${t('nohist')}</div>`;
       }
 
-      return `${profileCard}${duelBanner}${kpis}${analyticsCard}${bodyCard}${prsHtml}${histHtml}${toolsCard}`;
+      return `${profileCard}${duelBanner}${kpis}${analyticsCard}${bodyCard}${prsHtml}${histHtml}`;
     },
     friends() {
       const AP = window.AthleteProfile;
@@ -2771,95 +3358,7 @@
             return;
           }
           if (act === 'settings') {
-            let cur = {};
-            try { cur = JSON.parse(localStorage.athleteProfile || '{}'); } catch (e) {}
-            const base = Object.assign({}, window.AthleteProfile ? window.AthleteProfile.DEFAULTS : {}, CFG.athlete || {}, cur);
-            let pendingAv = base.avatar || '';
-            const bd = document.createElement('div');
-            bd.className = 'ap-modal-backdrop';
-            bd.innerHTML = `<div class="ap-modal">
-              <h3 style="display:flex;align-items:center;gap:8px;">${uiSvg('settings', 16)} ${L == 'ru' ? 'Настройка профиля' : 'Profile settings'}</h3>
-              <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">
-                <div style="width:62px;height:62px;border-radius:50%;border:2px dashed var(--ac);padding:3px;flex:none;overflow:hidden;background:#141a13;">
-                  <img id="ap-m-av-prev" src="${esc(pendingAv || 'img/logo.svg')}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;" onerror="this.src='img/logo.svg'">
-                </div>
-                <div style="display:flex;flex-direction:column;gap:6px;flex:1;">
-                  <label class="btn alt" style="padding:8px 12px;font-size:12.5px;cursor:pointer;margin:0;text-align:center;display:flex;align-items:center;justify-content:center;gap:6px;">
-                    ${uiSvg('upload', 13)} ${L == 'ru' ? 'Загрузить с устройства' : 'Upload from device'}
-                    <input type="file" id="ap-m-av-file" accept="image/*" style="display:none">
-                  </label>
-                  <button type="button" class="btn alt" id="ap-m-av-del" style="padding:6px 12px;font-size:12px;">${L == 'ru' ? 'Убрать фото' : 'Remove photo'}</button>
-                </div>
-              </div>
-              <label>${L == 'ru' ? 'Имя спортсмена' : 'Athlete name'}<input id="ap-m-name" value="${esc(base.name || '')}"></label>
-              <label>@username<input id="ap-m-handle" value="${esc(base.handle || '')}"></label>
-              <div class="theme-row" style="margin-top:8px;">
-                <span>${L == 'ru' ? 'Акцент интерфейса' : 'Accent theme'}</span>
-                <div class="theme-swatches">${renderThemeSwatchesHtml()}</div>
-              </div>
-              <div style="display:flex;gap:8px;margin-top:14px;">
-                <button type="button" class="btn" style="flex:1" id="ap-m-save">${L == 'ru' ? 'Сохранить' : 'Save'}</button>
-                <button type="button" class="btn alt" id="ap-m-reset">${L == 'ru' ? 'Сброс' : 'Reset'}</button>
-              </div>
-            </div>`;
-            document.body.appendChild(bd);
-            bd.onclick = ev => { if (ev.target === bd) bd.remove(); };
-            bd.querySelector('#ap-m-av-file').onchange = ev => {
-              const file = ev.target.files[0];
-              if (!file) return;
-              const reader = new FileReader();
-              reader.onload = () => {
-                const img = new Image();
-                img.onload = () => {
-                  const max = 256;
-                  const scale = Math.min(1, max / Math.max(img.width, img.height));
-                  const w = Math.max(1, Math.round(img.width * scale));
-                  const h = Math.max(1, Math.round(img.height * scale));
-                  const cv = document.createElement('canvas');
-                  cv.width = w; cv.height = h;
-                  cv.getContext('2d').drawImage(img, 0, 0, w, h);
-                  pendingAv = cv.toDataURL('image/jpeg', 0.85);
-                  bd.querySelector('#ap-m-av-prev').src = pendingAv;
-                };
-                img.onerror = () => {
-                  pendingAv = reader.result;
-                  bd.querySelector('#ap-m-av-prev').src = pendingAv;
-                };
-                img.src = reader.result;
-              };
-              reader.readAsDataURL(file);
-            };
-            bd.querySelector('#ap-m-av-del').onclick = () => {
-              pendingAv = '';
-              bd.querySelector('#ap-m-av-prev').src = 'img/logo.svg';
-            };
-            bd.querySelectorAll('[data-theme-hex]').forEach(btn => {
-              btn.onclick = () => {
-                vib(20);
-                const hex = btn.dataset.themeHex;
-                localStorage.accentTheme = hex;
-                applyAccent(hex);
-                bd.querySelectorAll('[data-theme-hex]').forEach(b => b.classList.toggle('on', b.dataset.themeHex === hex));
-              };
-            });
-            bd.querySelector('#ap-m-save').onclick = () => {
-              const next = {
-                name: bd.querySelector('#ap-m-name').value.trim() || base.name,
-                handle: bd.querySelector('#ap-m-handle').value.trim() || base.handle,
-                avatar: pendingAv
-              };
-              localStorage.athleteProfile = JSON.stringify(next);
-              scheduleCloudSync();
-              bd.remove();
-              render();
-            };
-            bd.querySelector('#ap-m-reset').onclick = () => {
-              localStorage.removeItem('athleteProfile');
-              localStorage.removeItem('accentTheme');
-              applyAccent();
-              bd.remove();
-              render();
-            };
+            openSettingsSheet();
             return;
           }
           if (act === 'notify') {
@@ -3050,7 +3549,7 @@
       if (bkExport) bkExport.onclick = () => {
         vib(25);
         exportBackupJson();
-        showAppToast(CFG.brand || 'FLEXA', L == 'ru' ? 'Резервная копия сохранена' : 'Backup file downloaded');
+        showAppToast(CFG.brand || 'RizzaFit', L == 'ru' ? 'Резервная копия сохранена' : 'Backup file downloaded');
       };
       const bkImportBtn = document.getElementById('bk-import-btn');
       const bkImportFile = document.getElementById('bk-import-file');
@@ -3058,280 +3557,30 @@
         bkImportBtn.onclick = () => bkImportFile.click();
         bkImportFile.onchange = ev => {
           const f = ev.target.files && ev.target.files[0];
-          if (!f) return;
-          const r = new FileReader();
-          r.onload = () => {
-            try {
-              const parsed = JSON.parse(r.result);
-              if (!parsed || typeof parsed.data !== 'object' || Array.isArray(parsed.data)) throw new Error('bad');
-              Object.entries(parsed.data).forEach(([k, v]) => {
-                if (BACKUP_KEYS.includes(k) && typeof v === 'string') localStorage.setItem(k, v);
-              });
-              applyAccent();
-              registerCustomWorkouts();
-              vib(40);
-              render();
-              showAppToast(CFG.brand || 'FLEXA', L == 'ru' ? 'Прогресс восстановлен' : 'Progress restored');
-            } catch (err) {
-              alert(L == 'ru' ? 'Неверный формат файла резервной копии' : 'Invalid backup file');
-            }
-          };
-          r.readAsText(f);
+          if (f) importBackupJsonFile(f);
         };
       }
       const offlineBtn = document.getElementById('pwa-offline-btn');
-      if (offlineBtn) offlineBtn.onclick = async () => {
-        vib(20);
-        offlineBtn.disabled = true;
-        offlineBtn.textContent = L == 'ru' ? 'Кеширование…' : 'Caching…';
-        try {
-          if ('caches' in window) {
-            const c = await caches.open('flexa-offline-assets');
-            const urls = ['./', './index.html', './style.css', './app.js', './texts.js', './muscles.js', './athlete_profile.js', './data.json'];
-            await Promise.all(urls.map(u => fetch(u).then(r => r.ok ? c.put(u, r) : null).catch(() => null)));
-          }
-          offlineBtn.textContent = '✓ ' + (L == 'ru' ? 'Готово к работе без сети' : 'Ready for offline use');
-          vib(35);
-        } catch (e) {
-          offlineBtn.disabled = false;
-          offlineBtn.textContent = L == 'ru' ? 'Повторить кеширование' : 'Retry offline cache';
-        }
-      };
+      if (offlineBtn) offlineBtn.onclick = () => performOfflineCache(offlineBtn);
       const cloudAuthBtn = document.getElementById('cloud-auth-btn');
-      if (cloudAuthBtn) cloudAuthBtn.onclick = () => {
-        vib(20);
-        let mode = 'login'; // login | register | reset
-        const bd = document.createElement('div');
-        bd.className = 'ap-modal-backdrop';
-        const drawAuth = () => {
-          const isReg = mode === 'register';
-          const isReset = mode === 'reset';
-          const title = isReg
-            ? (L == 'ru' ? 'Создать аккаунт' : 'Create Account')
-            : isReset
-              ? (L == 'ru' ? 'Сброс пароля' : 'Reset Password')
-              : (L == 'ru' ? 'Вход в аккаунт' : 'Sign In');
-          bd.innerHTML = `<div class="ap-modal">
-            <h3>${uiSvg('users', 17)} ${title}</h3>
-            <div class="act-seg" style="margin-bottom:12px;">
-              <button type="button" class="act-seg-btn ${mode === 'login' ? 'on' : ''}" id="ca-tab-login">${L == 'ru' ? 'Вход' : 'Sign In'}</button>
-              <button type="button" class="act-seg-btn ${isReg ? 'on' : ''}" id="ca-tab-reg">${L == 'ru' ? 'Регистрация' : 'Register'}</button>
-            </div>
-            ${isReset ? `
-              <div style="font-size:12px;color:var(--mut);margin-bottom:10px;">
-                ${L == 'ru' ? 'Введите одноразовый код сброса (выдаётся администратором) и новый пароль.' : 'Enter the one-time reset code and your new password.'}
-              </div>
-              <label>${L == 'ru' ? 'Код сброса' : 'Reset code'}<input id="ca-code" placeholder="A1B2C3D4" style="text-transform:uppercase"></label>
-              <label>${L == 'ru' ? 'Новый пароль (мин. 6 символов)' : 'New password (min 6 chars)'}<input id="ca-pass" type="password" autocomplete="new-password"></label>
-            ` : `
-              <label>${isReg ? (L == 'ru' ? 'Логин (латиница, цифры, _)' : 'Username (a-z, 0-9, _)') : (L == 'ru' ? 'Логин или Email' : 'Username or Email')}<input id="ca-user" autocomplete="username" placeholder="${isReg ? 'alex_fit' : 'alex_fit / mail@site.ru'}"></label>
-              ${isReg ? `<label>Email<input id="ca-email" type="email" autocomplete="email" placeholder="alex@mail.ru"></label>` : ''}
-              <label>${L == 'ru' ? 'Пароль (мин. 6 символов)' : 'Password (min 6 chars)'}<input id="ca-pass" type="password" autocomplete="${isReg ? 'new-password' : 'current-password'}"></label>
-              ${!isReg ? `<button type="button" id="ca-forgot" style="background:none;border:0;padding:4px 0;color:var(--acc);font-size:12px;cursor:pointer;text-align:left;">${L == 'ru' ? 'Забыли пароль? Ввести код сброса' : 'Forgot password? Use reset code'}</button>` : ''}
-            `}
-            <div id="ca-err" style="font-size:12px;color:#f87171;min-height:16px;margin-top:4px;"></div>
-            <div class="ap-modal-actions">
-              <button type="button" class="btn alt" id="ca-cancel">${L == 'ru' ? 'Отмена' : 'Cancel'}</button>
-              <button type="button" class="btn" id="ca-go">${isReg ? (L == 'ru' ? 'Создать' : 'Register') : isReset ? (L == 'ru' ? 'Сохранить' : 'Reset') : (L == 'ru' ? 'Войти' : 'Sign In')}</button>
-            </div>
-          </div>`;
-          bd.querySelector('#ca-tab-login').onclick = () => { mode = 'login'; drawAuth(); };
-          bd.querySelector('#ca-tab-reg').onclick = () => { mode = 'register'; drawAuth(); };
-          const forgotBtn = bd.querySelector('#ca-forgot');
-          if (forgotBtn) forgotBtn.onclick = () => { mode = 'reset'; drawAuth(); };
-          bd.querySelector('#ca-cancel').onclick = () => bd.remove();
-          bd.querySelector('#ca-go').onclick = async () => {
-            const errEl = bd.querySelector('#ca-err');
-            errEl.textContent = '';
-            if (isReset) {
-              const code = bd.querySelector('#ca-code').value.trim().toUpperCase();
-              const newPassword = bd.querySelector('#ca-pass').value;
-              if (!code) { errEl.textContent = L == 'ru' ? 'Введите код сброса' : 'Enter reset code'; return; }
-              if (newPassword.length < 6) { errEl.textContent = L == 'ru' ? 'Пароль должен быть не короче 6 символов' : 'Password must be at least 6 chars'; return; }
-              try {
-                const r = await fetch('api/user/reset/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, newPassword }) });
-                const j = await r.json();
-                if (!r.ok) { errEl.textContent = j.error || 'Error'; return; }
-                mode = 'login';
-                drawAuth();
-                showAppToast(CFG.brand || 'FLEXA', L == 'ru' ? 'Пароль обновлён, войдите' : 'Password updated, please sign in');
-              } catch (e) {
-                errEl.textContent = L == 'ru' ? 'Нет связи с сервером' : 'Server unreachable';
-              }
-              return;
-            }
-            const username = bd.querySelector('#ca-user').value.trim();
-            const email = isReg ? bd.querySelector('#ca-email').value.trim().toLowerCase() : '';
-            const password = bd.querySelector('#ca-pass').value;
-            if (isReg && !/^[a-zA-Z0-9_]{3,24}$/.test(username)) {
-              errEl.textContent = L == 'ru' ? 'Логин: 3–24 символа (латиница, цифры, _)' : 'Username: 3-24 chars (a-z, 0-9, _)';
-              return;
-            }
-            if (!isReg && username.length < 3) {
-              errEl.textContent = L == 'ru' ? 'Введите логин или Email' : 'Enter username or email';
-              return;
-            }
-            if (isReg && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
-              errEl.textContent = L == 'ru' ? 'Укажите корректный Email' : 'Enter a valid Email';
-              return;
-            }
-            if (password.length < 6) {
-              errEl.textContent = L == 'ru' ? 'Пароль должен быть не короче 6 символов' : 'Password must be at least 6 characters';
-              return;
-            }
-            const finishLocalAuth = async () => {
-              const key = username.toLowerCase();
-              const accs = readLocalAccounts();
-              const passHash = await hashLocalPass(key, password);
-              if (isReg) {
-                if (accs[key]) {
-                  errEl.textContent = L == 'ru' ? 'Такой логин уже есть на этом устройстве' : 'Username already exists on this device';
-                  return;
-                }
-                const ts = Date.now();
-                accs[key] = { username, email, passHash, state: collectLocalState(), updatedAt: ts };
-                writeLocalAccounts(accs);
-                localStorage.cloudSyncTs = String(ts);
-              } else {
-                const acc = accs[key] || Object.values(accs).find(a => (a.email || '').toLowerCase() === key);
-                const accKey = acc ? acc.username.toLowerCase() : key;
-                if (!acc) {
-                  errEl.textContent = L == 'ru' ? 'Профиль не найден. Переключитесь на «Регистрация».' : 'Profile not found. Switch to Register.';
-                  return;
-                }
-                const chkHash = await hashLocalPass(accKey, password);
-                if (acc.passHash !== chkHash) {
-                  errEl.textContent = L == 'ru' ? 'Неверный пароль' : 'Wrong password';
-                  return;
-                }
-                if (acc.state && Object.keys(acc.state).length) applyServerState(acc.state, acc.updatedAt);
-              }
-              const active = accs[key] || Object.values(accs).find(a => (a.email || '').toLowerCase() === key);
-              localStorage.userToken = 'local:' + active.username.toLowerCase();
-              saveUserMeta({ username: active.username, email: active.email || '', plan: 'free', planExpiresAt: 0, isPro: false });
-              vib(35);
-              bd.remove();
-              render();
-              showAppToast(CFG.brand || 'FLEXA', L == 'ru' ? 'Локальный профиль подключён' : 'Local profile connected');
-            };
-            try {
-              const endpoint = isReg ? 'api/user/register' : 'api/user/login';
-              const body = isReg ? { username, email, password, state: collectLocalState() } : { username, password };
-              const r = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-              const ct = r.headers.get('content-type') || '';
-              if (!ct.includes('application/json')) {
-                await finishLocalAuth();
-                return;
-              }
-              const j = await r.json();
-              if (!r.ok) { errEl.textContent = j.error || 'Error'; return; }
-              localStorage.userToken = j.token;
-              saveUserMeta(j.user);
-              if (j.state && Object.keys(j.state).length) applyServerState(j.state, j.updatedAt);
-              else if (Object.keys(collectLocalState()).length) await pushCloudSync();
-              vib(35);
-              bd.remove();
-              render();
-              showAppToast(CFG.brand || 'FLEXA', L == 'ru' ? 'Синхронизация подключена' : 'Cloud sync connected');
-            } catch (e) {
-              await finishLocalAuth();
-            }
-          };
-        };
-        document.body.appendChild(bd);
-        bd.onclick = ev => { if (ev.target === bd) bd.remove(); };
-        drawAuth();
-      };
+      if (cloudAuthBtn) cloudAuthBtn.onclick = () => openCloudAuthModal();
       const cloudAcctBtn = document.getElementById('cloud-acct-btn');
-      if (cloudAcctBtn) cloudAcctBtn.onclick = () => {
-        vib(20);
-        const bd = document.createElement('div');
-        bd.className = 'ap-modal-backdrop';
-        bd.innerHTML = `<div class="ap-modal">
-          <h3>${uiSvg('users', 17)} ${L == 'ru' ? 'Настройки аккаунта' : 'Account Settings'}</h3>
-          <label>Email<input id="ac-email" type="email" value="${esc(localStorage.userEmail || '')}" placeholder="alex@mail.ru"></label>
-          <label>${L == 'ru' ? 'Текущий пароль (если меняете)' : 'Current password (if changing)'}<input id="ac-old" type="password" autocomplete="current-password"></label>
-          <label>${L == 'ru' ? 'Новый пароль (мин. 6 символов)' : 'New password (min 6 chars)'}<input id="ac-new" type="password" autocomplete="new-password"></label>
-          <div id="ac-err" style="font-size:12px;color:#f87171;min-height:16px;margin-top:4px;"></div>
-          <div class="ap-modal-actions">
-            <button type="button" class="btn alt" id="ac-cancel">${L == 'ru' ? 'Отмена' : 'Cancel'}</button>
-            <button type="button" class="btn" id="ac-save">${L == 'ru' ? 'Сохранить' : 'Save'}</button>
-          </div>
-        </div>`;
-        document.body.appendChild(bd);
-        bd.onclick = ev => { if (ev.target === bd) bd.remove(); };
-        bd.querySelector('#ac-cancel').onclick = () => bd.remove();
-        bd.querySelector('#ac-save').onclick = async () => {
-          const errEl = bd.querySelector('#ac-err');
-          errEl.textContent = '';
-          const tok = localStorage.userToken;
-          if (isLocalToken(tok)) {
-            errEl.textContent = L == 'ru' ? 'Доступно на серверной версии сайта' : 'Available on server deployment';
-            return;
-          }
-          const payload = { email: bd.querySelector('#ac-email').value.trim().toLowerCase() };
-          const npw = bd.querySelector('#ac-new').value;
-          if (npw) {
-            payload.oldPassword = bd.querySelector('#ac-old').value;
-            payload.newPassword = npw;
-          }
-          try {
-            const r = await fetch('api/user/profile', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
-              body: JSON.stringify(payload)
-            });
-            const j = await r.json();
-            if (!r.ok) { errEl.textContent = j.error || 'Error'; return; }
-            saveUserMeta(j.user);
-            bd.remove();
-            render();
-            showAppToast(CFG.brand || 'FLEXA', L == 'ru' ? 'Данные аккаунта обновлены' : 'Account updated');
-          } catch (e) {
-            errEl.textContent = L == 'ru' ? 'Нет связи с сервером' : 'Server unreachable';
-          }
-        };
-      };
+      if (cloudAcctBtn) cloudAcctBtn.onclick = () => openCloudAcctModal();
       const cloudProBtn = document.getElementById('cloud-pro-btn');
-      if (cloudProBtn) cloudProBtn.onclick = () => {
-        vib(20);
-        const bd = document.createElement('div');
-        bd.className = 'ap-modal-backdrop';
-        bd.innerHTML = `<div class="ap-modal">
-          <h3>${uiSvg('bolt', 17)} ${esc(CFG.brand || 'FLEXA')} PRO</h3>
-          <div style="font-size:13px;color:var(--mut);line-height:1.5;margin-bottom:12px;">
-            ${L == 'ru'
-              ? '• Безлимитная синхронизация прогресса между ПК и телефоном<br>• Доступ к персональному AI-тренеру<br>• Расширенные программы и аналитика<br><br>Ваш логин: <b>@' + esc(localStorage.userName || '') + '</b><br>Статус PRO выдаётся администратором после оплаты (скоро подключим автооплату).'
-              : '• Full cross-device sync<br>• AI Coach access<br>• All programs & analytics'}
-          </div>
-          <div class="ap-modal-actions">
-            <button type="button" class="btn" id="pro-ok">${L == 'ru' ? 'Понятно' : 'OK'}</button>
-          </div>
-        </div>`;
-        document.body.appendChild(bd);
-        bd.onclick = ev => { if (ev.target === bd) bd.remove(); };
-        bd.querySelector('#pro-ok').onclick = () => bd.remove();
-      };
+      if (cloudProBtn) cloudProBtn.onclick = () => openCloudProModal();
       const cloudSyncBtn = document.getElementById('cloud-sync-btn');
       if (cloudSyncBtn) cloudSyncBtn.onclick = async () => {
         vib(20);
         cloudSyncBtn.disabled = true;
         const tok = localStorage.userToken;
         const okPush = await pushCloudSync();
-        if (okPush) showAppToast(CFG.brand || 'FLEXA', isLocalToken(tok)
+        if (okPush) showAppToast(CFG.brand || 'RizzaFit', isLocalToken(tok)
           ? (L == 'ru' ? 'Профиль сохранён на устройстве' : 'Profile saved on device')
           : (L == 'ru' ? 'Данные сохранены в базе сервера' : 'Synced to server DB'));
         render();
       };
       const cloudLogoutBtn = document.getElementById('cloud-logout-btn');
-      if (cloudLogoutBtn) cloudLogoutBtn.onclick = async () => {
-        vib(20);
-        const tok = localStorage.userToken;
-        if (tok && isLocalToken(tok)) await pushCloudSync();
-        else if (tok) fetch('api/user/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + tok } }).catch(() => {});
-        clearUserMeta();
-        render();
-      };
+      if (cloudLogoutBtn) cloudLogoutBtn.onclick = () => performCloudLogout();
       const pwaBtn = document.getElementById('pwa-install-btn');
       if (pwaBtn) pwaBtn.onclick = async () => {
         if (!deferredInstallPrompt) return;
