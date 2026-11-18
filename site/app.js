@@ -107,6 +107,46 @@
     if (idx >= 0) D.workouts.splice(idx, 1);
     delete woMap[id];
   }
+
+  const PROG_WORKOUT_IDS = new Set();
+  (D.programs || []).forEach(p => {
+    ['ru', 'en'].forEach(lang => {
+      const text = (p.d && p.d[lang]) || '';
+      const m = text.match(/workout-(\d+)/g);
+      if (m) m.forEach(x => PROG_WORKOUT_IDS.add(x.replace('workout-', '')));
+    });
+  });
+
+  function isUserPro() {
+    if (localStorage.userIsPro !== '1') return false;
+    const exp = +(localStorage.userPlanExp || 0);
+    if (exp > 0 && Math.floor(Date.now() / 1000) > exp) {
+      localStorage.userIsPro = '0';
+      return false;
+    }
+    return true;
+  }
+
+  function isProWorkout(w) {
+    if (!w) return false;
+    if (w._custom) return false;
+    if (w.pro) return true;
+    if (PROG_WORKOUT_IDS.has(String(w.id))) return true;
+    return false;
+  }
+
+  function splitProgramDesc(rawText) {
+    const parts = (rawText || '').split(/\n\s*\n/);
+    if (parts.length >= 2) {
+      return { teaser: parts.slice(0, 2).join('\n\n'), rest: parts.slice(2).join('\n\n') };
+    }
+    const idx = (rawText || '').indexOf('\n', 300);
+    if (idx > 0 && idx < 600) {
+      return { teaser: rawText.slice(0, idx), rest: rawText.slice(idx) };
+    }
+    return { teaser: (rawText || '').slice(0, 300) + '...', rest: rawText || '' };
+  }
+
   const exName = e => e.n[L] || e.n.en || e.n.ru || ('#' + e.id);
   const woName = w => w.t[L] || w.t.en || w.t.ru || (t('untitled') + ' #' + w.id);
   const pName = p => p.t[L] || p.t.en;
@@ -540,8 +580,11 @@
       </div>`;
   };
 
-  function richDesc(s) {
+  function richDesc(s, options = {}) {
     s = s || '';
+    if (options && options.lockWorkouts) {
+      s = s.replace(/<a\s+href=['"]workout-(\d+)['"][^>]*>(.*?)<\/a>/gi, (m, id, text) => `<a href="#/workouts/programs" class="prog-locked-link" data-woid="${id}">${uiSvg('bolt', 12)} ${text}</a>`);
+    }
     // links like exercise-34 / workout-1456 / program-3
     s = s.replace(/<a\s+href=['"](exercise|workout|program)-(\d+)['"][^>]*>/g, (m, k, id) => `<a href="#/${k}/${id}">`);
     // plain text (workout descs) may contain no tags: keep newlines via CSS
@@ -889,7 +932,7 @@
     const cTs = +(localStorage.cloudSyncTs || 0);
     const cTime = cTs ? new Date(cTs * 1000).toLocaleTimeString(L, { hour: '2-digit', minute: '2-digit' }) : '';
     const uEmail = localStorage.userEmail || '';
-    const isPro = localStorage.userIsPro === '1';
+    const isPro = isUserPro();
     const uPlanExp = +(localStorage.userPlanExp || 0);
     const planText = isPro
       ? (uPlanExp ? `PRO до ${new Date(uPlanExp * 1000).toLocaleDateString(L)}` : 'PRO ∞')
@@ -1178,7 +1221,7 @@
       if (!pid) {
         if (localStorage.userToken && !isLocalToken(localStorage.userToken)) {
           await pullCloudSync(false);
-          if (localStorage.userIsPro === '1') {
+          if (isUserPro()) {
             showPayCelebrationModal();
             render();
           }
@@ -1595,7 +1638,7 @@
     const cTok = localStorage.userToken || '';
     const cUser = localStorage.userName || '';
     const uEmail = localStorage.userEmail || '';
-    const isPro = localStorage.userIsPro === '1';
+    const isPro = isUserPro();
     const uPlanExp = +(localStorage.userPlanExp || 0);
     const planText = isPro
       ? (uPlanExp ? `PRO до ${new Date(uPlanExp * 1000).toLocaleDateString(L)}` : 'PRO ∞')
@@ -2143,13 +2186,18 @@
       const goldArea = `${goldLine} L800,120 L0,120 Z`;
       const greenLine = toPath(ptsGreen);
 
-      const quickRows = top.slice(0, 4).map(w => `
+      const isPro = isUserPro();
+      const quickRows = top.slice(0, 4).map(w => {
+        const isProW = isProWorkout(w);
+        const lock = isProW && !isPro;
+        return `
         <a class="ss-table-row" href="#/workout/${w.id}">
           <span class="ss-row-ic" style="color:var(--ac);">${uiSvg('dumbbell', 16)}</span>
           <span class="ss-row-name">${esc(woName(w))}</span>
-          <span class="ss-row-meta">★ ${w.rating || '4.9'}</span>
-          <span class="ss-row-play">▶</span>
-        </a>`).join('');
+          <span class="ss-row-meta">${lock ? '<span class="tag pro" style="font-size:10px;padding:2px 6px;margin-right:4px;">🔒 PRO</span>' : ''}★ ${w.rating || '4.9'}</span>
+          <span class="ss-row-play">${lock ? '🔒' : '▶'}</span>
+        </a>`;
+      }).join('');
 
       return `
       <div class="frosted-search">
@@ -2335,7 +2383,6 @@
     },
     program(id) {
       const p = D.programs.find(x => x.id == id); if (!p) return '';
-      const d = richDesc(p.d[L] || p.d.en || '');
       const ps = getProgState();
       const logs = Array.isArray(ps.logs[p.id]) ? ps.logs[p.id] : [];
       const totalDays = Math.max(1, +p.days || 30);
@@ -2343,38 +2390,51 @@
       const isAct = String(ps.activeId) === String(p.id);
       const todayIso = new Date().toISOString().slice(0, 10);
       const doneToday = logs.includes(todayIso);
-      const isPro = localStorage.userIsPro === '1';
+      const isPro = isUserPro();
+      const rawDesc = p.d[L] || p.d.en || '';
+
+      if (isPro) {
+        const d = richDesc(rawDesc);
+        return `<a href="#/workouts/programs">← ${t('programs')}</a><h1>${esc(pName(p))}</h1>
+        <div class="tags"><span class="tag">${p.days} ${t('days')}</span><span class="tag">${t('pace')}: ${tempLbl(p.temp)}</span><span class="tag pro" style="background:linear-gradient(135deg,var(--acc),#f59e0b);color:#000;font-weight:900;">PRO</span></div>
+        ${p.img ? `<p><img src="${pImg(p)}" style="width:100%;max-height:360px;object-fit:cover;border-radius:16px"></p>` : ''}
+        <div class="ss-card prog-tracker">
+          <div class="ss-card-title">
+            <b>${uiSvg('trend', 15)} ${L == 'ru' ? 'Прогресс программы' : 'Program Progress'}</b>
+            <span style="color:var(--ac-l);font-weight:800;">${logs.length} / ${totalDays} ${t('days')} (${pct}%)</span>
+          </div>
+          <div class="prog-bar-track"><div class="prog-bar-fill" style="width:${pct}%"></div></div>
+          <div class="prog-actions">
+            <button type="button" class="btn ${isAct ? 'alt' : ''}" id="prog-pin" data-pid="${p.id}">${isAct ? uiSvg('check', 14) + ' ' + (L == 'ru' ? 'Активная программа' : 'Active program') : uiSvg('pin', 14) + ' ' + (L == 'ru' ? 'Сделать моей' : 'Set as active')}</button>
+            <button type="button" class="btn" id="prog-tick" data-pid="${p.id}">${uiSvg('check', 14)} ${doneToday ? (L == 'ru' ? `Ещё день (#${logs.length + 1})` : `Log day #${logs.length + 1}`) : (L == 'ru' ? `День #${logs.length + 1} выполнен` : `Complete day #${logs.length + 1}`)}</button>
+          </div>
+          ${logs.length ? `
+          <div class="prog-sub-foot">
+            <span>${L == 'ru' ? 'Последняя отметка:' : 'Last logged:'} ${logs[logs.length - 1]}</span>
+            <div style="display:flex;gap:10px;">
+              <button type="button" class="prog-link-btn" id="prog-undo" data-pid="${p.id}">−1</button>
+              <button type="button" class="prog-link-btn" id="prog-reset" data-pid="${p.id}">${L == 'ru' ? 'Сброс' : 'Reset'}</button>
+            </div>
+          </div>` : ''}
+        </div>
+        <div class="box desc">${d}</div>`;
+      }
+
+      // Non-PRO user view:
+      const splitted = splitProgramDesc(rawDesc);
+      const teaserHtml = richDesc(splitted.teaser, { lockWorkouts: true });
+      const lockedHtml = richDesc(splitted.rest, { lockWorkouts: true });
 
       return `<a href="#/workouts/programs">← ${t('programs')}</a><h1>${esc(pName(p))}</h1>
-      <div class="tags"><span class="tag">${p.days} ${t('days')}</span><span class="tag">${t('pace')}: ${tempLbl(p.temp)}</span><span class="tag pro" style="background:linear-gradient(135deg,var(--acc),#f59e0b);color:#000;font-weight:900;">PRO</span></div>
+      <div class="tags"><span class="tag">${p.days} ${t('days')}</span><span class="tag">${t('pace')}: ${tempLbl(p.temp)}</span><span class="tag pro" style="background:rgba(245,158,11,0.18);color:var(--acc);border:1px solid rgba(245,158,11,0.35);font-weight:900;">🔒 PRO ПРОГРАММА</span></div>
       ${p.img ? `<p><img src="${pImg(p)}" style="width:100%;max-height:360px;object-fit:cover;border-radius:16px"></p>` : ''}
-      ${isPro ? `
-      <div class="ss-card prog-tracker">
-        <div class="ss-card-title">
-          <b>${uiSvg('trend', 15)} ${L == 'ru' ? 'Прогресс программы' : 'Program Progress'}</b>
-          <span style="color:var(--ac-l);font-weight:800;">${logs.length} / ${totalDays} ${t('days')} (${pct}%)</span>
-        </div>
-        <div class="prog-bar-track"><div class="prog-bar-fill" style="width:${pct}%"></div></div>
-        <div class="prog-actions">
-          <button type="button" class="btn ${isAct ? 'alt' : ''}" id="prog-pin" data-pid="${p.id}">${isAct ? uiSvg('check', 14) + ' ' + (L == 'ru' ? 'Активная программа' : 'Active program') : uiSvg('pin', 14) + ' ' + (L == 'ru' ? 'Сделать моей' : 'Set as active')}</button>
-          <button type="button" class="btn" id="prog-tick" data-pid="${p.id}">${uiSvg('check', 14)} ${doneToday ? (L == 'ru' ? `Ещё день (#${logs.length + 1})` : `Log day #${logs.length + 1}`) : (L == 'ru' ? `День #${logs.length + 1} выполнен` : `Complete day #${logs.length + 1}`)}</button>
-        </div>
-        ${logs.length ? `
-        <div class="prog-sub-foot">
-          <span>${L == 'ru' ? 'Последняя отметка:' : 'Last logged:'} ${logs[logs.length - 1]}</span>
-          <div style="display:flex;gap:10px;">
-            <button type="button" class="prog-link-btn" id="prog-undo" data-pid="${p.id}">−1</button>
-            <button type="button" class="prog-link-btn" id="prog-reset" data-pid="${p.id}">${L == 'ru' ? 'Сброс' : 'Reset'}</button>
-          </div>
-        </div>` : ''}
-      </div>` : `
       <div class="ss-card prog-lock-box">
         <div class="prog-lock-badge">${uiSvg('bolt', 12)} PRO PROGRAM</div>
         <div class="prog-lock-head">
           <div class="prog-lock-icon">${uiSvg('bolt', 24)}</div>
           <div>
             <div class="prog-lock-title">${L == 'ru' ? 'Программа доступна в RizzaFit PRO' : 'Available with RizzaFit PRO'}</div>
-            <div class="prog-lock-sub">${L == 'ru' ? 'Отслеживание дней, сохранение тренировок и пошаговый прогресс' : 'Daily tracking, workout logs and progression'}</div>
+            <div class="prog-lock-sub">${L == 'ru' ? 'Отслеживание дней, готовое расписание тренировок и пошаговый прогресс' : 'Daily tracking, workout logs and progression'}</div>
           </div>
         </div>
         <div class="prog-lock-feats">
@@ -2385,8 +2445,25 @@
         <button type="button" class="btn block prog-unlock-btn" id="prog-unlock-btn">
           ${uiSvg('bolt', 15)} ${L == 'ru' ? 'Разблокировать программу через СБП' : 'Unlock program with PRO'}
         </button>
-      </div>`}
-      <div class="box desc">${d}</div>`;
+      </div>
+      <div class="box desc" style="margin-bottom:12px;">${teaserHtml}</div>
+      <div class="prog-desc-wrap-locked">
+        <div class="prog-desc-locked-content">${lockedHtml}</div>
+        <div class="prog-plan-lock-overlay" id="prog-desc-lock-overlay">
+          <div class="prog-lock-icon" style="margin-bottom:8px;">${uiSvg('bolt', 26)}</div>
+          <div style="font-weight:900;font-size:16px;color:var(--tx);margin-bottom:6px;">
+            ${L == 'ru' ? 'План тренировок на ' + p.days + ' дней заблокирован' : p.days + '-Day Workout Schedule Locked'}
+          </div>
+          <div style="font-size:12.5px;color:var(--mut);line-height:1.45;margin-bottom:14px;max-width:320px;">
+            ${L == 'ru'
+              ? 'Оформите подписку RizzaFit PRO, чтобы открыть расписание всех дней, входящие тренировки и отслеживание прогресса.'
+              : 'Upgrade to PRO to unlock the entire day schedule, workouts and tracking.'}
+          </div>
+          <button type="button" class="btn prog-unlock-btn" id="prog-unlock-desc-btn" style="padding:10px 20px;font-size:13.5px;">
+            ${uiSvg('bolt', 14)} ${L == 'ru' ? 'Разблокировать от 290 ₽' : 'Unlock from 290 ₽'}
+          </button>
+        </div>
+      </div>`;
     },
     workouts(tab) {
       const isProg = tab === 'programs';
@@ -2493,15 +2570,66 @@
       const w = woMap[id]; if (!w) return '';
       let num = 0;
       const secs = woSeconds(w);
-      const sets = w.s.map((s, i) => `<h4>${t('set')} ${i + 1}<small>${s[0] > 1 ? '× ' + s[0] : ''}</small></h4>${s.slice(1).map(n => {
-        const e = exMap[n[0]]; num++;
-        return `<a class="item" href="#/exercise/${n[0]}"><span class="num">${num}</span><span class="th">${e && e.img ? exImg(e) : '💪'}</span><span class="nm">${esc(e ? exName(e) : '#' + n[0])}<small>${n[2]} ${n[1] == 'second' ? t('sec') : n[1] == 'repeat' ? t('rep') : n[1]}</small></span><span class="go">›</span></a>`;
-      }).join('')}`).join('');
+      const isPro = isUserPro();
+      const needsPro = isProWorkout(w);
+      const isLocked = needsPro && !isPro;
+
+      let sets;
+      if (isLocked) {
+        let count = 0;
+        const previewSets = [];
+        const lockedSets = [];
+        w.s.forEach((s, i) => {
+          const prevItems = [];
+          const lockItems = [];
+          s.slice(1).forEach(n => {
+            count++;
+            const e = exMap[n[0]];
+            if (count <= 2) {
+              prevItems.push(`<div class="item"><span class="num">${count}</span><span class="th">${e && e.img ? exImg(e) : '💪'}</span><span class="nm">${esc(e ? exName(e) : '#' + n[0])}<small>${n[2]} ${n[1] == 'second' ? t('sec') : n[1] == 'repeat' ? t('rep') : n[1]}</small></span><span class="go">🔒</span></div>`);
+            } else {
+              lockItems.push(`<div class="item"><span class="num">${count}</span><span class="th">${e && e.img ? exImg(e) : '💪'}</span><span class="nm">${esc(e ? exName(e) : '#' + n[0])}<small>${n[2]} ${n[1] == 'second' ? t('sec') : n[1] == 'repeat' ? t('rep') : n[1]}</small></span><span class="go">🔒</span></div>`);
+            }
+          });
+          if (prevItems.length) {
+            previewSets.push(`<h4>${t('set')} ${i + 1}<small>${s[0] > 1 ? '× ' + s[0] : ''}</small></h4>${prevItems.join('')}`);
+          }
+          if (lockItems.length) {
+            lockedSets.push(`<h4>${t('set')} ${i + 1}<small>${s[0] > 1 ? '× ' + s[0] : ''}</small></h4>${lockItems.join('')}`);
+          }
+        });
+
+        sets = `
+          <div class="wo-plan-preview">${previewSets.join('')}</div>
+          <div class="wo-plan-locked-wrap" id="wo-plan-locked-wrap">
+            <div class="wo-plan-locked-preview">${lockedSets.join('')}</div>
+            <div class="wo-lock-overlay" id="wo-lock-overlay">
+              <div class="prog-lock-icon" style="margin-bottom:8px;">${uiSvg('bolt', 24)}</div>
+              <div style="font-weight:800;font-size:15px;color:var(--tx);margin-bottom:4px;">
+                ${L == 'ru' ? 'Полный комплекс доступен в PRO' : 'Full workout available with PRO'}
+              </div>
+              <div style="font-size:12px;color:var(--mut);margin-bottom:12px;max-width:300px;line-height:1.4;">
+                ${L == 'ru' ? `Разблокируйте все ${count} упражнений, авто-таймер и ведение дневника` : `Unlock all ${count} exercises, auto-timers and progress tracking`}
+              </div>
+              <button type="button" class="btn prog-unlock-btn" id="wo-unlock-plan" style="padding:10px 18px;font-size:13px;">
+                ${uiSvg('bolt', 14)} ${L == 'ru' ? 'Разблокировать через СБП' : 'Unlock via SBP'}
+              </button>
+            </div>
+          </div>
+        `;
+      } else {
+        sets = w.s.map((s, i) => `<h4>${t('set')} ${i + 1}<small>${s[0] > 1 ? '× ' + s[0] : ''}</small></h4>${s.slice(1).map(n => {
+          const e = exMap[n[0]]; num++;
+          return `<a class="item" href="#/exercise/${n[0]}"><span class="num">${num}</span><span class="th">${e && e.img ? exImg(e) : '💪'}</span><span class="nm">${esc(e ? exName(e) : '#' + n[0])}<small>${n[2]} ${n[1] == 'second' ? t('sec') : n[1] == 'repeat' ? t('rep') : n[1]}</small></span><span class="go">›</span></a>`;
+        }).join('')}`).join('');
+      }
+
       return `<a href="#/workouts">← ${t('workouts')}</a>
       <div class="wcover" style="margin-top:12px">
         <div class="tags" style="margin:0 0 6px;align-items:center">
           ${w._custom ? `<span class="tag pro">${uiSvg('sparkles', 12)} ${L == 'ru' ? 'Моя' : 'Custom'}</span>` : ''}
-          ${w.eq ? `<span class="tag pro">${eqLbl(w.eq)}</span>` : ''}${w.pro ? '<span class="tag">PRO</span>' : ''}
+          ${w.eq ? `<span class="tag pro">${eqLbl(w.eq)}</span>` : ''}
+          ${needsPro ? (isPro ? '<span class="tag pro">PRO</span>' : '<span class="tag pro" style="background:rgba(245,158,11,0.18);color:var(--acc);border:1px solid rgba(245,158,11,0.35);font-weight:900;">🔒 PRO ТРЕНИРОВКА</span>') : ''}
           <span style="flex:1"></span>
           ${w._custom ? `<a href="#/builder/${esc(w.id)}" class="fav-btn" title="${L == 'ru' ? 'Редактировать' : 'Edit'}">${uiSvg('edit', 15)}</a><button type="button" class="fav-btn" id="wo-del" title="${L == 'ru' ? 'Удалить' : 'Delete'}">${uiSvg('trash', 15)}</button>` : ''}
           <a href="#/builder/dup-${esc(w.id)}" class="fav-btn" title="${L == 'ru' ? 'Копировать в конструктор' : 'Duplicate to builder'}">${uiSvg('repeat', 15)}</a>
@@ -2510,8 +2638,14 @@
         <h1>${esc(woName(w))}</h1>
       </div>
       <div class="wstats"><span>${uiSvg('clock', 14)} <b>${Math.max(1, Math.round(secs / 60))} min</b></span><span>${uiSvg('chart', 14)} <b>${diffLbl(w.diff)}</b></span><span>${uiSvg('bolt', 14)} <b>${tempLbl(w.temp)}</b></span>${w.rating ? `<span>★ <b>${w.rating}</b></span>` : ''}</div>
-      <button class="btn block" id="go">${uiSvg('play', 14)} ${t('start')}</button>
-      <button class="btn block btn-warmup" id="warmup">${uiSvg('flame', 15)} ${L == 'ru' ? 'Разминка перед тренировкой (3 мин)' : 'Pre-Workout Warm-Up (3 min)'}</button>
+      ${isLocked ? `
+        <button class="btn block prog-unlock-btn" id="wo-unlock-main" style="margin-top:14px;padding:14px 18px;font-size:15px;display:flex;align-items:center;justify-content:center;gap:8px;">
+          ${uiSvg('bolt', 17)} ${L == 'ru' ? 'Разблокировать тренировку через СБП' : 'Unlock workout via SBP'}
+        </button>
+      ` : `
+        <button class="btn block" id="go">${uiSvg('play', 14)} ${t('start')}</button>
+        <button class="btn block btn-warmup" id="warmup">${uiSvg('flame', 15)} ${L == 'ru' ? 'Разминка перед тренировкой (3 мин)' : 'Pre-Workout Warm-Up (3 min)'}</button>
+      `}
       ${renderMuscleCard(w)}
       ${w.d[L] || w.d.en ? `<div class="box desc">${esc(w.d[L] || w.d.en)}</div>` : ''}
       <div class="plan"><h2>${L == 'ru' ? 'План тренировки' : 'Workout plan'}</h2>${sets}</div>`;
@@ -2958,13 +3092,23 @@
     const ps = getProgState();
     const logs = Array.isArray(ps.logs[p.id]) ? ps.logs[p.id] : [];
     const isAct = String(ps.activeId) === String(p.id);
-    const isPro = localStorage.userIsPro === '1';
+    const isPro = isUserPro();
     return `<a class="card" href="#/program/${p.id}">${p.img ? `<img class="cover" src="${pImg(p)}">` : ''}<div class="b"><h3>${esc(pName(p))}</h3><div class="tags"><span class="tag">${logs.length ? `${logs.length}/${p.days}` : p.days} ${t('days')}</span><span class="tag">${tempLbl(p.temp)}</span>${isAct ? `<span class="tag pro">${uiSvg('pin', 11)} ${L == 'ru' ? 'Активна' : 'Active'}</span>` : (isPro ? '<span class="tag pro">PRO</span>' : '<span class="tag pro" style="background:rgba(245,158,11,0.18);color:var(--acc);border:1px solid rgba(245,158,11,0.35);">🔒 PRO</span>')}</div></div></a>`;
   }
   function workoutCard(w) {
     const first = w.s[0] && w.s[0][1] && exMap[w.s[0][1][0]];
     const isFav = getFavs().has(w.id);
-    return `<a class="card" href="#/workout/${w.id}">${first && first.img ? `<div class="ex-img" style="aspect-ratio:16/9">${exImg(first)}</div>` : ''}<div class="b"><h3>${esc(woName(w))}</h3><div class="tags">${w._custom ? `<span class="tag pro">${uiSvg('sparkles', 11)} ${L == 'ru' ? 'Моя' : 'Custom'}</span>` : ''}<span class="tag">${diffLbl(w.diff)}</span>${w.eq ? `<span class="tag">${eqLbl(w.eq)}</span>` : ''}${w.rating ? `<span class="tag star">★ ${w.rating}</span>` : ''}${isFav ? `<span class="tag pro">${uiSvg('heartFill', 11)}</span>` : ''}</div></div></a>`;
+    const isProW = isProWorkout(w);
+    const isPro = isUserPro();
+    let proTag = '';
+    if (w._custom) {
+      proTag = `<span class="tag pro">${uiSvg('sparkles', 11)} ${L == 'ru' ? 'Моя' : 'Custom'}</span>`;
+    } else if (isProW) {
+      proTag = isPro
+        ? '<span class="tag pro">PRO</span>'
+        : '<span class="tag pro" style="background:rgba(245,158,11,0.18);color:var(--acc);border:1px solid rgba(245,158,11,0.35);font-weight:800;">🔒 PRO</span>';
+    }
+    return `<a class="card" href="#/workout/${w.id}">${first && first.img ? `<div class="ex-img" style="aspect-ratio:16/9">${exImg(first)}</div>` : ''}<div class="b"><h3>${esc(woName(w))}</h3><div class="tags">${proTag}<span class="tag">${diffLbl(w.diff)}</span>${w.eq ? `<span class="tag">${eqLbl(w.eq)}</span>` : ''}${w.rating ? `<span class="tag star">★ ${w.rating}</span>` : ''}${isFav ? `<span class="tag pro">${uiSvg('heartFill', 11)}</span>` : ''}</div></div></a>`;
   }
   function exerciseCard(e) {
     const hasVid = !!getExVideo(e);
@@ -3341,9 +3485,20 @@
     if (name == 'program') {
       const unlockBtn = document.getElementById('prog-unlock-btn');
       if (unlockBtn) unlockBtn.onclick = () => openPaywallModal();
+      const unlockDescBtn = document.getElementById('prog-unlock-desc-btn');
+      if (unlockDescBtn) unlockDescBtn.onclick = () => openPaywallModal();
+      const lockOverlay = document.getElementById('prog-desc-lock-overlay');
+      if (lockOverlay) lockOverlay.onclick = () => openPaywallModal();
+      document.querySelectorAll('.prog-locked-link').forEach(a => {
+        a.onclick = e => {
+          e.preventDefault();
+          vib(20);
+          openPaywallModal();
+        };
+      });
       const pinBtn = document.getElementById('prog-pin');
       if (pinBtn) pinBtn.onclick = () => {
-        if (localStorage.userIsPro !== '1') {
+        if (!isUserPro()) {
           openPaywallModal();
           return;
         }
@@ -3356,7 +3511,7 @@
       };
       const tickBtn = document.getElementById('prog-tick');
       if (tickBtn) tickBtn.onclick = () => {
-        if (localStorage.userIsPro !== '1') {
+        if (!isUserPro()) {
           openPaywallModal();
           return;
         }
@@ -3393,9 +3548,32 @@
     if (name == 'workout') {
       const w = woMap[arg];
       if (w) {
-        document.getElementById('go').onclick = () => play(w);
+        const unlockMain = document.getElementById('wo-unlock-main');
+        if (unlockMain) unlockMain.onclick = () => openPaywallModal();
+        const unlockPlan = document.getElementById('wo-unlock-plan');
+        if (unlockPlan) unlockPlan.onclick = () => openPaywallModal();
+        const lockOverlay = document.getElementById('wo-lock-overlay');
+        if (lockOverlay) lockOverlay.onclick = () => openPaywallModal();
+        const goBtn = document.getElementById('go');
+        if (goBtn) {
+          goBtn.onclick = () => {
+            if (isProWorkout(w) && !isUserPro()) {
+              openPaywallModal();
+              return;
+            }
+            play(w);
+          };
+        }
         const wb = document.getElementById('warmup');
-        if (wb) wb.onclick = () => play(WARMUP_WORKOUT);
+        if (wb) {
+          wb.onclick = () => {
+            if (isProWorkout(w) && !isUserPro()) {
+              openPaywallModal();
+              return;
+            }
+            play(WARMUP_WORKOUT);
+          };
+        }
         const fb = document.getElementById('fav-toggle');
         if (fb) fb.onclick = () => {
           const on = toggleFav(w.id);
@@ -4189,6 +4367,12 @@
   // ---------- player ----------
   const P = document.getElementById('player');
   function play(w) {
+    if (isProWorkout(w) && !isUserPro()) {
+      vib(30);
+      showAppToast(CFG.brand || 'RizzaFit', L == 'ru' ? 'Эта тренировка доступна только в подписке PRO' : 'This workout requires PRO subscription');
+      openPaywallModal();
+      return;
+    }
     unlockAudio();
     requestWakeLock();
     const getRestPreset = () => +(localStorage.restPreset || 0);
