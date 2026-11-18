@@ -137,6 +137,7 @@
       ['workouts', '🏋️ Тренировки'],
       ['exercises', '🤸 Упражнения & Видео'],
       ['users', '👥 Пользователи'],
+      ['payments', '💳 ЮKassa & СБП'],
       ['ai', '🤖 AI-тренер'],
       ['settings', '⚙️ Настройки']
     ].map(([k, n]) => `<button data-t="${k}" class="${tab == k ? 'on' : ''}">${n}</button>`).join('')}</div><div id="tabc"></div></div>`;
@@ -144,7 +145,7 @@
     $('#lo').onclick = () => { token = ''; sessionStorage.removeItem('atok'); showLogin(); };
     $$('.tabs button').forEach(b => b.onclick = () => { tab = b.dataset.t; sub = null; shell(); });
 
-    const tabs = { athlete: tabAthlete, ui: tabUI, programs: tabPrograms, workouts: tabWorkouts, exercises: tabExercises, users: tabUsers, ai: tabAI, settings: tabSettings };
+    const tabs = { athlete: tabAthlete, ui: tabUI, programs: tabPrograms, workouts: tabWorkouts, exercises: tabExercises, users: tabUsers, payments: tabPayments, ai: tabAI, settings: tabSettings };
     if (tabs[tab]) tabs[tab]($('#tabc'));
   }
 
@@ -1022,6 +1023,181 @@
         toast(e.message, 1);
       }
     });
+  }
+
+  // ---------- tab: yookassa payments & SBP ----------
+  async function tabPayments(el) {
+    el.innerHTML = `<div class="box"><p style="color:var(--mut)">Загрузка настроек ЮKassa...</p></div>`;
+    let yk, uData;
+    try {
+      [yk, uData] = await Promise.all([
+        api('admin/yookassa'),
+        api('admin/users')
+      ]);
+    } catch (e) {
+      el.innerHTML = `<div class="box"><p style="color:#ff8f8f">Ошибка: ${esc(e.message)}</p></div>`;
+      return;
+    }
+    const fmtDate = ts => ts ? new Date(ts * 1000).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+    const payments = uData.payments || [];
+
+    el.innerHTML = `
+      <div class="box">
+        <h2 style="margin-top:0">Настройки приёма платежей (ЮKassa / СБП)</h2>
+        <p style="color:var(--mut);line-height:1.5;">
+          Платёжный шлюз ЮKassa позволяет принимать оплату через <b>СБП (Система быстрых платежей)</b> по QR-коду и прямому переходу в банковские приложения (Сбер, Тинькофф, Альфа и др.), а также банковскими картами.
+        </p>
+
+        <label style="display:flex;align-items:center;gap:10px;font-size:14px;font-weight:700;margin:14px 0;cursor:pointer;">
+          <input type="checkbox" id="yk-enabled" ${yk.enabled ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--acc);">
+          <span>Включить приём платежей на сайте</span>
+        </label>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));gap:12px;margin-bottom:12px;">
+          <label class="f">
+            Идентификатор магазина (Shop ID)
+            <input id="yk-shop" value="${esc(yk.shopId || '')}" placeholder="например: 345678" style="padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--txt);">
+          </label>
+          <label class="f">
+            Секретный ключ (Secret Key)
+            <div style="display:flex;gap:6px;">
+              <input id="yk-key" type="password" placeholder="${yk.hasKey ? 'Сохранён (' + yk.keyHint + '), введите новый для смены' : 'live_... или test_...'}" style="flex:1;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--txt);">
+              ${yk.hasKey ? `<button class="btn alt" id="yk-clr-key" style="padding:8px 12px;font-size:12px;">Стереть</button>` : ''}
+            </div>
+          </label>
+        </div>
+
+        <label style="display:flex;align-items:center;gap:10px;font-size:13px;color:var(--mut);margin-bottom:16px;cursor:pointer;">
+          <input type="checkbox" id="yk-sbp-only" ${yk.sbpOnly ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--acc);">
+          <span>Только СБП (QR-код и банковские приложения — мгновенная оплата)</span>
+        </label>
+
+        <div style="background:rgba(255,255,255,.02);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:16px;">
+          <div style="font-weight:700;font-size:13px;margin-bottom:4px;">URL для Webhook (уведомления об оплате):</div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input id="yk-webhook" readonly value="${esc(yk.webhookUrl)}" style="flex:1;font-family:monospace;font-size:12px;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:rgba(0,0,0,.3);color:var(--txt);">
+            <button class="btn alt" id="yk-copy-wh" style="padding:8px 14px;font-size:12px;">Скопировать</button>
+          </div>
+          <div style="font-size:11.5px;color:var(--mut);margin-top:6px;line-height:1.4;">
+            Укажите этот URL в личном кабинете ЮKassa в разделе <b>Интеграция → HTTP-уведомления</b> и отметьте событие <b>payment.succeeded</b>.
+          </div>
+        </div>
+
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button class="btn" id="yk-save" style="animation:none;">Сохранить настройки</button>
+          <button class="btn alt" id="yk-test">⚡ Проверить соединение с ЮKassa</button>
+        </div>
+      </div>
+
+      <div class="box">
+        <h3 style="margin-top:0">Тарифные планы PRO</h3>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:12px;">
+          <div style="padding:14px;border-radius:14px;border:1px solid var(--line);background:rgba(255,255,255,.02);">
+            <div style="font-weight:800;font-size:16px;">1 месяц</div>
+            <div style="font-size:22px;font-weight:900;color:var(--acc);margin:4px 0;">290 ₽</div>
+            <div style="font-size:12px;color:var(--mut);">30 дней полного доступа ко всем программам</div>
+          </div>
+          <div style="padding:14px;border-radius:14px;border:1px solid var(--acc);background:rgba(var(--acr), .05);position:relative;">
+            <span style="position:absolute;top:10px;right:10px;font-size:10px;padding:2px 8px;border-radius:99px;background:var(--acc);color:#000;font-weight:800;">ХИТ 🔥</span>
+            <div style="font-weight:800;font-size:16px;">3 месяца</div>
+            <div style="font-size:22px;font-weight:900;color:var(--acc);margin:4px 0;">690 ₽</div>
+            <div style="font-size:12px;color:var(--mut);">90 дней (~230 ₽/мес, скидка 20%)</div>
+          </div>
+          <div style="padding:14px;border-radius:14px;border:1px solid var(--line);background:rgba(255,255,255,.02);position:relative;">
+            <span style="position:absolute;top:10px;right:10px;font-size:10px;padding:2px 8px;border-radius:99px;background:rgba(255,255,255,.1);color:var(--txt);font-weight:800;">−57% ⚡</span>
+            <div style="font-weight:800;font-size:16px;">1 год</div>
+            <div style="font-size:22px;font-weight:900;color:var(--acc);margin:4px 0;">1 490 ₽</div>
+            <div style="font-size:12px;color:var(--mut);">365 дней (~124 ₽/мес, максимальная выгода)</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="box">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+          <h3 style="margin:0">История платежей</h3>
+          <button class="btn alt" id="yk-refresh" style="padding:6px 12px;font-size:12px;">Обновить</button>
+        </div>
+        ${payments.length ? `
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          ${payments.map(p => {
+            const isPaid = p.status === 'paid';
+            const stColor = isPaid ? '#10b981' : (p.status === 'pending' ? '#f59e0b' : '#9ca3af');
+            const stText = isPaid ? 'Оплачен ✓' : (p.status === 'pending' ? 'Ожидание' : p.status);
+            return `
+            <div style="padding:10px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.02);display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center;">
+              <div>
+                <div style="font-weight:700;font-size:14px;">
+                  @${esc(p.username)} <span style="font-size:12px;color:var(--mut);">· Тариф: ${esc(p.plan)} (${p.days ? p.days + ' дн.' : 'бессрочно'})</span>
+                </div>
+                <div style="font-size:12px;color:var(--mut);margin-top:2px;">
+                  ${fmtDate(p.createdAt)} · Провайдер: <b>${esc(p.provider)}</b> ${p.note ? '· ' + esc(p.note) : ''}
+                </div>
+              </div>
+              <div style="text-align:right;">
+                <div style="font-weight:900;font-size:16px;color:var(--txt);">${p.amount} ${esc(p.currency)}</div>
+                <div style="font-size:11px;font-weight:700;color:${stColor};margin-top:2px;">${stText}</div>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>` : '<p style="color:var(--mut)">Платежей пока не зарегистрировано.</p>'}
+      </div>
+    `;
+
+    $('#yk-copy-wh').onclick = () => {
+      const input = $('#yk-webhook');
+      input.select();
+      navigator.clipboard.writeText(input.value).then(() => toast('URL скопирован в буфер ✓')).catch(() => toast('Скопируйте вручную', 1));
+    };
+
+    if ($('#yk-clr-key')) {
+      $('#yk-clr-key').onclick = async () => {
+        if (!confirm('Удалить секретный ключ ЮKassa?')) return;
+        try {
+          await post('admin/yookassa', { clearKey: true });
+          toast('Ключ удалён');
+          tabPayments(el);
+        } catch (e) {
+          toast(e.message, 1);
+        }
+      };
+    }
+
+    $('#yk-save').onclick = async () => {
+      try {
+        const body = {
+          enabled: $('#yk-enabled').checked,
+          shopId: $('#yk-shop').value.trim(),
+          sbpOnly: $('#yk-sbp-only').checked
+        };
+        const k = $('#yk-key').value.trim();
+        if (k) body.secretKey = k;
+        await post('admin/yookassa', body);
+        toast('Настройки ЮKassa сохранены ✓');
+        tabPayments(el);
+      } catch (e) {
+        toast(e.message, 1);
+      }
+    };
+
+    $('#yk-test').onclick = async () => {
+      try {
+        const btn = $('#yk-test');
+        btn.disabled = true;
+        btn.textContent = 'Проверка...';
+        const k = $('#yk-key').value.trim();
+        const s = $('#yk-shop').value.trim();
+        await post('admin/yookassa/test', { shopId: s, secretKey: k });
+        btn.disabled = false;
+        btn.textContent = '⚡ Проверить соединение с ЮKassa';
+        toast('Соединение с ЮKassa успешно проверено! ✓');
+      } catch (e) {
+        $('#yk-test').disabled = false;
+        $('#yk-test').textContent = '⚡ Проверить соединение с ЮKassa';
+        toast('Ошибка ЮKassa: ' + e.message, 1);
+      }
+    };
+
+    $('#yk-refresh').onclick = () => tabPayments(el);
   }
 
   // ---------- tab: settings ----------

@@ -1,7 +1,7 @@
 """Flexa server: static site + small admin API (stdlib only).
 Run:  python server.py   ->  http://localhost:8080   admin: /admin.html
 """
-import hashlib, hmac, json, os, re, secrets, sqlite3, sys, threading, time, urllib.request, urllib.error
+import base64, hashlib, hmac, json, os, re, secrets, sqlite3, sys, threading, time, urllib.request, urllib.error
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
@@ -120,8 +120,15 @@ def init_db():
             'provider TEXT NOT NULL DEFAULT "manual", '
             'status TEXT NOT NULL DEFAULT "paid", '
             'note TEXT NOT NULL DEFAULT "", '
+            'payment_id TEXT NOT NULL DEFAULT "", '
+            'updated_at INTEGER NOT NULL DEFAULT 0, '
             'created_at INTEGER NOT NULL)'
         )
+        pay_cols = {r[1] for r in conn.execute('PRAGMA table_info(payments)').fetchall()}
+        for col, ddl in [('payment_id', 'TEXT NOT NULL DEFAULT ""'), ('updated_at', 'INTEGER NOT NULL DEFAULT 0')]:
+            if col not in pay_cols:
+                conn.execute(f'ALTER TABLE payments ADD COLUMN {col} {ddl}')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_payments_payment_id ON payments(payment_id)')
         conn.commit()
 
 EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
@@ -175,6 +182,118 @@ def write_json(name, obj):
 AI_FILE = os.path.join(SECRET_DIR, 'ai.json')
 AI_DEFAULT = {'provider': 'gemini', 'base_url': '', 'key': '', 'model': 'gemini-3.8-flash', 'enabled': True, 'prompt': ''}
 coach_hits = {}      # ip -> [timestamps]
+
+PLANS = {
+    '1m': {'id': '1m', 'name': '1 месяц', 'days': 30, 'price': 290, 'badge': 'Базовый', 'desc': '30 дней PRO-доступа'},
+    '3m': {'id': '3m', 'name': '3 месяца', 'days': 90, 'price': 690, 'badge': 'ХИТ 🔥', 'desc': '90 дней (~230 ₽/мес, скидка 20%)'},
+    '1y': {'id': '1y', 'name': '1 год', 'days': 365, 'price': 1490, 'badge': 'ВЫГОДА 57% ⚡', 'desc': '365 дней (~124 ₽/мес)'}
+}
+
+YOOKASSA_FILE = os.path.join(SECRET_DIR, 'yookassa.json')
+YOOKASSA_DEFAULT = {
+    'shop_id': '',
+    'secret_key': '',
+    'enabled': False,
+    'sbp_only': True
+}
+
+def yookassa_cfg():
+    try:
+        with open(YOOKASSA_FILE, encoding='utf-8') as f:
+            return {**YOOKASSA_DEFAULT, **json.load(f)}
+    except Exception:
+        return dict(YOOKASSA_DEFAULT)
+
+def save_yookassa_cfg(cfg):
+    cur = yookassa_cfg()
+    cur.update(cfg)
+    with open(YOOKASSA_FILE, 'w', encoding='utf-8') as f:
+        json.dump(cur, f, ensure_ascii=False, indent=2)
+
+def yookassa_create_payment(shop_id, secret_key, amount_rub, return_url, description, metadata=None, sbp_only=True):
+    auth_str = base64.b64encode(f'{shop_id}:{secret_key}'.encode('utf-8')).decode('ascii')
+    idempotence_key = secrets.token_hex(16)
+    payload = {
+        'amount': {
+            'value': f'{amount_rub:.2f}',
+            'currency': 'RUB'
+        },
+        'confirmation': {
+            'type': 'redirect',
+            'return_url': return_url
+        },
+        'capture': True,
+        'description': description[:128]
+    }
+    if sbp_only:
+        payload['payment_method_data'] = {'type': 'sbp'}
+    if metadata:
+        payload['metadata'] = metadata
+
+    req = urllib.request.Request(
+        'https://api.yookassa.ru/v3/payments',
+        data=json.dumps(payload).encode('utf-8'),
+        headers={
+            'Content-Type': 'application/json',
+            'Idempotence-Key': idempotence_key,
+            'Authorization': f'Basic {auth_str}'
+        }
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+    except urllib.error.HTTPError as e:
+        err_msg = 'Ошибка ЮKassa (%s)' % e.code
+        try:
+            err_body = json.loads(e.read().decode('utf-8'))
+            err_msg = err_body.get('description') or err_body.get('error') or err_msg
+        except Exception:
+            pass
+        raise RuntimeError(err_msg)
+    except urllib.error.URLError as e:
+        raise RuntimeError('Не удалось соединиться с сервером ЮKassa: %s' % e.reason)
+
+def yookassa_get_payment(shop_id, secret_key, payment_id):
+    if not shop_id or not secret_key or not payment_id:
+        return None
+    auth_str = base64.b64encode(f'{shop_id}:{secret_key}'.encode('utf-8')).decode('ascii')
+    req = urllib.request.Request(
+        f'https://api.yookassa.ru/v3/payments/{payment_id}',
+        headers={
+            'Authorization': f'Basic {auth_str}'
+        }
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+    except Exception:
+        return None
+
+def yookassa_test_connection(shop_id, secret_key):
+    auth_str = base64.b64encode(f'{shop_id}:{secret_key}'.encode('utf-8')).decode('ascii')
+    req = urllib.request.Request(
+        'https://api.yookassa.ru/v3/me',
+        headers={
+            'Authorization': f'Basic {auth_str}'
+        }
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            req2 = urllib.request.Request('https://api.yookassa.ru/v3/payments?limit=1', headers={'Authorization': f'Basic {auth_str}'})
+            with urllib.request.urlopen(req2, timeout=15) as r2:
+                return json.loads(r2.read().decode('utf-8'))
+        err_msg = 'Ошибка авторизации ЮKassa (%s)' % e.code
+        try:
+            err_body = json.loads(e.read().decode('utf-8'))
+            err_msg = err_body.get('description') or err_body.get('error') or err_msg
+        except Exception:
+            pass
+        raise RuntimeError(err_msg)
+    except urllib.error.URLError as e:
+        raise RuntimeError('Не удалось подключиться к ЮKassa: %s' % e.reason)
 
 def ai_cfg():
     try:
@@ -472,6 +591,61 @@ class H(SimpleHTTPRequestHandler):
                 state = json.loads(row[0]) if row else {}
                 updated_at = row[1] if row else 0
                 return self.send_j(200, {'user': usr, 'state': state, 'updatedAt': updated_at})
+            if p == '/api/payment/plans':
+                cfg = yookassa_cfg()
+                return self.send_j(200, {
+                    'plans': list(PLANS.values()),
+                    'sbpOnly': cfg.get('sbp_only', True),
+                    'enabled': bool(cfg.get('enabled') and cfg.get('shop_id') and cfg.get('secret_key'))
+                })
+            if p == '/api/payment/check':
+                tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
+                usr = get_user_by_token(tok)
+                pid = parse_qs(urlparse(self.path).query).get('paymentId', [''])[0].strip()
+                if not pid:
+                    return self.send_j(400, {'error': 'Укажите paymentId'})
+                now = int(time.time())
+                with db_lock, sqlite3.connect(DB_FILE) as conn:
+                    row = conn.execute(
+                        'SELECT id, user_id, plan, days, amount, status FROM payments WHERE payment_id = ?',
+                        (pid,)
+                    ).fetchone()
+                if not row:
+                    return self.send_j(404, {'error': 'Платеж не найден'})
+                pay_id, uid, plan_id, days, amount, status = row
+                if status == 'paid':
+                    return self.send_j(200, {'ok': True, 'status': 'paid', 'isPro': True})
+                cfg = yookassa_cfg()
+                if cfg.get('shop_id') and cfg.get('secret_key'):
+                    yk_pay = yookassa_get_payment(cfg['shop_id'], cfg['secret_key'], pid)
+                    if yk_pay and yk_pay.get('status') == 'succeeded':
+                        with db_lock, sqlite3.connect(DB_FILE) as conn:
+                            conn.execute('UPDATE payments SET status = "paid", updated_at = ? WHERE id = ?', (now, pay_id))
+                            u_row = conn.execute('SELECT plan, plan_expires_at FROM users WHERE id = ?', (uid,)).fetchone()
+                            if u_row:
+                                cur_exp = int(u_row[1] or 0)
+                                base = max(now, cur_exp) if u_row[0] == 'pro' and cur_exp > now else now
+                                new_exp = base + days * 86400
+                                conn.execute('UPDATE users SET plan = "pro", plan_expires_at = ? WHERE id = ?', (new_exp, uid))
+                            conn.commit()
+                        return self.send_j(200, {'ok': True, 'status': 'paid', 'isPro': True})
+                    elif yk_pay:
+                        return self.send_j(200, {'ok': True, 'status': yk_pay.get('status', status), 'isPro': False})
+                return self.send_j(200, {'ok': True, 'status': status, 'isPro': False})
+            if p == '/api/admin/yookassa' and self.authed():
+                cfg = yookassa_cfg()
+                host = self.headers.get('Host') or 'rizzafit.ru'
+                proto = 'https' if not host.startswith('localhost') else 'http'
+                webhook_url = f'{proto}://{host}/api/payment/yookassa/webhook'
+                return self.send_j(200, {
+                    'enabled': bool(cfg.get('enabled')),
+                    'shopId': str(cfg.get('shop_id', '')),
+                    'hasKey': bool(cfg.get('secret_key')),
+                    'keyHint': ('…' + cfg['secret_key'][-4:]) if cfg.get('secret_key') else '',
+                    'sbpOnly': bool(cfg.get('sbp_only', True)),
+                    'webhookUrl': webhook_url,
+                    'plans': list(PLANS.values())
+                })
             return self.send_j(404, {'error': 'not found'})
         return super().do_GET()
 
@@ -686,6 +860,100 @@ class H(SimpleHTTPRequestHandler):
                 )
                 conn.commit()
             return self.send_j(200, {'ok': True, 'updatedAt': now})
+        if p == '/api/payment/create':
+            tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
+            usr = get_user_by_token(tok)
+            if not usr:
+                return self.send_j(401, {'error': 'Для оформления подписки войдите в аккаунт или зарегистрируйтесь'})
+            try:
+                j = json.loads(self.body(4096) or b'{}')
+            except Exception:
+                return self.send_j(400, {'error': 'bad json'})
+            plan_id = str(j.get('planId') or '3m').strip()
+            plan = PLANS.get(plan_id)
+            if not plan:
+                return self.send_j(400, {'error': 'Некорректный тарифный план'})
+            cfg = yookassa_cfg()
+            if not cfg.get('enabled') or not cfg.get('shop_id') or not cfg.get('secret_key'):
+                return self.send_j(400, {
+                    'error': 'Приём платежей ЮKassa пока не настроен. Укажите Shop ID и Секретный ключ в панели управления (раздел 💳 ЮKassa & СБП).',
+                    'notConfigured': True
+                })
+            host = self.headers.get('Host') or 'rizzafit.ru'
+            proto = 'https' if not host.startswith('localhost') else 'http'
+            return_url = f'{proto}://{host}/#pay_success'
+            desc = f'RizzaFit PRO — {plan["name"]} (@{usr["username"]})'
+            meta = {
+                'user_id': str(usr['id']),
+                'username': usr['username'],
+                'plan_id': plan_id,
+                'days': str(plan['days'])
+            }
+            try:
+                pay_res = yookassa_create_payment(
+                    shop_id=cfg['shop_id'],
+                    secret_key=cfg['secret_key'],
+                    amount_rub=plan['price'],
+                    return_url=return_url,
+                    description=desc,
+                    metadata=meta,
+                    sbp_only=bool(cfg.get('sbp_only', True))
+                )
+            except RuntimeError as e:
+                return self.send_j(502, {'error': str(e)})
+            except Exception as e:
+                return self.send_j(500, {'error': 'Не удалось создать платеж в ЮKassa'})
+
+            pay_id = pay_res.get('id', '')
+            conf = pay_res.get('confirmation') or {}
+            conf_url = conf.get('confirmation_url', '')
+            now = int(time.time())
+            with db_lock, sqlite3.connect(DB_FILE) as conn:
+                conn.execute(
+                    'INSERT INTO payments (user_id, plan, days, amount, currency, provider, status, note, payment_id, created_at, updated_at) '
+                    'VALUES (?, ?, ?, ?, "RUB", "yookassa", "pending", ?, ?, ?, ?)',
+                    (usr['id'], plan_id, plan['days'], plan['price'], 'YooKassa ' + ('СБП' if cfg.get('sbp_only', True) else 'Касса'), pay_id, now, now)
+                )
+                conn.commit()
+            return self.send_j(200, {'ok': True, 'paymentUrl': conf_url, 'paymentId': pay_id, 'plan': plan})
+        if p == '/api/payment/yookassa/webhook':
+            try:
+                raw_b = self.body(64 * 1024)
+                j = json.loads(raw_b or b'{}')
+            except Exception:
+                return self.send_j(400, {'error': 'bad json'})
+            event = j.get('event')
+            obj = j.get('object') or {}
+            if event == 'payment.succeeded' and obj.get('status') == 'succeeded':
+                pay_id = obj.get('id', '')
+                meta = obj.get('metadata') or {}
+                uid = int(meta.get('user_id') or 0)
+                plan_id = str(meta.get('plan_id') or '3m')
+                days = int(meta.get('days') or PLANS.get(plan_id, {}).get('days', 30))
+                amt_str = (obj.get('amount') or {}).get('value') or '0'
+                amount = int(float(amt_str))
+                now = int(time.time())
+                with db_lock, sqlite3.connect(DB_FILE) as conn:
+                    row = conn.execute('SELECT id, user_id, days FROM payments WHERE payment_id = ?', (pay_id,)).fetchone()
+                    if row:
+                        conn.execute('UPDATE payments SET status = "paid", updated_at = ? WHERE id = ?', (now, row[0]))
+                        uid = row[1] or uid
+                        days = row[2] or days
+                    else:
+                        conn.execute(
+                            'INSERT INTO payments (user_id, plan, days, amount, currency, provider, status, note, payment_id, created_at, updated_at) '
+                            'VALUES (?, ?, ?, ?, "RUB", "yookassa", "paid", "Webhook", ?, ?, ?)',
+                            (uid, plan_id, days, amount, pay_id, now, now)
+                        )
+                    if uid:
+                        u_row = conn.execute('SELECT plan, plan_expires_at FROM users WHERE id = ?', (uid,)).fetchone()
+                        if u_row:
+                            cur_exp = int(u_row[1] or 0)
+                            base = max(now, cur_exp) if u_row[0] == 'pro' and cur_exp > now else now
+                            new_exp = base + days * 86400
+                            conn.execute('UPDATE users SET plan = "pro", plan_expires_at = ? WHERE id = ?', (new_exp, uid))
+                    conn.commit()
+            return self.send_j(200, {'ok': True})
         if p == '/api/login':
             ip = self.client_address[0]
             c, last = fails.get(ip, (0, 0))
@@ -828,6 +1096,41 @@ class H(SimpleHTTPRequestHandler):
                 )
                 conn.commit()
             return self.send_j(200, {'ok': True, 'code': code})
+        if p == '/api/admin/yookassa':
+            try:
+                j = json.loads(self.body(16 * 1024) or b'{}')
+            except Exception:
+                return self.send_j(400, {'error': 'bad json'})
+            cur = yookassa_cfg()
+            if 'shopId' in j:
+                cur['shop_id'] = str(j['shopId']).strip()
+            if j.get('secretKey'):
+                cur['secret_key'] = str(j['secretKey']).strip()
+            if j.get('clearKey'):
+                cur['secret_key'] = ''
+            if 'enabled' in j:
+                cur['enabled'] = bool(j['enabled'])
+            if 'sbpOnly' in j:
+                cur['sbp_only'] = bool(j['sbpOnly'])
+            save_yookassa_cfg(cur)
+            return self.send_j(200, {'ok': True})
+        if p == '/api/admin/yookassa/test':
+            try:
+                j = json.loads(self.body(16 * 1024) or b'{}')
+            except Exception:
+                j = {}
+            cur = yookassa_cfg()
+            shop_id = str(j.get('shopId') or cur.get('shop_id', '')).strip()
+            secret_key = str(j.get('secretKey') or cur.get('secret_key', '')).strip()
+            if not shop_id or not secret_key:
+                return self.send_j(400, {'error': 'Укажите Shop ID и Секретный ключ для проверки соединения'})
+            try:
+                res = yookassa_test_connection(shop_id, secret_key)
+                return self.send_j(200, {'ok': True, 'account': res})
+            except RuntimeError as e:
+                return self.send_j(400, {'error': str(e)})
+            except Exception as e:
+                return self.send_j(500, {'error': f'Ошибка соединения: {e}'})
         self.send_j(404, {'error': 'not found'})
 
 if __name__ == '__main__':

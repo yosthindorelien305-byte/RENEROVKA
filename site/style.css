@@ -5307,3 +5307,391 @@ main#app.fx-enter {
 .ap-set-logout-btn:active {
   transform: scale(0.98);
 }
+
+/* ===================================================
+   RIZZAFIT PRO PAYWALL & PROGRAM LOCK
+   =================================================== */
+
+.prog-lock-box {
+  position: relative;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  background: linear-gradient(180deg, rgba(245, 158, 11, 0.08) 0%, rgba(20, 26, 21, 0.95) 100%);
+  padding: 18px;
+  border-radius: 20px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+.prog-lock-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #000;
+  font-size: 10.5px;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+  padding: 3px 9px;
+  border-radius: 99px;
+  margin-bottom: 12px;
+}
+
+.prog-lock-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.prog-lock-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: var(--acc, #f59e0b);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.prog-lock-title {
+  font-weight: 800;
+  font-size: 16px;
+  color: var(--tx);
+  line-height: 1.25;
+}
+
+.prog-lock-sub {
+  font-size: 12px;
+  color: var(--mut);
+  margin-top: 3px;
+  line-height: 1.35;
+}
+
+.prog-lock-feats {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+}
+
+.prog-lock-feat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--tx);
+}
+
+.prog-lock-feat svg {
+  color: var(--acc, #f59e0b);
+  flex-shrink: 0;
+}
+
+.prog-unlock-btn {
+  background: linear-gradient(135deg, var(--acc, #f59e0b), #d97706);
+  color: #000 !important;
+  font-weight: 800 !important;
+  font-size: 14px !important;
+  padding: 12px 16px !important;
+  border: none !important;
+  box-shadow: 0 4px 18px rgba(245, 158, 11, 0.35);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.prog-unlock-btn:active {
+  transform: scale(0.98);
+}
+
+/* Paywall Modal */
+.ap-paywall-modal {
+  max-width: 440px !important;
+  padding: 22px 20px !important;
+  border-radius: 26px !important;
+  border: 1px solid rgba(245, 158, 11, 0.35) !important;
+  background: linear-gradient(180deg, #1c261e 0%, #151d16 100%) !important;
+  box-shadow: 0 25px 70px rgba(0, 0, 0, 0.85), 0 0 40px rgba(245, 158, 11, 0.12) !important;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.ap-pw-header {
+  position: relative;
+  text-align: center;
+  padding-top: 6px;
+  margin-bottom: 16px;
+}
+
+.ap-pw-crown {
+  width: 52px;
+  height: 52px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.22), rgba(217, 119, 6, 0.1));
+  border: 1px solid rgba(245, 158, 11, 0.5);
+  color: var(--acc, #f59e0b);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 10px;
+  box-shadow: 0 0 20px rgba(245, 158, 11, 0.25);
+}
+
+.ap-pw-close {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--mut);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 700;
+  transition: all 0.15s ease;
+}
+
+.ap-pw-close:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--tx);
+}
+
+.ap-pw-title {
+  font-size: 22px;
+  font-weight: 900;
+  color: var(--tx);
+  letter-spacing: -0.3px;
+}
+
+.ap-pw-title span {
+  color: var(--acc, #f59e0b);
+  background: linear-gradient(135deg, #fcd34d, #f59e0b);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.ap-pw-subtitle {
+  font-size: 12.5px;
+  color: var(--mut);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.ap-pw-features {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+
+.ap-pw-feat-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--tx);
+}
+
+.ap-pw-feat-ic {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--acc, #f59e0b);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.ap-pw-plans-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.ap-pw-plan-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1.5px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.ap-pw-plan-card:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.ap-pw-plan-card.active {
+  border-color: var(--acc, #f59e0b);
+  background: rgba(245, 158, 11, 0.1);
+  box-shadow: 0 4px 18px rgba(245, 158, 11, 0.18);
+}
+
+.ap-pw-plan-badge {
+  position: absolute;
+  top: -8px;
+  right: 14px;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #000;
+  font-size: 10px;
+  font-weight: 900;
+  padding: 2px 8px;
+  border-radius: 99px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.ap-pw-plan-radio {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--mut);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.ap-pw-plan-card.active .ap-pw-plan-radio {
+  border-color: var(--acc, #f59e0b);
+  background: var(--acc, #f59e0b);
+  box-shadow: inset 0 0 0 3px #1c261e;
+}
+
+.ap-pw-plan-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.ap-pw-plan-name {
+  font-weight: 800;
+  font-size: 14.5px;
+  color: var(--tx);
+}
+
+.ap-pw-plan-note {
+  font-size: 11.5px;
+  color: var(--mut);
+  margin-top: 2px;
+}
+
+.ap-pw-plan-price {
+  font-size: 17px;
+  font-weight: 900;
+  color: var(--tx);
+  letter-spacing: -0.2px;
+}
+
+.ap-pw-plan-card.active .ap-pw-plan-price {
+  color: var(--acc, #f59e0b);
+}
+
+/* SBP payment method box */
+.ap-pw-sbp-box {
+  background: rgba(245, 158, 11, 0.05);
+  border: 1px dashed rgba(245, 158, 11, 0.35);
+  border-radius: 14px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+}
+
+.ap-pw-sbp-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--tx);
+  margin-bottom: 3px;
+}
+
+.ap-pw-sbp-logo {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 900;
+  padding: 2px 6px;
+  border-radius: 6px;
+  letter-spacing: 0.5px;
+}
+
+.ap-pw-sbp-hint {
+  font-size: 11px;
+  color: var(--mut);
+  line-height: 1.35;
+}
+
+.ap-pw-guest-box {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+.ap-pw-account-box {
+  font-size: 12px;
+  color: var(--mut);
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+.ap-pw-account-box b {
+  color: var(--acc, #f59e0b);
+}
+
+.ap-pw-err {
+  font-size: 12px;
+  color: #f87171;
+  text-align: center;
+  margin-bottom: 10px;
+  line-height: 1.4;
+  min-height: 0;
+}
+
+.ap-pw-submit-btn {
+  background: linear-gradient(135deg, var(--acc, #f59e0b), #d97706) !important;
+  color: #000 !important;
+  font-weight: 800 !important;
+  font-size: 14.5px !important;
+  padding: 13px !important;
+  border-radius: 14px !important;
+  box-shadow: 0 4px 20px rgba(245, 158, 11, 0.4) !important;
+  border: none !important;
+  margin-bottom: 10px !important;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.ap-pw-submit-btn:active {
+  transform: scale(0.98);
+}
+
+.ap-pw-guarantee {
+  font-size: 11px;
+  color: var(--mut);
+  text-align: center;
+  line-height: 1.35;
+}

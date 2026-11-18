@@ -1138,24 +1138,250 @@
     showAppToast(CFG.brand || 'RizzaFit', L == 'ru' ? 'Вы вышли из аккаунта' : 'Signed out');
   }
 
-  function openCloudProModal() {
-    vib(20);
+  function showPayCelebrationModal() {
+    vib(40);
+    sfx('win');
     const bd = document.createElement('div');
     bd.className = 'ap-modal-backdrop';
-    bd.innerHTML = `<div class="ap-modal">
-      <h3>${uiSvg('bolt', 17)} ${esc(CFG.brand || 'RizzaFit')} PRO</h3>
-      <div style="font-size:13px;color:var(--mut);line-height:1.55;margin-bottom:14px;">
-        ${L == 'ru'
-          ? '• Безлимитная синхронизация прогресса между ПК и телефоном<br>• Доступ к персональному AI-тренеру<br>• Расширенные программы тренировок и аналитика<br><br>Ваш логин: <b>@' + esc(localStorage.userName || '') + '</b><br>Статус PRO выдаётся администратором после оплаты (скоро подключим автооплату).'
-          : '• Full cross-device sync<br>• AI Coach access<br>• All programs & analytics'}
+    bd.innerHTML = `
+      <div class="ap-modal" style="text-align:center;padding:28px 22px;">
+        <div style="font-size:44px;line-height:1;margin-bottom:12px;">🎉</div>
+        <h3 style="font-size:20px;font-weight:900;margin:0 0 8px;color:var(--acc);">
+          ${L == 'ru' ? 'Подписка PRO активирована!' : 'PRO Subscription Activated!'}
+        </h3>
+        <p style="font-size:13.5px;color:var(--mut);line-height:1.55;margin:0 0 20px;">
+          ${L == 'ru'
+            ? 'Поздравляем! Вам открыт полный доступ ко всем программам тренировок, трекеру прогресса, AI-тренеру и облачной синхронизации.'
+            : 'Congratulations! You now have full access to all workout programs, day tracker, AI coach and cloud sync.'}
+        </p>
+        <button type="button" class="btn block" id="pw-celeb-btn" style="padding:12px;font-size:14px;font-weight:800;">
+          ${L == 'ru' ? 'К программам тренировок 🚀' : 'Start Training 🚀'}
+        </button>
       </div>
-      <div class="ap-modal-actions">
-        <button type="button" class="btn" id="pro-ok">${L == 'ru' ? 'Понятно' : 'OK'}</button>
-      </div>
-    </div>`;
+    `;
+    document.body.appendChild(bd);
+    bd.querySelector('#pw-celeb-btn').onclick = () => {
+      bd.remove();
+      window.location.hash = '#/workouts/programs';
+      render();
+    };
+    bd.onclick = ev => { if (ev.target === bd) bd.remove(); };
+  }
+
+  async function checkPendingPayment() {
+    const hash = window.location.hash || '';
+    const pid = sessionStorage.pendingPaymentId || (hash.match(/paymentId=([a-zA-Z0-9_-]+)/) || [])[1];
+    if (hash.includes('pay_success') || pid) {
+      if (hash.includes('pay_success')) {
+        history.replaceState(null, '', window.location.pathname + '#/workouts/programs');
+      }
+      if (!pid) {
+        if (localStorage.userToken && !isLocalToken(localStorage.userToken)) {
+          await pullCloudSync(false);
+          if (localStorage.userIsPro === '1') {
+            showPayCelebrationModal();
+            render();
+          }
+        }
+        return;
+      }
+      try {
+        const tok = localStorage.userToken;
+        const res = await fetch('/api/payment/check?paymentId=' + encodeURIComponent(pid), {
+          headers: tok ? { Authorization: 'Bearer ' + tok } : {}
+        });
+        const data = await res.json();
+        if (data && data.isPro) {
+          localStorage.userIsPro = '1';
+          sessionStorage.removeItem('pendingPaymentId');
+          showPayCelebrationModal();
+          render();
+        }
+      } catch (e) {
+        console.warn('Payment check error:', e);
+      }
+    }
+  }
+
+  function openPaywallModal(suggestedPlanId = '3m') {
+    vib(20);
+    let selPlan = suggestedPlanId;
+    const PLANS_DATA = [
+      { id: '1m', name: L == 'ru' ? '1 месяц' : '1 Month', days: 30, price: 290, badge: '', note: L == 'ru' ? '9.6 ₽ в день' : '9.6 ₽/day' },
+      { id: '3m', name: L == 'ru' ? '3 месяца' : '3 Months', days: 90, price: 690, badge: 'ХИТ 🔥', sub: '−20%', note: L == 'ru' ? '7.6 ₽ в день (~230 ₽/мес)' : '7.6 ₽/day' },
+      { id: '1y', name: L == 'ru' ? '1 год' : '1 Year', days: 365, price: 1490, badge: 'ВЫГОДА 57% ⚡', sub: '−57%', note: L == 'ru' ? '4.0 ₽ в день (~124 ₽/мес)' : '4.0 ₽/day' }
+    ];
+
+    const tok = localStorage.userToken;
+    const isGuest = !tok || isLocalToken(tok);
+    const uname = localStorage.userName || '';
+
+    const bd = document.createElement('div');
+    bd.className = 'ap-modal-backdrop';
+
+    function renderModalContent() {
+      const curPlanObj = PLANS_DATA.find(p => p.id === selPlan) || PLANS_DATA[1];
+      bd.innerHTML = `
+        <div class="ap-modal ap-paywall-modal">
+          <div class="ap-pw-header">
+            <div class="ap-pw-crown">${uiSvg('bolt', 24)}</div>
+            <button type="button" class="ap-pw-close" id="pw-close">✕</button>
+            <div class="ap-pw-title">${esc(CFG.brand || 'RizzaFit')} <span>PRO</span></div>
+            <div class="ap-pw-subtitle">
+              ${L == 'ru' ? 'Разблокируйте все программы тренировок и умные функции' : 'Unlock all workout programs & smart features'}
+            </div>
+          </div>
+
+          <div class="ap-pw-features">
+            <div class="ap-pw-feat-item">
+              <span class="ap-pw-feat-ic">${uiSvg('dumbbell', 14)}</span>
+              <span>${L == 'ru' ? '<b>Все программы тренировок:</b> 100 отжиманий, 50 подтягиваний, Frank Medrano, Спарта и др.' : '<b>All programs:</b> 100 pushups, 50 pullups, calisthenics routines.'}</span>
+            </div>
+            <div class="ap-pw-feat-item">
+              <span class="ap-pw-feat-ic">${uiSvg('trend', 14)}</span>
+              <span>${L == 'ru' ? '<b>Трекер прогресса по дням:</b> пошаговая прогрессия и история каждого дня' : '<b>Daily tracker:</b> step-by-step day logs and history'}</span>
+            </div>
+            <div class="ap-pw-feat-item">
+              <span class="ap-pw-feat-ic">${uiSvg('sparkles', 14)}</span>
+              <span>${L == 'ru' ? '<b>Персональный AI-тренер:</b> ответы по технике, советам и планам' : '<b>AI Coach:</b> technique advice, form tips and recovery'}</span>
+            </div>
+            <div class="ap-pw-feat-item">
+              <span class="ap-pw-feat-ic">${uiSvg('check', 14)}</span>
+              <span>${L == 'ru' ? '<b>Облачная синхронизация:</b> тренировки и рекорды на ПК и телефоне' : '<b>Cloud sync:</b> auto-backup across all your devices'}</span>
+            </div>
+          </div>
+
+          <div class="ap-pw-plans-grid">
+            ${PLANS_DATA.map(p => {
+              const active = p.id === selPlan;
+              return `
+              <div class="ap-pw-plan-card ${active ? 'active' : ''}" data-pid="${p.id}">
+                ${p.badge ? `<div class="ap-pw-plan-badge">${p.badge}</div>` : ''}
+                <div class="ap-pw-plan-radio"></div>
+                <div class="ap-pw-plan-info">
+                  <div class="ap-pw-plan-name">${p.name}</div>
+                  <div class="ap-pw-plan-note">${p.note}</div>
+                </div>
+                <div class="ap-pw-plan-price">${p.price} ₽</div>
+              </div>`;
+            }).join('')}
+          </div>
+
+          <div class="ap-pw-sbp-box">
+            <div class="ap-pw-sbp-badge">
+              <span class="ap-pw-sbp-logo">⚡ СБП</span>
+              <span>${L == 'ru' ? 'Система быстрых платежей' : 'Fast Payment System'}</span>
+            </div>
+            <div class="ap-pw-sbp-hint">
+              ${L == 'ru'
+                ? 'Без ввода данных карты. Оплата в приложении любого банка РФ (Сбер, Тинькофф, Альфа, ВТБ).'
+                : 'Instant payment in Russian banking apps via QR or direct redirect.'}
+            </div>
+          </div>
+
+          ${isGuest ? `
+          <div class="ap-pw-guest-box">
+            <div style="font-size:11.5px;color:var(--mut);line-height:1.4;">
+              ${L == 'ru' ? '💡 Совет: войдите в аккаунт, чтобы подписка навсегда привязалась к вашему профилю.' : 'Sign in to link subscription to your account.'}
+            </div>
+            <button type="button" class="btn alt" id="pw-auth-btn" style="padding:6px 12px;font-size:12px;margin-top:6px;">
+              ${L == 'ru' ? 'Войти / Создать аккаунт' : 'Sign In / Register'}
+            </button>
+          </div>` : `
+          <div class="ap-pw-account-box">
+            <span>${L == 'ru' ? 'Подписка для:' : 'Account:'} <b>@${esc(uname)}</b> ✓</span>
+          </div>`}
+
+          <div id="pw-err" class="ap-pw-err"></div>
+
+          <button type="button" class="btn block ap-pw-submit-btn" id="pw-submit">
+            ${uiSvg('bolt', 16)} ${L == 'ru' ? `Оплатить ${curPlanObj.price} ₽ через СБП` : `Pay ${curPlanObj.price} ₽ via SBP`}
+          </button>
+
+          <div class="ap-pw-guarantee">
+            ${L == 'ru' ? '🔒 Безопасные платежи через ЮKassa · Без скрытых списаний' : 'Secure payments powered by YooKassa'}
+          </div>
+        </div>
+      `;
+
+      bd.querySelector('#pw-close').onclick = () => bd.remove();
+
+      bd.querySelectorAll('.ap-pw-plan-card').forEach(card => {
+        card.onclick = () => {
+          vib(15);
+          selPlan = card.dataset.pid;
+          renderModalContent();
+        };
+      });
+
+      const authBtn = bd.querySelector('#pw-auth-btn');
+      if (authBtn) {
+        authBtn.onclick = () => {
+          bd.remove();
+          openCloudAuthModal(() => openPaywallModal(selPlan));
+        };
+      }
+
+      const submitBtn = bd.querySelector('#pw-submit');
+      const errBox = bd.querySelector('#pw-err');
+      submitBtn.onclick = async () => {
+        vib(25);
+        if (isGuest) {
+          errBox.textContent = L == 'ru'
+            ? 'Пожалуйста, войдите в аккаунт или зарегистрируйтесь (займет 10 сек), чтобы активировать подписку.'
+            : 'Please sign in or register to link your subscription.';
+          openCloudAuthModal(() => openPaywallModal(selPlan));
+          return;
+        }
+        submitBtn.disabled = true;
+        submitBtn.textContent = L == 'ru' ? 'Подключение к ЮKassa...' : 'Connecting to YooKassa...';
+        errBox.textContent = '';
+        try {
+          const resp = await fetch('/api/payment/create', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ' + localStorage.userToken
+            },
+            body: JSON.stringify({ planId: selPlan })
+          });
+          const data = await resp.json();
+          if (!resp.ok || !data.ok) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = L == 'ru' ? `Оплатить ${curPlanObj.price} ₽ через СБП` : `Pay ${curPlanObj.price} ₽ via SBP`;
+            if (data && data.notConfigured) {
+              errBox.innerHTML = L == 'ru'
+                ? 'Платёжный шлюз ЮKassa пока не активирован в панели управления.<br>Администратор может включить его в разделе <b>💳 ЮKassa & СБП</b>.'
+                : 'YooKassa is not configured yet in the admin panel.';
+            } else {
+              errBox.textContent = data.error || (L == 'ru' ? 'Не удалось создать платёж' : 'Failed to create payment');
+            }
+            return;
+          }
+          if (data.paymentId) {
+            sessionStorage.pendingPaymentId = data.paymentId;
+          }
+          if (data.paymentUrl) {
+            window.location.href = data.paymentUrl;
+          } else {
+            errBox.textContent = L == 'ru' ? 'ЮKassa не вернула ссылку на оплату' : 'No payment URL returned';
+            submitBtn.disabled = false;
+          }
+        } catch (e) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = L == 'ru' ? `Оплатить ${curPlanObj.price} ₽ через СБП` : `Pay ${curPlanObj.price} ₽ via SBP`;
+          errBox.textContent = e.message || 'Ошибка сети';
+        }
+      };
+    }
+
+    renderModalContent();
     document.body.appendChild(bd);
     bd.onclick = ev => { if (ev.target === bd) bd.remove(); };
-    bd.querySelector('#pro-ok').onclick = () => bd.remove();
+  }
+
+  function openCloudProModal() {
+    openPaywallModal();
   }
 
   function openCloudAcctModal(cb) {
@@ -2117,9 +2343,12 @@
       const isAct = String(ps.activeId) === String(p.id);
       const todayIso = new Date().toISOString().slice(0, 10);
       const doneToday = logs.includes(todayIso);
+      const isPro = localStorage.userIsPro === '1';
+
       return `<a href="#/workouts/programs">← ${t('programs')}</a><h1>${esc(pName(p))}</h1>
-      <div class="tags"><span class="tag">${p.days} ${t('days')}</span><span class="tag">${t('pace')}: ${tempLbl(p.temp)}</span>${p.pro ? '<span class="tag pro">PRO</span>' : ''}</div>
+      <div class="tags"><span class="tag">${p.days} ${t('days')}</span><span class="tag">${t('pace')}: ${tempLbl(p.temp)}</span><span class="tag pro" style="background:linear-gradient(135deg,var(--acc),#f59e0b);color:#000;font-weight:900;">PRO</span></div>
       ${p.img ? `<p><img src="${pImg(p)}" style="width:100%;max-height:360px;object-fit:cover;border-radius:16px"></p>` : ''}
+      ${isPro ? `
       <div class="ss-card prog-tracker">
         <div class="ss-card-title">
           <b>${uiSvg('trend', 15)} ${L == 'ru' ? 'Прогресс программы' : 'Program Progress'}</b>
@@ -2138,7 +2367,25 @@
             <button type="button" class="prog-link-btn" id="prog-reset" data-pid="${p.id}">${L == 'ru' ? 'Сброс' : 'Reset'}</button>
           </div>
         </div>` : ''}
-      </div>
+      </div>` : `
+      <div class="ss-card prog-lock-box">
+        <div class="prog-lock-badge">${uiSvg('bolt', 12)} PRO PROGRAM</div>
+        <div class="prog-lock-head">
+          <div class="prog-lock-icon">${uiSvg('bolt', 24)}</div>
+          <div>
+            <div class="prog-lock-title">${L == 'ru' ? 'Программа доступна в RizzaFit PRO' : 'Available with RizzaFit PRO'}</div>
+            <div class="prog-lock-sub">${L == 'ru' ? 'Отслеживание дней, сохранение тренировок и пошаговый прогресс' : 'Daily tracking, workout logs and progression'}</div>
+          </div>
+        </div>
+        <div class="prog-lock-feats">
+          <div class="prog-lock-feat">${uiSvg('check', 13)} ${L == 'ru' ? 'Полный доступ к курсу на ' + p.days + ' дней' : 'Full access to ' + p.days + ' days'}</div>
+          <div class="prog-lock-feat">${uiSvg('check', 13)} ${L == 'ru' ? 'Умная отметка выполненных дней и аналитика' : 'Day progression tracking'}</div>
+          <div class="prog-lock-feat">${uiSvg('check', 13)} ${L == 'ru' ? 'Оплата через СБП в 1 клик (от 290 ₽)' : 'Instant SBP payment (from 290 ₽)'}</div>
+        </div>
+        <button type="button" class="btn block prog-unlock-btn" id="prog-unlock-btn">
+          ${uiSvg('bolt', 15)} ${L == 'ru' ? 'Разблокировать программу через СБП' : 'Unlock program with PRO'}
+        </button>
+      </div>`}
       <div class="box desc">${d}</div>`;
     },
     workouts(tab) {
@@ -2711,7 +2958,8 @@
     const ps = getProgState();
     const logs = Array.isArray(ps.logs[p.id]) ? ps.logs[p.id] : [];
     const isAct = String(ps.activeId) === String(p.id);
-    return `<a class="card" href="#/program/${p.id}">${p.img ? `<img class="cover" src="${pImg(p)}">` : ''}<div class="b"><h3>${esc(pName(p))}</h3><div class="tags"><span class="tag">${logs.length ? `${logs.length}/${p.days}` : p.days} ${t('days')}</span><span class="tag">${tempLbl(p.temp)}</span>${isAct ? `<span class="tag pro">${uiSvg('pin', 11)} ${L == 'ru' ? 'Активна' : 'Active'}</span>` : (p.pro ? '<span class="tag pro">PRO</span>' : '')}</div></div></a>`;
+    const isPro = localStorage.userIsPro === '1';
+    return `<a class="card" href="#/program/${p.id}">${p.img ? `<img class="cover" src="${pImg(p)}">` : ''}<div class="b"><h3>${esc(pName(p))}</h3><div class="tags"><span class="tag">${logs.length ? `${logs.length}/${p.days}` : p.days} ${t('days')}</span><span class="tag">${tempLbl(p.temp)}</span>${isAct ? `<span class="tag pro">${uiSvg('pin', 11)} ${L == 'ru' ? 'Активна' : 'Active'}</span>` : (isPro ? '<span class="tag pro">PRO</span>' : '<span class="tag pro" style="background:rgba(245,158,11,0.18);color:var(--acc);border:1px solid rgba(245,158,11,0.35);">🔒 PRO</span>')}</div></div></a>`;
   }
   function workoutCard(w) {
     const first = w.s[0] && w.s[0][1] && exMap[w.s[0][1][0]];
@@ -3091,8 +3339,14 @@
       draw(); window.scrollTo(0, 0);
     }
     if (name == 'program') {
+      const unlockBtn = document.getElementById('prog-unlock-btn');
+      if (unlockBtn) unlockBtn.onclick = () => openPaywallModal();
       const pinBtn = document.getElementById('prog-pin');
       if (pinBtn) pinBtn.onclick = () => {
+        if (localStorage.userIsPro !== '1') {
+          openPaywallModal();
+          return;
+        }
         vib(25);
         const ps = getProgState();
         const pid = pinBtn.dataset.pid;
@@ -3102,6 +3356,10 @@
       };
       const tickBtn = document.getElementById('prog-tick');
       if (tickBtn) tickBtn.onclick = () => {
+        if (localStorage.userIsPro !== '1') {
+          openPaywallModal();
+          return;
+        }
         vib(35); sfx('done');
         const ps = getProgState();
         const pid = tickBtn.dataset.pid;
@@ -4582,7 +4840,8 @@
   }
   setInterval(checkDailyReminder, 30000);
 
-  window.addEventListener('hashchange', render);
+  window.addEventListener('hashchange', () => { checkPendingPayment(); render(); });
+  checkPendingPayment();
   render();
   pullCloudSync(false);
   setTimeout(checkDailyReminder, 1500);
