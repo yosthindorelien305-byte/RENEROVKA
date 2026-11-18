@@ -2094,7 +2094,7 @@
         </div>
       </div>
 
-      ${on('featured') ? `<h2>${t('prev')}<a href="#/programs">${esc(t('seeAll'))}</a></h2><div class="grid">${star.map(programCard).join('')}</div>` : ''}`;
+      ${on('featured') ? `<h2>${t('prev')}<a href="#/workouts/programs">${esc(t('seeAll'))}</a></h2><div class="grid">${star.map(programCard).join('')}</div>` : ''}`;
     },
     coach() {
       if (!COACH.enabled) return `<h1 style="display:flex;align-items:center;gap:8px;">${uiSvg('sparkles', 22)} ${esc(t('coachTitle'))}</h1><div class="empty">${esc(t('coachOff'))}</div>`;
@@ -2104,8 +2104,8 @@
       <form class="composer" id="cform"><input id="cin" placeholder="${esc(t('coachPh'))}" autocomplete="off" maxlength="1000"><button class="send" aria-label="send">➤</button></form>
       <p style="text-align:center"><button class="btn alt" id="cclr" style="padding:6px 14px;font-size:12px">${esc(t('coachClear'))}</button></p></div>`;
     },
-    programs() {
-      return `<h1>${t('programs')}</h1><div class="grid">${D.programs.map(programCard).join('')}</div>`;
+    programs(arg) {
+      return routes.workouts('programs');
     },
     program(id) {
       const p = D.programs.find(x => x.id == id); if (!p) return '';
@@ -2117,7 +2117,7 @@
       const isAct = String(ps.activeId) === String(p.id);
       const todayIso = new Date().toISOString().slice(0, 10);
       const doneToday = logs.includes(todayIso);
-      return `<a href="#/programs">← ${t('programs')}</a><h1>${esc(pName(p))}</h1>
+      return `<a href="#/workouts/programs">← ${t('programs')}</a><h1>${esc(pName(p))}</h1>
       <div class="tags"><span class="tag">${p.days} ${t('days')}</span><span class="tag">${t('pace')}: ${tempLbl(p.temp)}</span>${p.pro ? '<span class="tag pro">PRO</span>' : ''}</div>
       ${p.img ? `<p><img src="${pImg(p)}" style="width:100%;max-height:360px;object-fit:cover;border-radius:16px"></p>` : ''}
       <div class="ss-card prog-tracker">
@@ -2141,27 +2141,44 @@
       </div>
       <div class="box desc">${d}</div>`;
     },
-    workouts() {
-      return `<div class="wo-head-row">
-        <h1 style="margin:0">${t('workouts')}</h1>
-        <a href="#/builder" class="btn wo-build-btn">＋ ${L == 'ru' ? 'Собрать свою' : 'Build custom'}</a>
+    workouts(tab) {
+      const isProg = tab === 'programs';
+      return `
+      <div class="wo-head-row">
+        <div class="act-seg wo-main-seg">
+          <button type="button" class="act-seg-btn ${isProg ? '' : 'on'}" id="wo-tab-workouts">
+            ${uiSvg('dumbbell', 13)} <span>${t('workouts')}</span>
+          </button>
+          <button type="button" class="act-seg-btn ${isProg ? 'on' : ''}" id="wo-tab-programs">
+            ${uiSvg('flame', 13)} <span>${t('programs')}</span>
+          </button>
+        </div>
+        <a href="#/builder" class="btn wo-build-btn" id="wo-builder-btn" style="${isProg ? 'display:none;' : ''}">＋ ${L == 'ru' ? 'Собрать свою' : 'Build custom'}</a>
       </div>
-      <div class="muscle-pills" id="m-pills">
-        <button class="mpill on" data-m="">${t('all')}</button>
-        <button class="mpill" data-m="mine">${uiSvg('sparkles', 13)} ${L == 'ru' ? 'Мои' : 'Mine'}</button>
-        <button class="mpill" data-m="fav">${uiSvg('heartFill', 13)} ${L == 'ru' ? 'Избранное' : 'Favorites'}</button>
-        <button class="mpill" data-m="chest">${L == 'ru' ? 'Грудь' : 'Chest'}</button>
-        <button class="mpill" data-m="back">${L == 'ru' ? 'Спина' : 'Back'}</button>
-        <button class="mpill" data-m="abs">${L == 'ru' ? 'Пресс' : 'Abs'}</button>
-        <button class="mpill" data-m="arms">${L == 'ru' ? 'Руки' : 'Arms'}</button>
-        <button class="mpill" data-m="legs">${L == 'ru' ? 'Ноги' : 'Legs'}</button>
-        <button class="mpill" data-m="full">${uiSvg('bolt', 13)} ${L == 'ru' ? 'Все тело' : 'Full body'}</button>
+      <div id="wo-sec-workouts" style="${isProg ? 'display:none;' : ''}">
+        <div class="muscle-pills" id="m-pills">
+          <button class="mpill on" data-m="">${t('all')}</button>
+          <button class="mpill" data-m="mine">${uiSvg('sparkles', 13)} ${L == 'ru' ? 'Мои' : 'Mine'}</button>
+          <button class="mpill" data-m="fav">${uiSvg('heartFill', 13)} ${L == 'ru' ? 'Избранное' : 'Favorites'}</button>
+          <button class="mpill" data-m="chest">${L == 'ru' ? 'Грудь' : 'Chest'}</button>
+          <button class="mpill" data-m="back">${L == 'ru' ? 'Спина' : 'Back'}</button>
+          <button class="mpill" data-m="abs">${L == 'ru' ? 'Пресс' : 'Abs'}</button>
+          <button class="mpill" data-m="arms">${L == 'ru' ? 'Руки' : 'Arms'}</button>
+          <button class="mpill" data-m="legs">${L == 'ru' ? 'Ноги' : 'Legs'}</button>
+          <button class="mpill" data-m="full">${uiSvg('bolt', 13)} ${L == 'ru' ? 'Все тело' : 'Full body'}</button>
+        </div>
+        <div class="filters"><input id="q" placeholder="${L == 'ru' ? 'Поиск по названию или упражнению…' : 'Search workout or exercise…'}">
+        <select id="f-eq"><option value="">${t('eq')}: ${t('all')}</option>${[...new Set(D.workouts.map(w => w.eq))].filter(Boolean).map(v => `<option value="${v}">${eqLbl(v)}</option>`).join('')}</select>
+        <select id="f-d"><option value="">${t('diff')}: ${t('all')}</option>${[...new Set(D.workouts.map(w => w.diff))].filter(Boolean).map(v => `<option value="${v}">${diffLbl(v)}</option>`).join('')}</select>
+        <label style="align-self:center;color:var(--mut)"><input type="checkbox" id="f-t" checked> ${L == 'ru' ? 'только именованные' : 'named only'}</label></div>
+        <div id="list" class="grid"></div><div class="more" id="more"></div>
       </div>
-      <div class="filters"><input id="q" placeholder="${L == 'ru' ? 'Поиск по названию или упражнению…' : 'Search workout or exercise…'}">
-      <select id="f-eq"><option value="">${t('eq')}: ${t('all')}</option>${[...new Set(D.workouts.map(w => w.eq))].filter(Boolean).map(v => `<option value="${v}">${eqLbl(v)}</option>`).join('')}</select>
-      <select id="f-d"><option value="">${t('diff')}: ${t('all')}</option>${[...new Set(D.workouts.map(w => w.diff))].filter(Boolean).map(v => `<option value="${v}">${diffLbl(v)}</option>`).join('')}</select>
-      <label style="align-self:center;color:var(--mut)"><input type="checkbox" id="f-t" checked> ${L == 'ru' ? 'только именованные' : 'named only'}</label></div>
-      <div id="list" class="grid"></div><div class="more" id="more"></div>`;
+      <div id="wo-sec-programs" style="${isProg ? '' : 'display:none;'}">
+        <div style="font-size:12.5px;color:var(--mut);margin:4px 2px 14px;line-height:1.4;">
+          ${L == 'ru' ? 'Готовые долгосрочные программы тренировок с прогрессией по дням:' : 'Structured training programs with day-by-day progression:'}
+        </div>
+        <div class="grid">${D.programs.map(programCard).join('')}</div>
+      </div>`;
     },
     builder(editId) {
       const isDup = editId && String(editId).startsWith('dup-');
@@ -2792,41 +2809,71 @@
         btn.onclick = openWeekPlanModal;
       });
     }
-    if (name == 'workouts') {
+    if (name == 'workouts' || name == 'programs') {
+      const tabWorkouts = document.getElementById('wo-tab-workouts');
+      const tabPrograms = document.getElementById('wo-tab-programs');
+      const secWorkouts = document.getElementById('wo-sec-workouts');
+      const secPrograms = document.getElementById('wo-sec-programs');
+      const buildBtn = document.getElementById('wo-builder-btn');
+
+      if (tabWorkouts && tabPrograms) {
+        tabWorkouts.onclick = () => {
+          vib(20);
+          tabWorkouts.classList.add('on');
+          tabPrograms.classList.remove('on');
+          if (secWorkouts) secWorkouts.style.display = '';
+          if (secPrograms) secPrograms.style.display = 'none';
+          if (buildBtn) buildBtn.style.display = '';
+          history.replaceState(null, '', '#/workouts');
+        };
+        tabPrograms.onclick = () => {
+          vib(20);
+          tabPrograms.classList.add('on');
+          tabWorkouts.classList.remove('on');
+          if (secWorkouts) secWorkouts.style.display = 'none';
+          if (secPrograms) secPrograms.style.display = '';
+          if (buildBtn) buildBtn.style.display = 'none';
+          history.replaceState(null, '', '#/workouts/programs');
+        };
+      }
+
       let curMuscle = '';
       const fullRx = /все тел|full body|кругов|hannibal|medrano|комплекс/i;
-      const redraw = pagedList(() => {
-        const q = norm(document.getElementById('q').value), eq = document.getElementById('f-eq').value, d = document.getElementById('f-d').value, named = document.getElementById('f-t').checked;
-        return D.workouts.filter(w => {
-          if (named && !w._custom && !w.t.ru && !w.t.en) return false;
-          if (eq && w.eq != eq) return false;
-          if (d && w.diff != d) return false;
-          if (q && !norm(woFullText(w)).includes(q)) return false;
-          if (curMuscle == 'mine') {
-            if (!w._custom) return false;
-          } else if (curMuscle == 'fav') {
-            if (!getFavs().has(w.id)) return false;
-          } else if (curMuscle == 'full') {
-            const txt = woFullText(w);
-            const mf = detectMuscles(txt);
-            const cnt = Object.values(mf).filter(Boolean).length;
-            if (cnt < 3 && !fullRx.test(txt)) return false;
-          } else if (curMuscle && MUSCLE_RULES[curMuscle]) {
-            const txt = woFullText(w);
-            if (!MUSCLE_RULES[curMuscle].test(txt)) return false;
-          }
-          return true;
+      const qEl = document.getElementById('q');
+      if (qEl) {
+        const redraw = pagedList(() => {
+          const q = norm(document.getElementById('q').value), eq = document.getElementById('f-eq').value, d = document.getElementById('f-d').value, named = document.getElementById('f-t').checked;
+          return D.workouts.filter(w => {
+            if (named && !w._custom && !w.t.ru && !w.t.en) return false;
+            if (eq && w.eq != eq) return false;
+            if (d && w.diff != d) return false;
+            if (q && !norm(woFullText(w)).includes(q)) return false;
+            if (curMuscle == 'mine') {
+              if (!w._custom) return false;
+            } else if (curMuscle == 'fav') {
+              if (!getFavs().has(w.id)) return false;
+            } else if (curMuscle == 'full') {
+              const txt = woFullText(w);
+              const mf = detectMuscles(txt);
+              const cnt = Object.values(mf).filter(Boolean).length;
+              if (cnt < 3 && !fullRx.test(txt)) return false;
+            } else if (curMuscle && MUSCLE_RULES[curMuscle]) {
+              const txt = woFullText(w);
+              if (!MUSCLE_RULES[curMuscle].test(txt)) return false;
+            }
+            return true;
+          });
+        }, workoutCard);
+        const pills = document.querySelectorAll('#m-pills .mpill');
+        pills.forEach(b => {
+          b.onclick = () => {
+            vib(25);
+            curMuscle = b.dataset.m;
+            pills.forEach(x => x.classList.toggle('on', x == b));
+            redraw(true);
+          };
         });
-      }, workoutCard);
-      const pills = document.querySelectorAll('#m-pills .mpill');
-      pills.forEach(b => {
-        b.onclick = () => {
-          vib(25);
-          curMuscle = b.dataset.m;
-          pills.forEach(x => x.classList.toggle('on', x == b));
-          redraw(true);
-        };
-      });
+      }
     }
     if (name == 'builder') {
       const isDup = arg && String(arg).startsWith('dup-');
@@ -4457,7 +4504,7 @@
   function render() {
     const [, name = 'home', a] = (location.hash || '#/').slice(1).split('/');
     const key = routes[name] ? name : 'home'; arg = a;
-    document.querySelectorAll('#nav a').forEach(x => { x.querySelector('b').textContent = t(x.dataset.i); x.classList.toggle('on', x.dataset.k == key || ((key == 'profile' || key == 'friends') && x.dataset.k == 'history') || (key == 'program' && x.dataset.k == 'programs') || ((key == 'workout' || key == 'builder') && x.dataset.k == 'workouts') || (key == 'exercise' && x.dataset.k == 'exercises')); });
+    document.querySelectorAll('#nav a').forEach(x => { x.querySelector('b').textContent = t(x.dataset.i); x.classList.toggle('on', x.dataset.k == key || ((key == 'profile' || key == 'friends') && x.dataset.k == 'history') || ((key == 'workout' || key == 'builder' || key == 'program' || key == 'programs') && x.dataset.k == 'workouts') || (key == 'exercise' && x.dataset.k == 'exercises')); });
     const langBtn = document.getElementById('lang');
     if (langBtn) {
       const codeEl = langBtn.querySelector('.lang-code');
