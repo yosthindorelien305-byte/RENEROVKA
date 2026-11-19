@@ -1642,6 +1642,11 @@
         try {
           const pollRes = await fetch('api/auth/telegram/poll?token=' + encodeURIComponent(data.token));
           const pollData = await pollRes.json();
+          if (pollRes.status === 403 || (pollData && pollData.ok === false && pollData.error)) {
+            cleanup();
+            alert(pollData.error || (L == 'ru' ? 'Вход запрещён' : 'Access denied'));
+            return;
+          }
           if (pollData.ok && pollData.confirmed && pollData.sessionToken) {
             cleanup();
             localStorage.userToken = pollData.sessionToken;
@@ -1660,80 +1665,31 @@
     } catch (e) {
       if (closed) return;
       bd.querySelector('#tg-modal-desc').textContent = L == 'ru' ? 'Ошибка связи с сервером' : 'Connection error';
-      bd.querySelector('#tg-modal-body').innerHTML = `<div style="color:#f87171;font-size:13px;">${e.message || e}</div>`;
+      bd.querySelector('#tg-modal-body').innerHTML = `<div style="color:#f87171;font-size:13px;">${esc(e.message || String(e))}</div>`;
     }
   }
 
   function handleSocialAuth(provider) {
     if (provider === 'telegram') {
-      if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user) {
-        const tgUser = window.Telegram.WebApp.initDataUnsafe.user;
+      const tgInitData = window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.initData === 'string'
+        ? window.Telegram.WebApp.initData.trim()
+        : '';
+      if (tgInitData) {
         submitSocialLogin({
           provider: 'telegram',
-          socialId: String(tgUser.id),
-          username: tgUser.username || ('tg_' + tgUser.id),
-          displayName: [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') || tgUser.username,
-          avatar: tgUser.photo_url || ''
+          initData: tgInitData
         });
         return;
       }
       openTelegramAuthModal();
       return;
     }
-
-    const bd = document.createElement('div');
-    bd.className = 'ap-modal-backdrop';
-    const names = {
-      telegram: { name: 'Telegram', ph: '@username или ID', icon: socialSvg('telegram') },
-      vk: { name: 'ВКонтакте (VK ID)', ph: 'ID или @username', icon: socialSvg('vk') },
-      google: { name: 'Google', ph: 'user@gmail.com', icon: socialSvg('google') },
-      yandex: { name: 'Яндекс ID', ph: 'login@yandex.ru', icon: socialSvg('yandex') }
-    };
-    const curP = names[provider] || names.telegram;
-    bd.innerHTML = `
-      <div class="ap-modal">
-        <h3 style="display:flex;align-items:center;gap:8px;">${curP.icon} ${L == 'ru' ? 'Вход через ' + curP.name : 'Sign in with ' + curP.name}</h3>
-        <p style="font-size:12.5px;color:var(--mut);line-height:1.45;margin:6px 0 12px;">
-          ${L == 'ru' ? 'Укажите ваш никнейм или email в ' + curP.name + ' для быстрого входа:' : 'Enter your handle or email in ' + curP.name + ' to continue:'}
-        </p>
-        <label>${L == 'ru' ? 'Логин / Никнейм / Email' : 'Handle / Email'}<input id="soc-inp-handle" placeholder="${curP.ph}" value=""></label>
-        <div id="soc-err" style="font-size:12px;color:#f87171;min-height:16px;margin-top:4px;"></div>
-        <div class="ap-modal-actions">
-          <button type="button" class="btn alt" id="soc-cancel">${L == 'ru' ? 'Отмена' : 'Cancel'}</button>
-          <button type="button" class="btn" id="soc-confirm">${L == 'ru' ? 'Войти' : 'Continue'}</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(bd);
-    bd.onclick = ev => { if (ev.target === bd) bd.remove(); };
-    bd.querySelector('#soc-cancel').onclick = () => bd.remove();
-    const handleInp = bd.querySelector('#soc-inp-handle');
-    setTimeout(() => handleInp && handleInp.focus(), 80);
-    bd.querySelector('#soc-confirm').onclick = async () => {
-      const val = handleInp.value.trim();
-      const errEl = bd.querySelector('#soc-err');
-      if (!val) {
-        errEl.textContent = L == 'ru' ? 'Заполните поле' : 'Field is required';
-        return;
-      }
-      let clean = val.replace(/^@/, '');
-      let email = '';
-      if (val.includes('@')) {
-        email = val;
-        clean = val.split('@')[0];
-      }
-      let hVal = 0;
-      for (let i = 0; i < val.length; i++) hVal = (Math.imul(31, hVal) + val.charCodeAt(i)) | 0;
-      const sId = 'soc_' + provider.slice(0, 2) + '_' + Math.abs(hVal);
-      const ok = await submitSocialLogin({
-        provider,
-        socialId: sId,
-        username: (provider + '_' + clean).replace(/[^a-z0-9_]/gi, '').toLowerCase(),
-        displayName: clean,
-        email: email
-      });
-      if (ok) bd.remove();
-    };
+    showAppToast(
+      CFG.brand || 'RizzaFit',
+      L == 'ru'
+        ? 'Вход через эту соцсеть временно недоступен. Используйте Telegram или логин и пароль.'
+        : 'Sign-in with this provider is temporarily unavailable. Use Telegram or username/password.'
+    );
   }
 
   function renderGuestAuthGate() {
@@ -1761,17 +1717,17 @@
         </div>
 
         <div class="social-auth-grid">
-          <button type="button" class="soc-btn tg" data-soc-provider="telegram">
+          <button type="button" class="soc-btn tg" data-soc-provider="telegram" style="grid-column:1 / -1;">
             ${socialSvg('telegram')} Telegram
           </button>
-          <button type="button" class="soc-btn vk" data-soc-provider="vk">
-            ${socialSvg('vk')} ВКонтакте
+          <button type="button" class="soc-btn vk" data-soc-provider="vk" disabled title="${L == 'ru' ? 'Скоро' : 'Coming soon'}" style="opacity:0.45;cursor:not-allowed;">
+            ${socialSvg('vk')} ${L == 'ru' ? 'VK (скоро)' : 'VK (soon)'}
           </button>
-          <button type="button" class="soc-btn gg" data-soc-provider="google">
-            ${socialSvg('google')} Google
+          <button type="button" class="soc-btn gg" data-soc-provider="google" disabled title="${L == 'ru' ? 'Скоро' : 'Coming soon'}" style="opacity:0.45;cursor:not-allowed;">
+            ${socialSvg('google')} ${L == 'ru' ? 'Google (скоро)' : 'Google (soon)'}
           </button>
-          <button type="button" class="soc-btn ya" data-soc-provider="yandex">
-            ${socialSvg('yandex')} Яндекс
+          <button type="button" class="soc-btn ya" data-soc-provider="yandex" disabled title="${L == 'ru' ? 'Скоро' : 'Coming soon'}" style="opacity:0.45;cursor:not-allowed;grid-column:1 / -1;">
+            ${socialSvg('yandex')} ${L == 'ru' ? 'Яндекс (скоро)' : 'Yandex (soon)'}
           </button>
         </div>
 
@@ -1846,10 +1802,10 @@
           <span>${L == 'ru' ? 'или через соцсети' : 'or with social'}</span>
         </div>
         <div class="social-auth-grid" style="margin-bottom:6px;">
-          <button type="button" class="soc-btn tg" data-modal-soc="telegram">${socialSvg('telegram')} Telegram</button>
-          <button type="button" class="soc-btn vk" data-modal-soc="vk">${socialSvg('vk')} VK ID</button>
-          <button type="button" class="soc-btn gg" data-modal-soc="google">${socialSvg('google')} Google</button>
-          <button type="button" class="soc-btn ya" data-modal-soc="yandex">${socialSvg('yandex')} Яндекс</button>
+          <button type="button" class="soc-btn tg" data-modal-soc="telegram" style="grid-column:1 / -1;">${socialSvg('telegram')} Telegram</button>
+          <button type="button" class="soc-btn vk" data-modal-soc="vk" disabled title="${L == 'ru' ? 'Скоро' : 'Coming soon'}" style="opacity:0.45;cursor:not-allowed;">${socialSvg('vk')} ${L == 'ru' ? 'VK (скоро)' : 'VK (soon)'}</button>
+          <button type="button" class="soc-btn gg" data-modal-soc="google" disabled title="${L == 'ru' ? 'Скоро' : 'Coming soon'}" style="opacity:0.45;cursor:not-allowed;">${socialSvg('google')} ${L == 'ru' ? 'Google (скоро)' : 'Google (soon)'}</button>
+          <button type="button" class="soc-btn ya" data-modal-soc="yandex" disabled title="${L == 'ru' ? 'Скоро' : 'Coming soon'}" style="opacity:0.45;cursor:not-allowed;grid-column:1 / -1;">${socialSvg('yandex')} ${L == 'ru' ? 'Яндекс (скоро)' : 'Yandex (soon)'}</button>
         </div>
       </div>`;
       bd.querySelectorAll('[data-modal-soc]').forEach(b => {

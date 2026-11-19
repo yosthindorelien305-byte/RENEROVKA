@@ -1,9 +1,9 @@
 """Flexa server: static site + small admin API (stdlib only).
 Run:  python server.py   ->  http://localhost:8080   admin: /admin.html
 """
-import base64, hashlib, hmac, json, os, re, secrets, sqlite3, sys, threading, time, urllib.request, urllib.error
+import base64, hashlib, hmac, html, json, os, re, secrets, sqlite3, sys, threading, time, urllib.request, urllib.error
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, parse_qsl
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SITE = os.path.join(ROOT, 'site')
@@ -342,14 +342,77 @@ def save_telegram_cfg(cfg):
     with open(TELEGRAM_FILE, 'w', encoding='utf-8') as f:
         json.dump(cur, f, ensure_ascii=False, indent=2)
 
+TG_AUTH_TTL = 900
+TG_INITDATA_MAX_AGE = 300
+tg_auth_lock = threading.Lock()
 tg_pending_auth = {} # auth_token -> dict
+tg_used_init_hashes = {} # hash_hex -> expires_at
+
+def verify_telegram_webapp_init_data(init_data, bot_token, max_age=TG_INITDATA_MAX_AGE):
+    """Verify Telegram Mini App initData HMAC-SHA256 signature, auth_date freshness, and single-use hash."""
+    if not isinstance(init_data, str) or not init_data.strip() or not bot_token:
+        return None
+    try:
+        pairs = parse_qsl(init_data, keep_blank_values=True, strict_parsing=False)
+    except Exception:
+        return None
+    parsed = dict(pairs)
+    received_hash = parsed.pop('hash', None)
+    if not received_hash or not re.fullmatch(r'[0-9a-fA-F]{64}', received_hash):
+        return None
+    try:
+        auth_date = int(parsed.get('auth_date', '0'))
+    except ValueError:
+        return None
+    now = int(time.time())
+    if auth_date <= 0 or (now - auth_date) > max_age or (auth_date - now) > 60:
+        return None
+    data_check_string = '\n'.join(f'{k}={v}' for k, v in sorted(parsed.items()))
+    secret_key = hmac.new(b'WebAppData', bot_token.encode('utf-8'), hashlib.sha256).digest()
+    expected_hash = hmac.new(secret_key, data_check_string.encode('utf-8'), hashlib.sha256).hexdigest()
+    hash_lower = received_hash.lower()
+    if not hmac.compare_digest(expected_hash, hash_lower):
+        return None
+    user_raw = parsed.get('user')
+    if not user_raw:
+        return None
+    try:
+        user_obj = json.loads(user_raw)
+    except Exception:
+        return None
+    if not isinstance(user_obj, dict) or not user_obj.get('id'):
+        return None
+    with tg_auth_lock:
+        for h_key in [k for k, exp in tg_used_init_hashes.items() if exp <= now]:
+            tg_used_init_hashes.pop(h_key, None)
+        if hash_lower in tg_used_init_hashes:
+            return None
+        tg_used_init_hashes[hash_lower] = now + max_age + 60
+    return user_obj
 
 def process_telegram_auth_code(auth_code, from_user, chat_id, bot_token):
     now = int(time.time())
-    tg_id = str(from_user.get('id', ''))
+    auth_code = str(auth_code or '').strip()
+    tg_id = str(from_user.get('id', '')).strip()
+    if not auth_code or not tg_id:
+        return False
+
+    # Validate pending auth_code and TTL BEFORE any DB changes or Telegram replies
+    with tg_auth_lock:
+        rec = tg_pending_auth.get(auth_code)
+        if not rec:
+            return False
+        created_at = rec.get('created_at', 0)
+        if (now - created_at) > TG_AUTH_TTL:
+            tg_pending_auth.pop(auth_code, None)
+            return False
+        if rec.get('status') != 'pending':
+            return False
+        rec['status'] = 'processing'
+
     fname = str(from_user.get('first_name') or '').strip()
     lname = str(from_user.get('last_name') or '').strip()
-    display_name = f"{fname} {lname}".strip() or f"User {tg_id}"
+    display_name = (f"{fname} {lname}".strip() or f"User {tg_id}")[:40]
     tg_uname = str(from_user.get('username') or '').strip().lower()
 
     clean_uname = re.sub(r'[^a-z0-9_]', '', tg_uname)
@@ -365,6 +428,15 @@ def process_telegram_auth_code(auth_code, from_user, chat_id, bot_token):
         ).fetchone()
 
         if row:
+            if row[6]: # is_blocked
+                with tg_auth_lock:
+                    if auth_code in tg_pending_auth:
+                        tg_pending_auth[auth_code] = {
+                            'created_at': created_at,
+                            'status': 'blocked',
+                            'error': 'Аккаунт заблокирован администратором'
+                        }
+                return False
             uid = row[0]
             conn.execute('UPDATE users SET last_login_at = ? WHERE id = ?', (now, uid))
             u_data = user_dto(row)
@@ -390,19 +462,22 @@ def process_telegram_auth_code(auth_code, from_user, chat_id, bot_token):
         u_state = json.loads(st_row[0]) if st_row else {}
         up_at = st_row[1] if st_row else 0
 
-    if auth_code in tg_pending_auth:
-        tg_pending_auth[auth_code] = {
-            'status': 'confirmed',
-            'sessionToken': stok,
-            'user': u_data,
-            'state': u_state,
-            'updatedAt': up_at
-        }
+    with tg_auth_lock:
+        if auth_code in tg_pending_auth:
+            tg_pending_auth[auth_code] = {
+                'created_at': created_at,
+                'status': 'confirmed',
+                'sessionToken': stok,
+                'user': u_data,
+                'state': u_state,
+                'updatedAt': up_at
+            }
 
     if bot_token and chat_id:
         try:
             send_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-            reply_text = f"✅ <b>Вход в RizzaFit подтверждён!</b>\n\nДобро пожаловать, <b>{display_name}</b>!\nВы успешно авторизовались в приложении. Можете вернуться в браузер — ваш профиль уже открыт!"
+            safe_name = html.escape(display_name)
+            reply_text = f"✅ <b>Вход в RizzaFit подтверждён!</b>\n\nДобро пожаловать, <b>{safe_name}</b>!\nВы успешно авторизовались в приложении. Можете вернуться в браузер — ваш профиль уже открыт!"
             payload = json.dumps({'chat_id': chat_id, 'text': reply_text, 'parse_mode': 'HTML'}).encode('utf-8')
             req = urllib.request.Request(send_url, data=payload, headers={'Content-Type': 'application/json', 'User-Agent': 'FlexaBot/1.0'})
             urllib.request.urlopen(req, timeout=8)
@@ -440,8 +515,6 @@ def telegram_bot_worker():
                         process_telegram_auth_code(auth_code, from_user, chat_id, token)
         except Exception:
             time.sleep(3)
-
-threading.Thread(target=telegram_bot_worker, daemon=True).start()
 
 def ai_cfg():
     try:
@@ -873,19 +946,34 @@ class H(SimpleHTTPRequestHandler):
                     'plans': list(PLANS.values())
                 })
             if p == '/api/auth/telegram/poll':
-                q_token = qs.get('token', [''])[0]
-                rec = tg_pending_auth.get(q_token)
-                if not rec:
+                q_token = parse_qs(urlparse(self.path).query).get('token', [''])[0].strip()
+                if not q_token:
                     return self.send_j(200, {'ok': True, 'confirmed': False})
-                if rec.get('status') == 'confirmed':
-                    return self.send_j(200, {
-                        'ok': True,
-                        'confirmed': True,
-                        'sessionToken': rec.get('sessionToken'),
-                        'user': rec.get('user'),
-                        'state': rec.get('state'),
-                        'updatedAt': rec.get('updatedAt', 0)
-                    })
+                now_ts = time.time()
+                with tg_auth_lock:
+                    rec = tg_pending_auth.get(q_token)
+                    if not rec:
+                        return self.send_j(200, {'ok': True, 'confirmed': False})
+                    if (now_ts - rec.get('created_at', 0)) > TG_AUTH_TTL:
+                        tg_pending_auth.pop(q_token, None)
+                        return self.send_j(200, {'ok': True, 'confirmed': False})
+                    if rec.get('status') == 'blocked':
+                        tg_pending_auth.pop(q_token, None)
+                        return self.send_j(403, {
+                            'ok': False,
+                            'confirmed': False,
+                            'error': rec.get('error', 'Аккаунт заблокирован администратором')
+                        })
+                    if rec.get('status') == 'confirmed':
+                        rec = tg_pending_auth.pop(q_token, None)
+                        return self.send_j(200, {
+                            'ok': True,
+                            'confirmed': True,
+                            'sessionToken': rec.get('sessionToken'),
+                            'user': rec.get('user'),
+                            'state': rec.get('state'),
+                            'updatedAt': rec.get('updatedAt', 0)
+                        })
                 return self.send_j(200, {'ok': True, 'confirmed': False})
             if p == '/api/admin/telegram' and self.authed():
                 cfg = telegram_cfg()
@@ -1023,6 +1111,25 @@ class H(SimpleHTTPRequestHandler):
             state = json.loads(st_row[0]) if st_row else {}
             updated_at = st_row[1] if st_row else 0
             return self.send_j(200, {'token': tok, 'user': user_dto(row[:7]), 'state': state, 'updatedAt': updated_at})
+        if p == '/api/auth/telegram/start':
+            auth_token = secrets.token_urlsafe(16)
+            now_ts = time.time()
+            with tg_auth_lock:
+                tg_pending_auth[auth_token] = {'created_at': now_ts, 'status': 'pending'}
+                for k in list(tg_pending_auth.keys()):
+                    if now_ts - tg_pending_auth[k].get('created_at', 0) > TG_AUTH_TTL:
+                        tg_pending_auth.pop(k, None)
+            cfg = telegram_cfg()
+            buser = cfg.get('bot_username', '').lstrip('@').strip()
+            configured = bool(cfg.get('bot_token') and buser and cfg.get('enabled', True))
+            url = f"https://t.me/{buser}?start=auth_{auth_token}" if (buser and configured) else ""
+            return self.send_j(200, {
+                'ok': True,
+                'token': auth_token,
+                'botUsername': buser,
+                'url': url,
+                'configured': configured
+            })
         if p == '/api/user/social-login':
             ip = self.headers.get('X-Real-IP') or self.client_address[0]
             c, last = fails.get('soc:' + ip, (0, 0))
@@ -1030,49 +1137,56 @@ class H(SimpleHTTPRequestHandler):
                 return self.send_j(429, {'error': 'Слишком много попыток, подождите минуту'})
             try:
                 raw_b = self.body(2 * 1024 * 1024)
+                if raw_b is None:
+                    return self.send_j(413, {'error': 'Слишком большой запрос'})
                 j = json.loads(raw_b or b'{}')
             except Exception:
                 return self.send_j(400, {'error': 'bad json'})
 
             provider = str(j.get('provider') or '').strip().lower()
-            if provider not in ('telegram', 'vk', 'google', 'yandex'):
+            if provider in ('vk', 'google', 'yandex'):
+                return self.send_j(501, {'error': 'Вход через данного провайдера временно отключён. Используйте Telegram или логин и пароль.'})
+            if provider != 'telegram':
                 return self.send_j(400, {'error': 'Неизвестный провайдер соцсети'})
 
-            social_id = str(j.get('socialId') or j.get('id') or '').strip()
-            if not social_id:
-                return self.send_j(400, {'error': 'Отсутствует ID пользователя соцсети'})
+            init_data = str(j.get('initData') or '').strip()
+            if not init_data:
+                if len(fails) > 400:
+                    fails.clear()
+                fails['soc:' + ip] = (c + 1, time.time())
+                return self.send_j(401, {'error': 'Требуется подтверждённая подпись Telegram WebApp (initData)'})
 
-            raw_username = str(j.get('username') or '').strip().lower()
-            display_name = str(j.get('displayName') or j.get('first_name') or raw_username or provider)[:40].strip()
-            email = str(j.get('email') or '').strip().lower()
-            if email and not EMAIL_RE.match(email):
-                email = ''
-            avatar = str(j.get('avatar') or j.get('photo_url') or '').strip()
+            cfg = telegram_cfg()
+            bot_token = cfg.get('bot_token', '').strip()
+            if not bot_token or not cfg.get('enabled', True):
+                return self.send_j(503, {'error': 'Telegram-авторизация не настроена на сервере'})
+
+            tg_user = verify_telegram_webapp_init_data(init_data, bot_token)
+            if not tg_user:
+                if len(fails) > 400:
+                    fails.clear()
+                fails['soc:' + ip] = (c + 1, time.time())
+                return self.send_j(401, {'error': 'Недействительная или устаревшая подпись Telegram'})
+
+            social_id = str(tg_user.get('id') or '').strip()
+            raw_username = str(tg_user.get('username') or '').strip().lower()
+            fname = str(tg_user.get('first_name') or '').strip()
+            lname = str(tg_user.get('last_name') or '').strip()
+            display_name = (f"{fname} {lname}".strip() or raw_username or f"User {social_id}")[:40]
+            avatar = str(tg_user.get('photo_url') or '').strip()
+            email = ''
 
             now = int(time.time())
             state = sanitize_state(j.get('state'))
             tok = secrets.token_urlsafe(32)
 
             with db_lock, sqlite3.connect(DB_FILE) as conn:
-                # 1. Look up by (oauth_provider, oauth_id)
+                # Look up strictly by verified (oauth_provider, oauth_id); never auto-link by email
                 row = conn.execute(
                     'SELECT id, username, display_name, email, plan, plan_expires_at, is_blocked, avatar '
                     'FROM users WHERE oauth_provider = ? AND oauth_id = ?',
-                    (provider, social_id)
+                    ('telegram', social_id)
                 ).fetchone()
-
-                # 2. Look up by email if provided
-                if not row and email:
-                    row = conn.execute(
-                        'SELECT id, username, display_name, email, plan, plan_expires_at, is_blocked, avatar '
-                        'FROM users WHERE email = ?',
-                        (email,)
-                    ).fetchone()
-                    if row:
-                        conn.execute(
-                            'UPDATE users SET oauth_provider = ?, oauth_id = ? WHERE id = ?',
-                            (provider, social_id, row[0])
-                        )
 
                 if row:
                     if row[6]: # is_blocked
@@ -1084,15 +1198,16 @@ class H(SimpleHTTPRequestHandler):
                     conn.execute('INSERT INTO user_sessions (token, user_id, expires_at) VALUES (?, ?, ?)', (tok, uid, now + 30 * 86400))
                     st_row = conn.execute('SELECT data_json, updated_at FROM user_state WHERE user_id = ?', (uid,)).fetchone()
                     conn.commit()
+                    fails.pop('soc:' + ip, None)
                     user_data = user_dto((row[0], row[1], row[2], row[3], row[4], row[5], row[6], avatar or row[7]))
                     user_st = json.loads(st_row[0]) if st_row else {}
                     up_at = st_row[1] if st_row else 0
                     return self.send_j(200, {'ok': True, 'token': tok, 'user': user_data, 'state': user_st, 'updatedAt': up_at})
 
-                # 3. Create new user in users table
+                # Create new verified Telegram user
                 clean_name = re.sub(r'[^a-z0-9_]', '', raw_username)
                 if len(clean_name) < 3:
-                    clean_name = f"{provider}_{re.sub(r'[^a-z0-9_]', '', social_id)[:10]}"
+                    clean_name = f"tg_{re.sub(r'[^a-z0-9_]', '', social_id)[:10]}"
                 clean_name = clean_name[:20]
                 uname = clean_name
                 idx = 1
@@ -1100,13 +1215,10 @@ class H(SimpleHTTPRequestHandler):
                     uname = f"{clean_name[:16]}_{idx}"
                     idx += 1
 
-                if email and conn.execute('SELECT 1 FROM users WHERE email = ?', (email,)).fetchone():
-                    email = ''
-
                 cur = conn.execute(
                     'INSERT INTO users (username, pw_salt, pw_hash, display_name, email, oauth_provider, oauth_id, avatar, plan, plan_expires_at, is_blocked, last_login_at, created_at) '
                     'VALUES (?, "", "", ?, ?, ?, ?, ?, "free", 0, 0, ?, ?)',
-                    (uname, display_name, email, provider, social_id, avatar, now, now)
+                    (uname, display_name, email, 'telegram', social_id, avatar, now, now)
                 )
                 uid = cur.lastrowid
                 conn.execute('INSERT INTO user_sessions (token, user_id, expires_at) VALUES (?, ?, ?)', (tok, uid, now + 30 * 86400))
@@ -1474,24 +1586,6 @@ class H(SimpleHTTPRequestHandler):
                 return self.send_j(400, {'error': str(e)})
             except Exception as e:
                 return self.send_j(500, {'error': f'Ошибка соединения: {e}'})
-        if p == '/api/auth/telegram/start':
-            auth_token = secrets.token_urlsafe(16)
-            tg_pending_auth[auth_token] = {'created_at': time.time(), 'status': 'pending'}
-            now_ts = time.time()
-            for k in list(tg_pending_auth.keys()):
-                if now_ts - tg_pending_auth[k].get('created_at', 0) > 900:
-                    tg_pending_auth.pop(k, None)
-            cfg = telegram_cfg()
-            buser = cfg.get('bot_username', '').lstrip('@').strip()
-            configured = bool(cfg.get('bot_token') and buser)
-            url = f"https://t.me/{buser}?start=auth_{auth_token}" if buser else ""
-            return self.send_j(200, {
-                'ok': True,
-                'token': auth_token,
-                'botUsername': buser,
-                'url': url,
-                'configured': configured
-            })
         if p == '/api/admin/telegram':
             if not self.authed():
                 return self.send_j(401, {'error': 'unauthorized'})
@@ -1530,6 +1624,7 @@ class H(SimpleHTTPRequestHandler):
 if __name__ == '__main__':
     init_admin()
     init_db()
+    threading.Thread(target=telegram_bot_worker, daemon=True).start()
     print('Flexa: http://localhost:%d   Admin: http://localhost:%d/admin.html' % (PORT, PORT))
     ThreadingHTTPServer.allow_reuse_address = True
     httpd = ThreadingHTTPServer(('0.0.0.0', PORT), H)
