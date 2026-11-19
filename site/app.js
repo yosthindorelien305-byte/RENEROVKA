@@ -4,7 +4,10 @@
   const [D, CFG0, OV0] = await Promise.all([fetch('data.json').then(r => r.json()), nc('content/config.json'), nc('content/overrides.json')]);
   const CFG = Object.assign({ brand: 'RizzaFit', accent: '#F0A830', logo: '', heroProgram: 2, goal: 5, hidden: [], sections: {}, t: {}, ptitle: {}, athlete: {} }, CFG0 || {});
   let L = localStorage.lang || 'ru';
-  const COACH = await fetch('api/coach/status').then(r => r.ok ? r.json() : { enabled: false }).catch(() => ({ enabled: false }));
+  const [COACH, PAY_CFG] = await Promise.all([
+    fetch('api/coach/status').then(r => r.ok ? r.json() : { enabled: false }).catch(() => ({ enabled: false })),
+    fetch('api/payment/plans').then(r => r.ok ? r.json() : { enabled: false, freeAccessMode: false }).catch(() => ({ enabled: false, freeAccessMode: false }))
+  ]);
   const T = window.TEXTS;
     const t = k => ((CFG.t[L] || {})[k] || T[L][k] || k);
   const ui = k => D.ui[L][k] || D.ui.en[k] || k;
@@ -121,6 +124,7 @@
   });
 
   function isUserPro() {
+    if (PAY_CFG && PAY_CFG.freeAccessMode) return true;
     if (localStorage.userIsPro !== '1') return false;
     const exp = +(localStorage.userPlanExp || 0);
     if (exp > 0 && Math.floor(Date.now() / 1000) > exp) {
@@ -937,9 +941,11 @@
     const uEmail = localStorage.userEmail || '';
     const isPro = isUserPro();
     const uPlanExp = +(localStorage.userPlanExp || 0);
-    const planText = isPro
-      ? (uPlanExp ? `PRO до ${new Date(uPlanExp * 1000).toLocaleDateString(L)}` : 'PRO ∞')
-      : 'FREE';
+    const planText = (PAY_CFG && PAY_CFG.freeAccessMode)
+      ? (L == 'ru' ? 'Бесплатно' : 'Free')
+      : (isPro
+        ? (uPlanExp ? `PRO до ${new Date(uPlanExp * 1000).toLocaleDateString(L)}` : 'PRO ∞')
+        : 'FREE');
     return `
       <div class="ss-card prof-tools">
         <div class="ss-card-title">
@@ -1270,6 +1276,10 @@
   }
 
   function openPaywallModal(suggestedPlanId = '3m') {
+    if (PAY_CFG && PAY_CFG.freeAccessMode) {
+      showAppToast(CFG.brand || 'RizzaFit', L == 'ru' ? 'Все функции доступны бесплатно' : 'All features are available for free');
+      return;
+    }
     vib(20);
     let selPlan = suggestedPlanId;
     const PLANS_DATA = [
@@ -1939,12 +1949,16 @@
     const uEmail = localStorage.userEmail || '';
     const isPro = isUserPro();
     const uPlanExp = +(localStorage.userPlanExp || 0);
-    const planText = isPro
-      ? (uPlanExp ? `PRO до ${new Date(uPlanExp * 1000).toLocaleDateString(L)}` : 'PRO ∞')
-      : 'FREE';
-    const planSubtitle = isPro
-      ? (L == 'ru' ? 'Премиум подписка активна' : 'Premium subscription active')
-      : (L == 'ru' ? 'Синхронизация и AI-тренер' : 'Sync & AI Coach');
+    const planText = (PAY_CFG && PAY_CFG.freeAccessMode)
+      ? (L == 'ru' ? 'Бесплатно' : 'Free')
+      : (isPro
+        ? (uPlanExp ? `PRO до ${new Date(uPlanExp * 1000).toLocaleDateString(L)}` : 'PRO ∞')
+        : 'FREE');
+    const planSubtitle = (PAY_CFG && PAY_CFG.freeAccessMode)
+      ? (L == 'ru' ? 'Все функции доступны бесплатно' : 'All features are available for free')
+      : (isPro
+        ? (L == 'ru' ? 'Премиум подписка активна' : 'Premium subscription active')
+        : (L == 'ru' ? 'Синхронизация и AI-тренер' : 'Sync & AI Coach'));
 
     const cTs = +(localStorage.cloudSyncTs || 0);
     const cTime = cTs ? new Date(cTs * 1000).toLocaleTimeString(L, { hour: '2-digit', minute: '2-digit' }) : '';

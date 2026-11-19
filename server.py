@@ -20,6 +20,7 @@ SYNC_KEYS = {
 }
 db_lock = threading.Lock()
 PORT = int(os.environ.get('PORT', 8080))
+FREE_ACCESS_MODE = os.environ.get('FLEXA_FREE_MODE', '1').strip().lower() not in ('0', 'false', 'no', 'off')
 MAX_UPLOAD = 64 * 1024 * 1024
 EXT = {'.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg', '.mp4', '.webm', '.mov'}
 for d in (CONTENT, UPLOADS, SECRET_DIR):
@@ -140,27 +141,30 @@ def init_db():
 
 EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 
-def user_dto(row):
+def user_dto(row, respect_free_mode=True):
     """row: (id, username, display_name, email, plan, plan_expires_at, is_blocked, [avatar]) or sqlite3.Row"""
     now = int(time.time())
     if isinstance(row, sqlite3.Row) or isinstance(row, dict):
         plan = row['plan'] or 'free'
         exp = int(row['plan_expires_at'] or 0)
-        is_pro = (plan == 'pro') and (exp == 0 or exp > now)
+        real_pro = (plan == 'pro') and (exp == 0 or exp > now)
+        eff_pro = True if (respect_free_mode and FREE_ACCESS_MODE) else real_pro
         return {
             'id': row['id'],
             'username': row['username'],
             'displayName': row['display_name'] if 'display_name' in row.keys() and row['display_name'] else row['username'],
             'email': row['email'] if 'email' in row.keys() and row['email'] else '',
             'avatar': row['avatar'] if 'avatar' in row.keys() and row['avatar'] else '',
-            'plan': 'pro' if is_pro else 'free',
-            'planExpiresAt': exp if is_pro else 0,
-            'isPro': is_pro,
+            'plan': 'pro' if eff_pro else 'free',
+            'planExpiresAt': (0 if (respect_free_mode and FREE_ACCESS_MODE and not real_pro) else exp) if eff_pro else 0,
+            'isPro': eff_pro,
+            'freeAccessMode': bool(FREE_ACCESS_MODE),
             'isBlocked': bool(row['is_blocked']) if 'is_blocked' in row.keys() else False,
         }
     plan = row[4] or 'free'
     exp = int(row[5] or 0)
-    is_pro = (plan == 'pro') and (exp == 0 or exp > now)
+    real_pro = (plan == 'pro') and (exp == 0 or exp > now)
+    eff_pro = True if (respect_free_mode and FREE_ACCESS_MODE) else real_pro
     av = row[7] if len(row) > 7 and row[7] else ''
     return {
         'id': row[0],
@@ -168,9 +172,10 @@ def user_dto(row):
         'displayName': row[2] or row[1],
         'email': row[3] or '',
         'avatar': av,
-        'plan': 'pro' if is_pro else 'free',
-        'planExpiresAt': exp if is_pro else 0,
-        'isPro': is_pro,
+        'plan': 'pro' if eff_pro else 'free',
+        'planExpiresAt': (0 if (respect_free_mode and FREE_ACCESS_MODE and not real_pro) else exp) if eff_pro else 0,
+        'isPro': eff_pro,
+        'freeAccessMode': bool(FREE_ACCESS_MODE),
         'isBlocked': bool(row[6]),
     }
 
@@ -318,6 +323,60 @@ def yookassa_test_connection(shop_id, secret_key):
         raise RuntimeError(err_msg)
     except urllib.error.URLError as e:
         raise RuntimeError('Не удалось подключиться к ЮKassa: %s' % e.reason)
+
+def sync_pending_yookassa_payment(pay_id):
+    """Verify an existing pending payment with YooKassa API and update DB idempotently.
+    Never creates new payment rows and never grants PRO without YooKassa confirmation.
+    """
+    if not pay_id:
+        return None
+    now = int(time.time())
+    with db_lock, sqlite3.connect(DB_FILE) as conn:
+        row = conn.execute(
+            'SELECT id, user_id, plan, days, amount, status FROM payments WHERE payment_id = ?',
+            (pay_id,)
+        ).fetchone()
+    if not row:
+        return None
+    db_pay_id, uid, plan_id, days, amount, status = row
+    if status == 'paid':
+        return {'status': 'paid', 'uid': uid, 'verified': True, 'alreadyPaid': True}
+    if status != 'pending':
+        return {'status': status, 'uid': uid, 'verified': False, 'alreadyPaid': False}
+
+    cfg = yookassa_cfg()
+    if not cfg.get('shop_id') or not cfg.get('secret_key'):
+        return {'status': status, 'uid': uid, 'verified': False, 'alreadyPaid': False}
+
+    yk_pay = yookassa_get_payment(cfg['shop_id'], cfg['secret_key'], pay_id)
+    if not yk_pay:
+        return {'status': status, 'uid': uid, 'verified': False, 'alreadyPaid': False}
+
+    yk_status = str(yk_pay.get('status') or '').strip().lower()
+    if yk_status == 'succeeded':
+        with db_lock, sqlite3.connect(DB_FILE) as conn:
+            cur = conn.execute(
+                'UPDATE payments SET status = "paid", updated_at = ? WHERE id = ? AND status = "pending"',
+                (now, db_pay_id)
+            )
+            if cur.rowcount == 1 and uid:
+                u_row = conn.execute('SELECT plan, plan_expires_at FROM users WHERE id = ?', (uid,)).fetchone()
+                if u_row:
+                    cur_exp = int(u_row[1] or 0)
+                    base = max(now, cur_exp) if u_row[0] == 'pro' and cur_exp > now else now
+                    new_exp = base + int(days or 0) * 86400
+                    conn.execute('UPDATE users SET plan = "pro", plan_expires_at = ? WHERE id = ?', (new_exp, uid))
+            conn.commit()
+        return {'status': 'paid', 'uid': uid, 'verified': True, 'alreadyPaid': False}
+    if yk_status == 'canceled':
+        with db_lock, sqlite3.connect(DB_FILE) as conn:
+            conn.execute(
+                'UPDATE payments SET status = "canceled", updated_at = ? WHERE id = ? AND status = "pending"',
+                (now, db_pay_id)
+            )
+            conn.commit()
+        return {'status': 'canceled', 'uid': uid, 'verified': True, 'alreadyPaid': False}
+    return {'status': yk_status or status, 'uid': uid, 'verified': True, 'alreadyPaid': False}
 
 # ----------------------------------------------------------------------
 # TELEGRAM BOT AUTH & DEEP-LINK REDIRECT
@@ -773,7 +832,7 @@ class H(SimpleHTTPRequestHandler):
                         is_online = (now - last_active) < 1800
                         plan = r['plan'] or 'free'
                         exp = int(r['plan_expires_at'] or 0)
-                        is_pro = (plan == 'pro' and (exp == 0 or exp > now))
+                        is_pro = True if FREE_ACCESS_MODE else (plan == 'pro' and (exp == 0 or exp > now))
 
                         profile_data = {}
                         hist_data = []
@@ -862,7 +921,7 @@ class H(SimpleHTTPRequestHandler):
                     ).fetchall()
                 users_list = []
                 for r in rows:
-                    dto = user_dto(r[:7])
+                    dto = user_dto(r[:7], respect_free_mode=False)
                     dto['createdAt'] = r[7]
                     dto['lastLoginAt'] = r[8]
                     users_list.append(dto)
@@ -895,42 +954,36 @@ class H(SimpleHTTPRequestHandler):
                 return self.send_j(200, {
                     'plans': list(PLANS.values()),
                     'sbpOnly': cfg.get('sbp_only', True),
-                    'enabled': bool(cfg.get('enabled') and cfg.get('shop_id') and cfg.get('secret_key'))
+                    'enabled': False if FREE_ACCESS_MODE else bool(cfg.get('enabled') and cfg.get('shop_id') and cfg.get('secret_key')),
+                    'freeAccessMode': bool(FREE_ACCESS_MODE)
                 })
             if p == '/api/payment/check':
                 tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
                 usr = get_user_by_token(tok)
+                if not usr:
+                    return self.send_j(401, {'error': 'unauthorized'})
                 pid = parse_qs(urlparse(self.path).query).get('paymentId', [''])[0].strip()
                 if not pid:
                     return self.send_j(400, {'error': 'Укажите paymentId'})
-                now = int(time.time())
                 with db_lock, sqlite3.connect(DB_FILE) as conn:
-                    row = conn.execute(
-                        'SELECT id, user_id, plan, days, amount, status FROM payments WHERE payment_id = ?',
+                    owner_row = conn.execute(
+                        'SELECT user_id FROM payments WHERE payment_id = ?',
                         (pid,)
                     ).fetchone()
-                if not row:
+                if not owner_row:
                     return self.send_j(404, {'error': 'Платеж не найден'})
-                pay_id, uid, plan_id, days, amount, status = row
-                if status == 'paid':
-                    return self.send_j(200, {'ok': True, 'status': 'paid', 'isPro': True})
-                cfg = yookassa_cfg()
-                if cfg.get('shop_id') and cfg.get('secret_key'):
-                    yk_pay = yookassa_get_payment(cfg['shop_id'], cfg['secret_key'], pid)
-                    if yk_pay and yk_pay.get('status') == 'succeeded':
-                        with db_lock, sqlite3.connect(DB_FILE) as conn:
-                            conn.execute('UPDATE payments SET status = "paid", updated_at = ? WHERE id = ?', (now, pay_id))
-                            u_row = conn.execute('SELECT plan, plan_expires_at FROM users WHERE id = ?', (uid,)).fetchone()
-                            if u_row:
-                                cur_exp = int(u_row[1] or 0)
-                                base = max(now, cur_exp) if u_row[0] == 'pro' and cur_exp > now else now
-                                new_exp = base + days * 86400
-                                conn.execute('UPDATE users SET plan = "pro", plan_expires_at = ? WHERE id = ?', (new_exp, uid))
-                            conn.commit()
-                        return self.send_j(200, {'ok': True, 'status': 'paid', 'isPro': True})
-                    elif yk_pay:
-                        return self.send_j(200, {'ok': True, 'status': yk_pay.get('status', status), 'isPro': False})
-                return self.send_j(200, {'ok': True, 'status': status, 'isPro': False})
+                if owner_row[0] != usr['id']:
+                    return self.send_j(403, {'error': 'forbidden'})
+                res = sync_pending_yookassa_payment(pid)
+                if not res:
+                    return self.send_j(404, {'error': 'Платеж не найден'})
+                st = res['status']
+                return self.send_j(200, {
+                    'ok': True,
+                    'status': st,
+                    'isPro': True if (st == 'paid' or FREE_ACCESS_MODE) else False,
+                    'freeAccessMode': bool(FREE_ACCESS_MODE)
+                })
             if p == '/api/admin/yookassa' and self.authed():
                 cfg = yookassa_cfg()
                 host = self.headers.get('Host') or 'rizzafit.ru'
@@ -1316,6 +1369,12 @@ class H(SimpleHTTPRequestHandler):
                 conn.commit()
             return self.send_j(200, {'ok': True, 'updatedAt': now})
         if p == '/api/payment/create':
+            if FREE_ACCESS_MODE:
+                return self.send_j(403, {
+                    'error': 'Все функции доступны бесплатно. Оформление новых подписок отключено.',
+                    'paymentsDisabled': True,
+                    'freeAccessMode': True
+                })
             tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
             usr = get_user_by_token(tok)
             if not usr:
@@ -1372,43 +1431,22 @@ class H(SimpleHTTPRequestHandler):
                 conn.commit()
             return self.send_j(200, {'ok': True, 'paymentUrl': conf_url, 'paymentId': pay_id, 'plan': plan})
         if p == '/api/payment/yookassa/webhook':
+            if FREE_ACCESS_MODE:
+                return self.send_j(200, {'ok': True, 'ignored': True, 'freeAccessMode': True})
             try:
                 raw_b = self.body(64 * 1024)
                 j = json.loads(raw_b or b'{}')
             except Exception:
                 return self.send_j(400, {'error': 'bad json'})
-            event = j.get('event')
-            obj = j.get('object') or {}
-            if event == 'payment.succeeded' and obj.get('status') == 'succeeded':
-                pay_id = obj.get('id', '')
-                meta = obj.get('metadata') or {}
-                uid = int(meta.get('user_id') or 0)
-                plan_id = str(meta.get('plan_id') or '3m')
-                days = int(meta.get('days') or PLANS.get(plan_id, {}).get('days', 30))
-                amt_str = (obj.get('amount') or {}).get('value') or '0'
-                amount = int(float(amt_str))
-                now = int(time.time())
-                with db_lock, sqlite3.connect(DB_FILE) as conn:
-                    row = conn.execute('SELECT id, user_id, days FROM payments WHERE payment_id = ?', (pay_id,)).fetchone()
-                    if row:
-                        conn.execute('UPDATE payments SET status = "paid", updated_at = ? WHERE id = ?', (now, row[0]))
-                        uid = row[1] or uid
-                        days = row[2] or days
-                    else:
-                        conn.execute(
-                            'INSERT INTO payments (user_id, plan, days, amount, currency, provider, status, note, payment_id, created_at, updated_at) '
-                            'VALUES (?, ?, ?, ?, "RUB", "yookassa", "paid", "Webhook", ?, ?, ?)',
-                            (uid, plan_id, days, amount, pay_id, now, now)
-                        )
-                    if uid:
-                        u_row = conn.execute('SELECT plan, plan_expires_at FROM users WHERE id = ?', (uid,)).fetchone()
-                        if u_row:
-                            cur_exp = int(u_row[1] or 0)
-                            base = max(now, cur_exp) if u_row[0] == 'pro' and cur_exp > now else now
-                            new_exp = base + days * 86400
-                            conn.execute('UPDATE users SET plan = "pro", plan_expires_at = ? WHERE id = ?', (new_exp, uid))
-                    conn.commit()
-            return self.send_j(200, {'ok': True})
+            event = str(j.get('event') or '').strip()
+            obj = j.get('object') if isinstance(j.get('object'), dict) else {}
+            pay_id = str(obj.get('id') or '').strip()
+            if event in ('payment.succeeded', 'payment.canceled') and pay_id:
+                res = sync_pending_yookassa_payment(pay_id)
+                if not res:
+                    return self.send_j(200, {'ok': True, 'ignored': True})
+                return self.send_j(200, {'ok': True, 'status': res['status'], 'verified': res['verified']})
+            return self.send_j(200, {'ok': True, 'ignored': True})
         if p == '/api/login':
             ip = self.client_address[0]
             c, last = fails.get(ip, (0, 0))
