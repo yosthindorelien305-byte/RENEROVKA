@@ -1544,16 +1544,140 @@
     }
   }
 
-  function handleSocialAuth(provider) {
-    if (provider === 'telegram' && window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user) {
-      const tgUser = window.Telegram.WebApp.initDataUnsafe.user;
-      submitSocialLogin({
-        provider: 'telegram',
-        socialId: String(tgUser.id),
-        username: tgUser.username || ('tg_' + tgUser.id),
-        displayName: [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') || tgUser.username,
-        avatar: tgUser.photo_url || ''
+  async function openTelegramAuthModal() {
+    const bd = document.createElement('div');
+    bd.className = 'ap-modal-backdrop';
+    bd.innerHTML = `
+      <div class="ap-modal" style="max-width:390px;text-align:center;">
+        <div style="width:58px;height:58px;border-radius:50%;background:#229ED9;color:#fff;display:inline-flex;align-items:center;justify-content:center;margin-bottom:12px;box-shadow:0 8px 24px rgba(34,158,217,0.35);">
+          ${socialSvg('telegram')}
+        </div>
+        <h3 style="margin:0 0 6px;font-size:18px;font-weight:700;">${L == 'ru' ? 'Вход через Telegram' : 'Sign in with Telegram'}</h3>
+        <p id="tg-modal-desc" style="font-size:13px;color:var(--mut);line-height:1.45;margin:0 0 16px;">
+          ${L == 'ru' ? 'Связываемся с Telegram-ботом...' : 'Connecting to Telegram bot...'}
+        </p>
+        <div id="tg-modal-body">
+          <div style="padding:18px;display:flex;align-items:center;justify-content:center;">
+            <div class="loading-spin" style="width:28px;height:28px;border:3px solid rgba(255,255,255,0.1);border-top-color:#229ED9;border-radius:50%;animation:spin 0.8s linear infinite;"></div>
+          </div>
+        </div>
+        <div class="ap-modal-actions" style="margin-top:16px;">
+          <button type="button" class="btn alt" id="tg-modal-cancel" style="width:100%;">${L == 'ru' ? 'Отмена' : 'Cancel'}</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(bd);
+    let pollTimer = null;
+    let closed = false;
+    const cleanup = () => {
+      closed = true;
+      if (pollTimer) clearInterval(pollTimer);
+      if (bd && bd.parentNode) bd.remove();
+    };
+    bd.onclick = (e) => { if (e.target === bd) cleanup(); };
+    bd.querySelector('#tg-modal-cancel').onclick = cleanup;
+
+    try {
+      const res = await fetch('api/auth/telegram/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
       });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Failed to start auth');
+      if (closed) return;
+
+      if (!data.configured || !data.url) {
+        bd.querySelector('#tg-modal-desc').textContent = L == 'ru'
+          ? 'Telegram-бот еще не подключен в панели администратора.'
+          : 'Telegram bot is not configured in admin panel.';
+        bd.querySelector('#tg-modal-body').innerHTML = `
+          <div style="background:rgba(255,255,255,0.04);border:1px dashed var(--bdr);border-radius:12px;padding:14px;font-size:12.5px;color:var(--mut);line-height:1.45;margin-bottom:12px;text-align:left;">
+            ${L == 'ru'
+              ? '💡 Администратор может подключить бота в <b>Панели управления (/admin.html -> ✈️ Telegram бот)</b>. Также вы можете зарегистрироваться или войти по логину и паролю.'
+              : '💡 Administrator can configure the bot in <b>Admin panel (/admin.html -> ✈️ Telegram bot)</b>. You can also sign in with username and password.'}
+          </div>
+          <button type="button" class="btn" id="tg-alt-login" style="width:100%;margin-bottom:6px;">
+            ${L == 'ru' ? 'Войти / Создать аккаунт' : 'Sign in / Create Account'}
+          </button>
+        `;
+        bd.querySelector('#tg-alt-login').onclick = () => {
+          cleanup();
+          openCloudAuthModal('login');
+        };
+        return;
+      }
+
+      // Bot is configured!
+      bd.querySelector('#tg-modal-desc').innerHTML = L == 'ru'
+        ? 'Открываем Telegram... Нажмите кнопку <b>СТАРТ</b> (Start) в боте для завершения входа.'
+        : 'Opening Telegram... Tap <b>START</b> in the bot to confirm login.';
+
+      bd.querySelector('#tg-modal-body').innerHTML = `
+        <div style="margin-bottom:14px;">
+          <a href="${data.url}" target="_blank" rel="noopener noreferrer" class="btn" id="tg-open-link" style="display:inline-flex;align-items:center;justify-content:center;gap:8px;background:#229ED9;color:#fff;width:100%;padding:13px;font-weight:700;border-radius:12px;text-decoration:none;box-shadow:0 4px 16px rgba(34,158,217,0.35);">
+            ${socialSvg('telegram')} ${L == 'ru' ? 'Перейти в Telegram (@' + (data.botUsername || 'bot') + ')' : 'Open Telegram (@' + (data.botUsername || 'bot') + ')'}
+          </a>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:center;gap:8px;font-size:12px;color:var(--mut);">
+          <div class="loading-spin" style="width:14px;height:14px;border:2px solid rgba(255,255,255,0.15);border-top-color:#229ED9;border-radius:50%;animation:spin 0.8s linear infinite;"></div>
+          <span>${L == 'ru' ? 'Ожидание подтверждения в боте...' : 'Waiting for confirmation in bot...'}</span>
+        </div>
+      `;
+
+      // Try opening Telegram in new window/tab
+      try {
+        window.open(data.url, '_blank');
+      } catch (err) {}
+
+      // Start polling
+      let attempts = 0;
+      pollTimer = setInterval(async () => {
+        if (closed) return;
+        attempts++;
+        if (attempts > 120) { // ~3 minutes timeout
+          cleanup();
+          alert(L == 'ru' ? 'Время ожидания входа через Telegram истекло.' : 'Telegram login timed out.');
+          return;
+        }
+        try {
+          const pollRes = await fetch('api/auth/telegram/poll?token=' + encodeURIComponent(data.token));
+          const pollData = await pollRes.json();
+          if (pollData.ok && pollData.confirmed && pollData.sessionToken) {
+            cleanup();
+            localStorage.userToken = pollData.sessionToken;
+            saveUserMeta(pollData.user);
+            if (pollData.state && Object.keys(pollData.state).length) applyServerState(pollData.state, pollData.updatedAt);
+            else if (Object.keys(collectLocalState()).length) await pushCloudSync();
+            vib(35);
+            showAppToast(CFG.brand || 'RizzaFit', (L == 'ru' ? 'Вход выполнен: ' : 'Signed in as: ') + (pollData.user.displayName || pollData.user.username));
+            render();
+          }
+        } catch (e) {
+          // ignore transient poll errors
+        }
+      }, 1500);
+
+    } catch (e) {
+      if (closed) return;
+      bd.querySelector('#tg-modal-desc').textContent = L == 'ru' ? 'Ошибка связи с сервером' : 'Connection error';
+      bd.querySelector('#tg-modal-body').innerHTML = `<div style="color:#f87171;font-size:13px;">${e.message || e}</div>`;
+    }
+  }
+
+  function handleSocialAuth(provider) {
+    if (provider === 'telegram') {
+      if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user) {
+        const tgUser = window.Telegram.WebApp.initDataUnsafe.user;
+        submitSocialLogin({
+          provider: 'telegram',
+          socialId: String(tgUser.id),
+          username: tgUser.username || ('tg_' + tgUser.id),
+          displayName: [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') || tgUser.username,
+          avatar: tgUser.photo_url || ''
+        });
+        return;
+      }
+      openTelegramAuthModal();
       return;
     }
 

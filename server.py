@@ -319,6 +319,130 @@ def yookassa_test_connection(shop_id, secret_key):
     except urllib.error.URLError as e:
         raise RuntimeError('Не удалось подключиться к ЮKassa: %s' % e.reason)
 
+# ----------------------------------------------------------------------
+# TELEGRAM BOT AUTH & DEEP-LINK REDIRECT
+# ----------------------------------------------------------------------
+TELEGRAM_FILE = os.path.join(SECRET_DIR, 'telegram.json')
+TELEGRAM_DEFAULT = {
+    'bot_token': '',
+    'bot_username': '',
+    'enabled': True
+}
+
+def telegram_cfg():
+    try:
+        with open(TELEGRAM_FILE, encoding='utf-8') as f:
+            return {**TELEGRAM_DEFAULT, **json.load(f)}
+    except Exception:
+        return dict(TELEGRAM_DEFAULT)
+
+def save_telegram_cfg(cfg):
+    cur = telegram_cfg()
+    cur.update(cfg)
+    with open(TELEGRAM_FILE, 'w', encoding='utf-8') as f:
+        json.dump(cur, f, ensure_ascii=False, indent=2)
+
+tg_pending_auth = {} # auth_token -> dict
+
+def process_telegram_auth_code(auth_code, from_user, chat_id, bot_token):
+    now = int(time.time())
+    tg_id = str(from_user.get('id', ''))
+    fname = str(from_user.get('first_name') or '').strip()
+    lname = str(from_user.get('last_name') or '').strip()
+    display_name = f"{fname} {lname}".strip() or f"User {tg_id}"
+    tg_uname = str(from_user.get('username') or '').strip().lower()
+
+    clean_uname = re.sub(r'[^a-z0-9_]', '', tg_uname)
+    if len(clean_uname) < 3:
+        clean_uname = f"tg_{tg_id[:10]}"
+    clean_uname = clean_uname[:20]
+
+    with db_lock, sqlite3.connect(DB_FILE) as conn:
+        row = conn.execute(
+            'SELECT id, username, display_name, email, plan, plan_expires_at, is_blocked, avatar '
+            'FROM users WHERE oauth_provider = "telegram" AND oauth_id = ?',
+            (tg_id,)
+        ).fetchone()
+
+        if row:
+            uid = row[0]
+            conn.execute('UPDATE users SET last_login_at = ? WHERE id = ?', (now, uid))
+            u_data = user_dto(row)
+        else:
+            uname = clean_uname
+            idx = 1
+            while conn.execute('SELECT 1 FROM users WHERE username = ?', (uname,)).fetchone():
+                uname = f"{clean_uname[:16]}_{idx}"
+                idx += 1
+            cur = conn.execute(
+                'INSERT INTO users (username, pw_salt, pw_hash, display_name, email, oauth_provider, oauth_id, avatar, plan, plan_expires_at, is_blocked, last_login_at, created_at) '
+                'VALUES (?, "", "", ?, "", "telegram", ?, "", "free", 0, 0, ?, ?)',
+                (uname, display_name, tg_id, now, now)
+            )
+            uid = cur.lastrowid
+            u_data = user_dto((uid, uname, display_name, "", "free", 0, 0, ""))
+
+        stok = secrets.token_urlsafe(32)
+        conn.execute('INSERT INTO user_sessions (token, user_id, expires_at) VALUES (?, ?, ?)', (stok, uid, now + 30 * 86400))
+        st_row = conn.execute('SELECT data_json, updated_at FROM user_state WHERE user_id = ?', (uid,)).fetchone()
+        conn.commit()
+
+        u_state = json.loads(st_row[0]) if st_row else {}
+        up_at = st_row[1] if st_row else 0
+
+    if auth_code in tg_pending_auth:
+        tg_pending_auth[auth_code] = {
+            'status': 'confirmed',
+            'sessionToken': stok,
+            'user': u_data,
+            'state': u_state,
+            'updatedAt': up_at
+        }
+
+    if bot_token and chat_id:
+        try:
+            send_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            reply_text = f"✅ <b>Вход в RizzaFit подтверждён!</b>\n\nДобро пожаловать, <b>{display_name}</b>!\nВы успешно авторизовались в приложении. Можете вернуться в браузер — ваш профиль уже открыт!"
+            payload = json.dumps({'chat_id': chat_id, 'text': reply_text, 'parse_mode': 'HTML'}).encode('utf-8')
+            req = urllib.request.Request(send_url, data=payload, headers={'Content-Type': 'application/json', 'User-Agent': 'FlexaBot/1.0'})
+            urllib.request.urlopen(req, timeout=8)
+        except Exception:
+            pass
+    return True
+
+def telegram_bot_worker():
+    offset = 0
+    while True:
+        try:
+            cfg = telegram_cfg()
+            token = cfg.get('bot_token', '').strip()
+            if not token or not cfg.get('enabled', True):
+                time.sleep(5)
+                continue
+            url = f"https://api.telegram.org/bot{token}/getUpdates?offset={offset}&timeout=15"
+            req = urllib.request.Request(url, headers={'User-Agent': 'FlexaBot/1.0'})
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                if not data.get('ok'):
+                    time.sleep(4)
+                    continue
+                updates = data.get('result', [])
+                for u in updates:
+                    offset = max(offset, u['update_id'] + 1)
+                    msg = u.get('message') or u.get('edited_message')
+                    if not msg:
+                        continue
+                    text = (msg.get('text') or '').strip()
+                    chat_id = msg.get('chat', {}).get('id')
+                    from_user = msg.get('from', {})
+                    if text.startswith('/start auth_'):
+                        auth_code = text.split('auth_')[1].strip()
+                        process_telegram_auth_code(auth_code, from_user, chat_id, token)
+        except Exception:
+            time.sleep(3)
+
+threading.Thread(target=telegram_bot_worker, daemon=True).start()
+
 def ai_cfg():
     try:
         with open(AI_FILE, encoding='utf-8') as f:
@@ -747,6 +871,29 @@ class H(SimpleHTTPRequestHandler):
                     'sbpOnly': bool(cfg.get('sbp_only', True)),
                     'webhookUrl': webhook_url,
                     'plans': list(PLANS.values())
+                })
+            if p == '/api/auth/telegram/poll':
+                q_token = qs.get('token', [''])[0]
+                rec = tg_pending_auth.get(q_token)
+                if not rec:
+                    return self.send_j(200, {'ok': True, 'confirmed': False})
+                if rec.get('status') == 'confirmed':
+                    return self.send_j(200, {
+                        'ok': True,
+                        'confirmed': True,
+                        'sessionToken': rec.get('sessionToken'),
+                        'user': rec.get('user'),
+                        'state': rec.get('state'),
+                        'updatedAt': rec.get('updatedAt', 0)
+                    })
+                return self.send_j(200, {'ok': True, 'confirmed': False})
+            if p == '/api/admin/telegram' and self.authed():
+                cfg = telegram_cfg()
+                return self.send_j(200, {
+                    'ok': True,
+                    'botUsername': cfg.get('bot_username', ''),
+                    'enabled': cfg.get('enabled', True),
+                    'hasToken': bool(cfg.get('bot_token'))
                 })
             return self.send_j(404, {'error': 'not found'})
         return super().do_GET()
@@ -1327,6 +1474,57 @@ class H(SimpleHTTPRequestHandler):
                 return self.send_j(400, {'error': str(e)})
             except Exception as e:
                 return self.send_j(500, {'error': f'Ошибка соединения: {e}'})
+        if p == '/api/auth/telegram/start':
+            auth_token = secrets.token_urlsafe(16)
+            tg_pending_auth[auth_token] = {'created_at': time.time(), 'status': 'pending'}
+            now_ts = time.time()
+            for k in list(tg_pending_auth.keys()):
+                if now_ts - tg_pending_auth[k].get('created_at', 0) > 900:
+                    tg_pending_auth.pop(k, None)
+            cfg = telegram_cfg()
+            buser = cfg.get('bot_username', '').lstrip('@').strip()
+            configured = bool(cfg.get('bot_token') and buser)
+            url = f"https://t.me/{buser}?start=auth_{auth_token}" if buser else ""
+            return self.send_j(200, {
+                'ok': True,
+                'token': auth_token,
+                'botUsername': buser,
+                'url': url,
+                'configured': configured
+            })
+        if p == '/api/admin/telegram':
+            if not self.authed():
+                return self.send_j(401, {'error': 'unauthorized'})
+            try:
+                j = json.loads(self.body(4096) or b'{}')
+            except Exception:
+                return self.send_j(400, {'error': 'bad json'})
+            update_data = {}
+            if 'botUsername' in j:
+                update_data['bot_username'] = str(j.get('botUsername') or '').lstrip('@').strip()
+            if 'botToken' in j and j.get('botToken') != '***':
+                update_data['bot_token'] = str(j.get('botToken') or '').strip()
+            if 'enabled' in j:
+                update_data['enabled'] = bool(j.get('enabled'))
+            save_telegram_cfg(update_data)
+            return self.send_j(200, {'ok': True})
+        if p == '/api/admin/telegram/test':
+            if not self.authed():
+                return self.send_j(401, {'error': 'unauthorized'})
+            cfg = telegram_cfg()
+            tok = cfg.get('bot_token', '').strip()
+            if not tok:
+                return self.send_j(400, {'error': 'Токен бота не указан'})
+            try:
+                req = urllib.request.Request(f'https://api.telegram.org/bot{tok}/getMe', headers={'User-Agent': 'FlexaBot/1.0'})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read().decode('utf-8'))
+                    if data.get('ok'):
+                        b_info = data.get('result', {})
+                        return self.send_j(200, {'ok': True, 'bot': b_info})
+                    return self.send_j(400, {'error': data.get('description', 'Ошибка Telegram API')})
+            except Exception as e:
+                return self.send_j(400, {'error': f'Не удалось соединиться с Telegram: {e}'})
         self.send_j(404, {'error': 'not found'})
 
 if __name__ == '__main__':

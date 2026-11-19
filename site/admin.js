@@ -137,6 +137,7 @@
       ['workouts', '🏋️ Тренировки'],
       ['exercises', '🤸 Упражнения & Видео'],
       ['users', '👥 Пользователи'],
+      ['telegram', '✈️ Telegram бот'],
       ['payments', '💳 ЮKassa & СБП'],
       ['ai', '🤖 AI-тренер'],
       ['settings', '⚙️ Настройки']
@@ -145,7 +146,7 @@
     $('#lo').onclick = () => { token = ''; sessionStorage.removeItem('atok'); showLogin(); };
     $$('.tabs button').forEach(b => b.onclick = () => { tab = b.dataset.t; sub = null; shell(); });
 
-    const tabs = { athlete: tabAthlete, ui: tabUI, programs: tabPrograms, workouts: tabWorkouts, exercises: tabExercises, users: tabUsers, payments: tabPayments, ai: tabAI, settings: tabSettings };
+    const tabs = { athlete: tabAthlete, ui: tabUI, programs: tabPrograms, workouts: tabWorkouts, exercises: tabExercises, users: tabUsers, telegram: tabTelegram, payments: tabPayments, ai: tabAI, settings: tabSettings };
     if (tabs[tab]) tabs[tab]($('#tabc'));
   }
 
@@ -1203,6 +1204,89 @@
     };
 
     $('#yk-refresh').onclick = () => tabPayments(el);
+  }
+
+  // ---------- tab: telegram bot ----------
+  async function tabTelegram(el) {
+    el.innerHTML = `<div class="box"><div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+      <div style="width:42px;height:42px;border-radius:50%;background:#229ED9;display:flex;align-items:center;justify-content:center;color:#fff;font-size:22px;box-shadow:0 6px 18px rgba(34,158,217,0.35);">✈️</div>
+      <div>
+        <h2 style="margin:0;font-size:18px;">Вход через Telegram (Бот)</h2>
+        <div style="font-size:12.5px;color:var(--mut);">Мгновенная авторизация и регистрация пользователей без паролей</div>
+      </div>
+    </div>
+    <div style="background:rgba(255,255,255,0.03);border:1px solid var(--bdr);border-radius:12px;padding:14px;margin-bottom:16px;font-size:13px;line-height:1.5;color:var(--mut);">
+      <b>Как настроить:</b><br>
+      1. Откройте в Telegram бота <a href="https://t.me/BotFather" target="_blank" style="color:#38bdf8;text-decoration:none;">@BotFather</a>.<br>
+      2. Отправьте команду <code>/newbot</code> и задайте имя и юзернейм (например, <i>MyFitBot</i>).<br>
+      3. Скопируйте полученный <b>HTTP API Token</b> и вставьте в поле ниже.<br>
+      4. Укажите юзернейм бота (без @) и нажмите <b>Сохранить</b>, затем <b>Проверить подключение</b>.
+    </div>
+    <div id="tg-form">Загрузка настроек...</div>
+    </div>`;
+
+    try {
+      const cfg = await api('admin/telegram');
+      const f = $('#tg-form');
+      f.innerHTML = `
+        <label class="f">Имя пользователя бота (Bot Username)
+          <input id="tg-usr" placeholder="Например: RizzaFitBot" value="${esc(cfg.botUsername || '')}">
+          <span style="font-size:11px;color:var(--mut)">Юзернейм бота в Telegram без символа @</span>
+        </label>
+        <label class="f">Токен бота (Bot Token из @BotFather)
+          <input id="tg-tok" type="password" placeholder="${cfg.hasToken ? '••••••••••••••••••••••••••••••••' : 'Вставьте токен бота'}" value="">
+          <span style="font-size:11px;color:var(--mut)">${cfg.hasToken ? 'Токен уже сохранён на сервере. Оставьте пустым, если не хотите менять.' : 'Формат: 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ'}</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:10px;margin:16px 0;cursor:pointer;">
+          <input type="checkbox" id="tg-en" ${cfg.enabled !== false ? 'checked' : ''} style="width:18px;height:18px;accent-color:#229ED9;">
+          <span style="font-size:14px;font-weight:600;">Включить вход через Telegram на сайте</span>
+        </label>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;">
+          <button class="btn" id="tg-save" style="animation:none">💾 Сохранить настройки</button>
+          <button class="btn alt" id="tg-test" type="button">⚡ Проверить подключение бота</button>
+        </div>
+        <div id="tg-status" style="margin-top:16px;"></div>
+      `;
+
+      $('#tg-save').onclick = async () => {
+        const u = $('#tg-usr').value.trim().replace(/^@/, '');
+        const t = $('#tg-tok').value.trim();
+        const en = $('#tg-en').checked;
+        const payload = { botUsername: u, enabled: en };
+        if (t) payload.botToken = t;
+        try {
+          await post('admin/telegram', payload);
+          toast('Настройки Telegram сохранены ✓');
+          tabTelegram(el);
+        } catch (e) {
+          toast(e.message, 1);
+        }
+      };
+
+      $('#tg-test').onclick = async () => {
+        const stat = $('#tg-status');
+        stat.innerHTML = '<span style="color:var(--mut)">Проверка соединения с Telegram API...</span>';
+        try {
+          const res = await post('admin/telegram/test', {});
+          if (res.ok && res.bot) {
+            stat.innerHTML = `
+              <div style="padding:12px;background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.3);border-radius:10px;color:#4ade80;font-size:13px;">
+                ✓ <b>Бот успешно подключен!</b><br>
+                Имя: <b>${esc(res.bot.first_name || '')}</b> (@${esc(res.bot.username || '')})<br>
+                ID: ${res.bot.id} · Авторизация через Telegram работает.
+              </div>
+            `;
+          } else {
+            stat.innerHTML = `<div style="padding:12px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:10px;color:#f87171;font-size:13px;">✕ Ошибка: ${esc(res.error || 'Не удалось подключиться')}</div>`;
+          }
+        } catch (e) {
+          stat.innerHTML = `<div style="padding:12px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:10px;color:#f87171;font-size:13px;">✕ Ошибка проверки: ${esc(e.message)}</div>`;
+        }
+      };
+
+    } catch (e) {
+      $('#tg-form').innerHTML = `<div style="color:#f87171">Ошибка загрузки: ${esc(e.message)}</div>`;
+    }
   }
 
   // ---------- tab: settings ----------
