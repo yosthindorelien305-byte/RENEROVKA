@@ -52,22 +52,25 @@
     if (ft) ft.textContent = '© ' + nm + ' · ' + ((CFG.t[L] || {}).footer || T[L].footer);
     function esc0(s) { return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
   })();
-  function syncHeaderAthlete() {
-    const chip = document.getElementById('top-ath');
-    if (!chip) return;
+  function isLoggedIn() {
+    return !!(localStorage.userToken && localStorage.userName);
+  }
+
+  function syncNavAthlete() {
+    const avBox = document.getElementById('nav-ath-av');
+    if (!avBox) return;
+    if (!isLoggedIn()) {
+      avBox.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.5" r="3.5"/><path d="M5.5 19.5c1.4-3.1 3.8-4.5 6.5-4.5s5.1 1.4 6.5 4.5"/></svg>`;
+      return;
+    }
     let loc = {};
     try { loc = JSON.parse(localStorage.athleteProfile || '{}'); } catch (e) {}
-    const a = Object.assign({}, window.AthleteProfile ? window.AthleteProfile.DEFAULTS : {}, CFG.athlete || {}, loc);
-    const nm = chip.querySelector('.ss-user-name');
-    const av = chip.querySelector('.ss-user-av');
-    const profLabel = (a.name || (L == 'ru' ? 'Профиль' : 'Profile'));
-    chip.title = profLabel;
-    chip.setAttribute('aria-label', profLabel);
-    if (nm) nm.textContent = a.name || 'Mr.Bobrovsky';
-    if (av) {
-      av.innerHTML = a.avatar
-        ? `<img src="${esc(a.avatar)}" alt="">`
-        : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.5" r="3.5"/><path d="M5.5 19.5c1.4-3.1 3.8-4.5 6.5-4.5s5.1 1.4 6.5 4.5"/></svg>`;
+    const avUrl = loc.avatar || localStorage.userAvatar || '';
+    const uName = localStorage.userName || loc.name || 'A';
+    if (avUrl) {
+      avBox.innerHTML = `<img src="${esc(avUrl)}" alt="">`;
+    } else {
+      avBox.innerHTML = `<span class="nav-init">${esc(uName.charAt(0).toUpperCase())}</span>`;
     }
   }
   const exMap = {}; D.exercises.forEach(e => exMap[e.id] = e);
@@ -1024,13 +1027,20 @@
       if (!loc.handle || loc.handle === '@mr.bobrovsky' || loc.handle === '@athlete') loc.handle = '@' + u.username.toLowerCase();
       localStorage.athleteProfile = JSON.stringify(loc);
     }
+    if (u.avatar) {
+      localStorage.userAvatar = u.avatar;
+      let loc = {};
+      try { loc = JSON.parse(localStorage.athleteProfile || '{}'); } catch (e) {}
+      loc.avatar = u.avatar;
+      localStorage.athleteProfile = JSON.stringify(loc);
+    }
     localStorage.userEmail = u.email || '';
     localStorage.userPlan = u.plan || 'free';
     localStorage.userPlanExp = String(u.planExpiresAt || 0);
     localStorage.userIsPro = u.isPro ? '1' : '0';
   }
   function clearUserMeta() {
-    ['userToken', 'userName', 'userEmail', 'userPlan', 'userPlanExp', 'userIsPro', 'cloudSyncTs'].forEach(k => localStorage.removeItem(k));
+    ['userToken', 'userName', 'userEmail', 'userAvatar', 'userPlan', 'userPlanExp', 'userIsPro', 'cloudSyncTs'].forEach(k => localStorage.removeItem(k));
   }
   let cloudSyncTimer = null;
   async function pushCloudSync() {
@@ -1491,9 +1501,190 @@
     };
   }
 
-  function openCloudAuthModal(cb) {
+  function socialSvg(type) {
+    if (type === 'telegram') {
+      return `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .39z"/></svg>`;
+    }
+    if (type === 'vk') {
+      return `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12.78 17.5c-5.26 0-8.26-3.6-8.38-9.59h2.64c.08 4.4 2.02 6.26 3.56 6.64V7.91h2.49v3.79c1.52-.16 3.1-1.89 3.64-3.79h2.49c-.42 2.35-2.14 4.08-3.36 4.79 1.22.57 3.18 2.07 3.91 4.8h-2.74c-.58-1.8-2.02-3.18-3.92-3.37v3.37h-.33z"/></svg>`;
+    }
+    if (type === 'google') {
+      return `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="#EA4335" d="M12 5c1.6 0 3 .6 4.1 1.7l3.1-3.1C17.3 1.8 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.4 9 5 12 5z"/><path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.8z"/><path fill="#FBBC05" d="M5.6 14.8c-.2-.7-.4-1.5-.4-2.3 0-.8.2-1.6.4-2.3L1.9 7.3C.7 9.7 0 12.3 0 15.2s.7 5.5 1.9 7.9l3.7-2.9z"/><path fill="#34A853" d="M12 23.5c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3 0-5.5-2.4-6.4-5.2L1.9 16.5C3.7 20.2 7.5 23.5 12 23.5z"/></svg>`;
+    }
+    if (type === 'yandex') {
+      return `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M13.5 2h2.5L11.5 13.5l4.5 8.5h-2.7L9.5 14l-2 2.5V22H5V2h4.5c3.2 0 5 1.8 5 4.5 0 2.2-1.2 3.8-3 4.4L13.5 2zm-4 7.5h1.2c1.7 0 2.8-.9 2.8-2.4s-1.1-2.4-2.8-2.4H9.5v4.8z"/></svg>`;
+    }
+    return '';
+  }
+
+  async function submitSocialLogin(payload) {
+    try {
+      if (!payload.state) payload.state = collectLocalState();
+      const r = await fetch('api/user/social-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) {
+        alert(j.error || (L == 'ru' ? 'Ошибка входа через соцсеть' : 'Social sign-in error'));
+        return false;
+      }
+      localStorage.userToken = j.token;
+      saveUserMeta(j.user);
+      if (j.state && Object.keys(j.state).length) applyServerState(j.state, j.updatedAt);
+      else if (Object.keys(collectLocalState()).length) await pushCloudSync();
+      vib(35);
+      showAppToast(CFG.brand || 'RizzaFit', (L == 'ru' ? 'Вход выполнен: ' : 'Signed in as: ') + (j.user.displayName || j.user.username));
+      render();
+      return true;
+    } catch (e) {
+      alert(L == 'ru' ? 'Не удалось связаться с сервером' : 'Failed to reach server');
+      return false;
+    }
+  }
+
+  function handleSocialAuth(provider) {
+    if (provider === 'telegram' && window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user) {
+      const tgUser = window.Telegram.WebApp.initDataUnsafe.user;
+      submitSocialLogin({
+        provider: 'telegram',
+        socialId: String(tgUser.id),
+        username: tgUser.username || ('tg_' + tgUser.id),
+        displayName: [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') || tgUser.username,
+        avatar: tgUser.photo_url || ''
+      });
+      return;
+    }
+
+    const bd = document.createElement('div');
+    bd.className = 'ap-modal-backdrop';
+    const names = {
+      telegram: { name: 'Telegram', ph: '@username или ID', icon: socialSvg('telegram') },
+      vk: { name: 'ВКонтакте (VK ID)', ph: 'ID или @username', icon: socialSvg('vk') },
+      google: { name: 'Google', ph: 'user@gmail.com', icon: socialSvg('google') },
+      yandex: { name: 'Яндекс ID', ph: 'login@yandex.ru', icon: socialSvg('yandex') }
+    };
+    const curP = names[provider] || names.telegram;
+    bd.innerHTML = `
+      <div class="ap-modal">
+        <h3 style="display:flex;align-items:center;gap:8px;">${curP.icon} ${L == 'ru' ? 'Вход через ' + curP.name : 'Sign in with ' + curP.name}</h3>
+        <p style="font-size:12.5px;color:var(--mut);line-height:1.45;margin:6px 0 12px;">
+          ${L == 'ru' ? 'Укажите ваш никнейм или email в ' + curP.name + ' для быстрого входа:' : 'Enter your handle or email in ' + curP.name + ' to continue:'}
+        </p>
+        <label>${L == 'ru' ? 'Логин / Никнейм / Email' : 'Handle / Email'}<input id="soc-inp-handle" placeholder="${curP.ph}" value=""></label>
+        <div id="soc-err" style="font-size:12px;color:#f87171;min-height:16px;margin-top:4px;"></div>
+        <div class="ap-modal-actions">
+          <button type="button" class="btn alt" id="soc-cancel">${L == 'ru' ? 'Отмена' : 'Cancel'}</button>
+          <button type="button" class="btn" id="soc-confirm">${L == 'ru' ? 'Войти' : 'Continue'}</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(bd);
+    bd.onclick = ev => { if (ev.target === bd) bd.remove(); };
+    bd.querySelector('#soc-cancel').onclick = () => bd.remove();
+    const handleInp = bd.querySelector('#soc-inp-handle');
+    setTimeout(() => handleInp && handleInp.focus(), 80);
+    bd.querySelector('#soc-confirm').onclick = async () => {
+      const val = handleInp.value.trim();
+      const errEl = bd.querySelector('#soc-err');
+      if (!val) {
+        errEl.textContent = L == 'ru' ? 'Заполните поле' : 'Field is required';
+        return;
+      }
+      let clean = val.replace(/^@/, '');
+      let email = '';
+      if (val.includes('@')) {
+        email = val;
+        clean = val.split('@')[0];
+      }
+      let hVal = 0;
+      for (let i = 0; i < val.length; i++) hVal = (Math.imul(31, hVal) + val.charCodeAt(i)) | 0;
+      const sId = 'soc_' + provider.slice(0, 2) + '_' + Math.abs(hVal);
+      const ok = await submitSocialLogin({
+        provider,
+        socialId: sId,
+        username: (provider + '_' + clean).replace(/[^a-z0-9_]/gi, '').toLowerCase(),
+        displayName: clean,
+        email: email
+      });
+      if (ok) bd.remove();
+    };
+  }
+
+  function renderGuestAuthGate() {
+    return `
+      <div class="auth-gate-card">
+        <div class="auth-gate-av">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>
+        </div>
+        <h2 style="margin:0 0 8px;font-size:20px;font-weight:800;color:var(--tx);">${L == 'ru' ? 'Личный профиль' : 'Personal Profile'}</h2>
+        <p style="margin:0 0 20px;font-size:13.5px;color:var(--mut);line-height:1.45;">
+          ${L == 'ru' ? 'Войдите или зарегистрируйтесь, чтобы сохранять тренировки, историю, отслеживать прогресс и соревноваться в рейтинге.' : 'Sign in or create an account to save workouts, track progress, and join the leaderboard.'}
+        </p>
+
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <button type="button" class="btn" id="guest-btn-login" style="padding:12px;font-size:14px;">
+            ${uiSvg('users', 16)} ${L == 'ru' ? 'Войти в аккаунт' : 'Sign In'}
+          </button>
+          <button type="button" class="btn alt" id="guest-btn-reg" style="padding:12px;font-size:14px;">
+            ${uiSvg('sparkles', 16)} ${L == 'ru' ? 'Создать аккаунт' : 'Create Account'}
+          </button>
+        </div>
+
+        <div class="auth-sep">
+          <span>${L == 'ru' ? 'или быстрый вход через соцсети' : 'or quick sign-in with'}</span>
+        </div>
+
+        <div class="social-auth-grid">
+          <button type="button" class="soc-btn tg" data-soc-provider="telegram">
+            ${socialSvg('telegram')} Telegram
+          </button>
+          <button type="button" class="soc-btn vk" data-soc-provider="vk">
+            ${socialSvg('vk')} ВКонтакте
+          </button>
+          <button type="button" class="soc-btn gg" data-soc-provider="google">
+            ${socialSvg('google')} Google
+          </button>
+          <button type="button" class="soc-btn ya" data-soc-provider="yandex">
+            ${socialSvg('yandex')} Яндекс
+          </button>
+        </div>
+
+        <div style="margin-top:24px;border-top:1px solid rgba(255,255,255,0.08);padding-top:16px;">
+          <div style="font-size:11.5px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px;text-align:left;">
+            ${L == 'ru' ? 'Что даёт аккаунт:' : 'Account benefits:'}
+          </div>
+          <ul class="auth-benefits-list">
+            <li class="auth-benefit-item">
+              <span style="font-size:16px;">☁️</span>
+              <div><b>${L == 'ru' ? 'Сохранение в базе данных' : 'Cloud database save'}</b> — ${L == 'ru' ? 'история и рекорды сохраняются на сервере' : 'history and records saved on server'}</div>
+            </li>
+            <li class="auth-benefit-item">
+              <span style="font-size:16px;">🏆</span>
+              <div><b>${L == 'ru' ? 'Рейтинг реальных атлетов' : 'Athletes leaderboard'}</b> — ${L == 'ru' ? 'участвуйте в турнирной таблице клуба' : 'compete on the club leaderboard'}</div>
+            </li>
+            <li class="auth-benefit-item">
+              <span style="font-size:16px;">⚔️</span>
+              <div><b>${L == 'ru' ? 'Дуэли и квесты' : 'Duels & Co-op quests'}</b> — ${L == 'ru' ? 'соревнуйтесь с другими участниками' : 'challenge other athletes'}</div>
+            </li>
+            <li class="auth-benefit-item">
+              <span style="font-size:16px;">📱</span>
+              <div><b>${L == 'ru' ? 'Синхронизация между устройствами' : 'Cross-device sync'}</b> — ${L == 'ru' ? 'прогресс всегда под рукой' : 'progress syncs everywhere'}</div>
+            </li>
+          </ul>
+        </div>
+      </div>
+    `;
+  }
+
+  function openCloudAuthModal(initialMode, cb) {
+    if (typeof initialMode === 'function') {
+      cb = initialMode;
+      initialMode = 'login';
+    }
     vib(20);
-    let mode = 'login';
+    let mode = (typeof initialMode === 'string' && ['login', 'register', 'reset'].includes(initialMode)) ? initialMode : 'login';
     const bd = document.createElement('div');
     bd.className = 'ap-modal-backdrop';
     const drawAuth = () => {
@@ -1527,7 +1718,22 @@
           <button type="button" class="btn alt" id="ca-cancel">${L == 'ru' ? 'Отмена' : 'Cancel'}</button>
           <button type="button" class="btn" id="ca-go">${isReg ? (L == 'ru' ? 'Создать' : 'Register') : isReset ? (L == 'ru' ? 'Сохранить' : 'Reset') : (L == 'ru' ? 'Войти' : 'Sign In')}</button>
         </div>
+        <div class="auth-sep" style="margin:14px 0 10px;">
+          <span>${L == 'ru' ? 'или через соцсети' : 'or with social'}</span>
+        </div>
+        <div class="social-auth-grid" style="margin-bottom:6px;">
+          <button type="button" class="soc-btn tg" data-modal-soc="telegram">${socialSvg('telegram')} Telegram</button>
+          <button type="button" class="soc-btn vk" data-modal-soc="vk">${socialSvg('vk')} VK ID</button>
+          <button type="button" class="soc-btn gg" data-modal-soc="google">${socialSvg('google')} Google</button>
+          <button type="button" class="soc-btn ya" data-modal-soc="yandex">${socialSvg('yandex')} Яндекс</button>
+        </div>
       </div>`;
+      bd.querySelectorAll('[data-modal-soc]').forEach(b => {
+        b.onclick = () => {
+          bd.remove();
+          handleSocialAuth(b.dataset.modalSoc);
+        };
+      });
       bd.querySelector('#ca-tab-login').onclick = () => { mode = 'login'; drawAuth(); };
       bd.querySelector('#ca-tab-reg').onclick = () => { mode = 'register'; drawAuth(); };
       const forgotBtn = bd.querySelector('#ca-forgot');
@@ -2695,6 +2901,9 @@
         </div>` : ''}`;
     },
     profile() {
+      if (!isLoggedIn()) {
+        return renderGuestAuthGate();
+      }
       const allH = hist();
       const h = [...allH].reverse();
       const totalSec = allH.reduce((sum, x) => sum + (x.s || 0), 0);
@@ -3001,6 +3210,15 @@
           <a href="#/profile" class="btn alt" style="padding:7px 14px;font-size:12.5px;">← ${L == 'ru' ? 'Профиль' : 'Profile'}</a>
           <button type="button" class="btn" id="fr-add-open" style="padding:8px 14px;font-size:12.5px;">+ ${L == 'ru' ? 'Добавить друга' : 'Add friend'}</button>
         </div>
+
+        ${!isLoggedIn() ? `
+          <div class="ss-card" style="margin-bottom:14px;background:linear-gradient(135deg,rgba(var(--acr),0.18) 0%,rgba(0,0,0,0.3) 100%);border:1px solid rgba(var(--acr),0.4);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+            <div>
+              <div style="font-size:13.5px;font-weight:800;color:var(--tx);">${L == 'ru' ? 'Вы не авторизованы' : 'You are not signed in'}</div>
+              <div style="font-size:11.5px;color:var(--mut);">${L == 'ru' ? 'Войдите или зарегистрируйтесь, чтобы занять своё место в рейтинге!' : 'Sign in to join the club and claim your rank!'}</div>
+            </div>
+            <button type="button" class="btn" id="fr-guest-login" style="padding:7px 14px;font-size:12px;">${L == 'ru' ? 'Войти' : 'Sign In'}</button>
+          </div>` : ''}
 
         ${questHtml}
 
@@ -3690,6 +3908,16 @@
       }
     }
     if (name == 'history' || name == 'profile') {
+      if (!isLoggedIn()) {
+        const loginBtn = document.getElementById('guest-btn-login');
+        if (loginBtn) loginBtn.onclick = () => openCloudAuthModal('login');
+        const regBtn = document.getElementById('guest-btn-reg');
+        if (regBtn) regBtn.onclick = () => openCloudAuthModal('register');
+        app.querySelectorAll('[data-soc-provider]').forEach(btn => {
+          btn.onclick = () => handleSocialAuth(btn.dataset.socProvider);
+        });
+        return;
+      }
       const clr = document.getElementById('clr');
       if (clr) clr.onclick = () => {
         if (confirm(L == 'ru' ? 'Очистить историю и личные рекорды?' : 'Clear history and records?')) {
@@ -4091,6 +4319,8 @@
       };
     }
     if (name == 'friends') {
+      const frGuestBtn = document.getElementById('fr-guest-login');
+      if (frGuestBtn) frGuestBtn.onclick = () => openCloudAuthModal('login');
       const AP = window.AthleteProfile;
       syncCommunityUsers().then(users => {
         if (users && users.length) {
@@ -4981,7 +5211,7 @@
       langBtn.setAttribute('aria-label', langBtn.title);
     }
     document.documentElement.lang = L;
-    syncHeaderAthlete();
+    syncNavAthlete();
     syncSndBtn();
     app.classList.remove('fx-enter');
     app.innerHTML = routes[key](a);

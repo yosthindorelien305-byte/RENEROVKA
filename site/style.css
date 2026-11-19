@@ -1130,6 +1130,153 @@ h2 a {
   color: var(--ac-l);
 }
 
+#nav a .nav-user-av {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--card-inset);
+  border: 1.5px solid rgba(255, 255, 255, 0.22);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+}
+#nav a.on .nav-user-av {
+  border-color: var(--ac);
+  box-shadow: 0 0 10px rgba(var(--acr), 0.55);
+}
+#nav a .nav-user-av img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+}
+#nav a .nav-user-av svg {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+#nav a .nav-user-av .nav-init {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--ac-l);
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+/* Auth Gate & Social Buttons */
+.auth-gate-card {
+  padding: 28px 20px;
+  text-align: center;
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(25, 32, 46, 0.92) 0%, rgba(15, 18, 24, 0.98) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5);
+  margin-bottom: 20px;
+}
+.auth-gate-av {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  margin: 0 auto 16px;
+  background: linear-gradient(135deg, rgba(var(--acr), 0.25) 0%, rgba(var(--acr), 0.05) 100%);
+  border: 2px solid var(--ac);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 24px rgba(var(--acr), 0.35);
+}
+.auth-gate-av svg {
+  width: 36px;
+  height: 36px;
+  color: var(--ac);
+}
+.auth-benefits-list {
+  margin: 18px 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: left;
+}
+.auth-benefit-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--mut);
+}
+.auth-benefit-item b {
+  color: var(--tx);
+}
+.auth-sep {
+  display: flex;
+  align-items: center;
+  margin: 16px 0;
+  color: var(--mut);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.auth-sep::before, .auth-sep::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+}
+.auth-sep span {
+  padding: 0 10px;
+}
+.social-auth-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 12px 0;
+}
+.soc-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 12.5px;
+  font-weight: 700;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--card-inset);
+  color: var(--tx);
+  cursor: pointer;
+  transition: transform 0.15s, background 0.15s, border-color 0.15s;
+}
+.soc-btn:active {
+  transform: scale(0.96);
+}
+.soc-btn svg {
+  flex: none;
+}
+.soc-btn.tg {
+  background: rgba(36, 161, 222, 0.14);
+  border-color: rgba(36, 161, 222, 0.4);
+  color: #2ca5e0;
+}
+.soc-btn.vk {
+  background: rgba(0, 119, 255, 0.14);
+  border-color: rgba(0, 119, 255, 0.4);
+  color: #3b88e8;
+}
+.soc-btn.gg {
+  background: rgba(234, 67, 53, 0.12);
+  border-color: rgba(234, 67, 53, 0.35);
+  color: #ff6b60;
+}
+.soc-btn.ya {
+  background: rgba(252, 63, 29, 0.12);
+  border-color: rgba(252, 63, 29, 0.35);
+  color: #fc3f1d;
+}
+
 /* ===================================================================
    FULLSCREEN WORKOUT PLAYER & TIMER
    =================================================================== */

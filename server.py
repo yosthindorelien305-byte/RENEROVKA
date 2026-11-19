@@ -81,6 +81,9 @@ def init_db():
             ('plan_expires_at', 'INTEGER NOT NULL DEFAULT 0'),
             ('is_blocked', 'INTEGER NOT NULL DEFAULT 0'),
             ('last_login_at', 'INTEGER NOT NULL DEFAULT 0'),
+            ('oauth_provider', 'TEXT NOT NULL DEFAULT ""'),
+            ('oauth_id', 'TEXT NOT NULL DEFAULT ""'),
+            ('avatar', 'TEXT NOT NULL DEFAULT ""'),
         ]
         for col, ddl in migrations:
             if col not in cols:
@@ -88,6 +91,10 @@ def init_db():
         conn.execute(
             'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email '
             'ON users(email) WHERE email != ""'
+        )
+        conn.execute(
+            'CREATE INDEX IF NOT EXISTS idx_users_oauth '
+            'ON users(oauth_provider, oauth_id) WHERE oauth_provider != ""'
         )
         conn.execute(
             'CREATE TABLE IF NOT EXISTS user_sessions ('
@@ -134,16 +141,33 @@ def init_db():
 EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 
 def user_dto(row):
-    """row: (id, username, display_name, email, plan, plan_expires_at, is_blocked)"""
+    """row: (id, username, display_name, email, plan, plan_expires_at, is_blocked, [avatar]) or sqlite3.Row"""
     now = int(time.time())
+    if isinstance(row, sqlite3.Row) or isinstance(row, dict):
+        plan = row['plan'] or 'free'
+        exp = int(row['plan_expires_at'] or 0)
+        is_pro = (plan == 'pro') and (exp == 0 or exp > now)
+        return {
+            'id': row['id'],
+            'username': row['username'],
+            'displayName': row['display_name'] if 'display_name' in row.keys() and row['display_name'] else row['username'],
+            'email': row['email'] if 'email' in row.keys() and row['email'] else '',
+            'avatar': row['avatar'] if 'avatar' in row.keys() and row['avatar'] else '',
+            'plan': 'pro' if is_pro else 'free',
+            'planExpiresAt': exp if is_pro else 0,
+            'isPro': is_pro,
+            'isBlocked': bool(row['is_blocked']) if 'is_blocked' in row.keys() else False,
+        }
     plan = row[4] or 'free'
     exp = int(row[5] or 0)
     is_pro = (plan == 'pro') and (exp == 0 or exp > now)
+    av = row[7] if len(row) > 7 and row[7] else ''
     return {
         'id': row[0],
         'username': row[1],
         'displayName': row[2] or row[1],
         'email': row[3] or '',
+        'avatar': av,
         'plan': 'pro' if is_pro else 'free',
         'planExpiresAt': exp if is_pro else 0,
         'isPro': is_pro,
@@ -161,17 +185,17 @@ def get_user_by_token(token):
     now = int(time.time())
     with db_lock, sqlite3.connect(DB_FILE) as conn:
         row = conn.execute(
-            'SELECT u.id, u.username, u.display_name, u.email, u.plan, u.plan_expires_at, u.is_blocked, s.expires_at '
+            'SELECT u.id, u.username, u.display_name, u.email, u.plan, u.plan_expires_at, u.is_blocked, u.avatar, s.expires_at '
             'FROM user_sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?',
             (token,)
         ).fetchone()
         if not row:
             return None
-        if row[7] < now or row[6]:
+        if row[8] < now or row[6]:
             conn.execute('DELETE FROM user_sessions WHERE token = ?', (token,))
             conn.commit()
             return None
-        return user_dto(row[:7])
+        return user_dto(row[:8])
 
 def write_json(name, obj):
     tmp = os.path.join(CONTENT, name + '.tmp')
@@ -852,6 +876,100 @@ class H(SimpleHTTPRequestHandler):
             state = json.loads(st_row[0]) if st_row else {}
             updated_at = st_row[1] if st_row else 0
             return self.send_j(200, {'token': tok, 'user': user_dto(row[:7]), 'state': state, 'updatedAt': updated_at})
+        if p == '/api/user/social-login':
+            ip = self.headers.get('X-Real-IP') or self.client_address[0]
+            c, last = fails.get('soc:' + ip, (0, 0))
+            if c >= 20 and time.time() - last < 60:
+                return self.send_j(429, {'error': 'Слишком много попыток, подождите минуту'})
+            try:
+                raw_b = self.body(2 * 1024 * 1024)
+                j = json.loads(raw_b or b'{}')
+            except Exception:
+                return self.send_j(400, {'error': 'bad json'})
+
+            provider = str(j.get('provider') or '').strip().lower()
+            if provider not in ('telegram', 'vk', 'google', 'yandex'):
+                return self.send_j(400, {'error': 'Неизвестный провайдер соцсети'})
+
+            social_id = str(j.get('socialId') or j.get('id') or '').strip()
+            if not social_id:
+                return self.send_j(400, {'error': 'Отсутствует ID пользователя соцсети'})
+
+            raw_username = str(j.get('username') or '').strip().lower()
+            display_name = str(j.get('displayName') or j.get('first_name') or raw_username or provider)[:40].strip()
+            email = str(j.get('email') or '').strip().lower()
+            if email and not EMAIL_RE.match(email):
+                email = ''
+            avatar = str(j.get('avatar') or j.get('photo_url') or '').strip()
+
+            now = int(time.time())
+            state = sanitize_state(j.get('state'))
+            tok = secrets.token_urlsafe(32)
+
+            with db_lock, sqlite3.connect(DB_FILE) as conn:
+                # 1. Look up by (oauth_provider, oauth_id)
+                row = conn.execute(
+                    'SELECT id, username, display_name, email, plan, plan_expires_at, is_blocked, avatar '
+                    'FROM users WHERE oauth_provider = ? AND oauth_id = ?',
+                    (provider, social_id)
+                ).fetchone()
+
+                # 2. Look up by email if provided
+                if not row and email:
+                    row = conn.execute(
+                        'SELECT id, username, display_name, email, plan, plan_expires_at, is_blocked, avatar '
+                        'FROM users WHERE email = ?',
+                        (email,)
+                    ).fetchone()
+                    if row:
+                        conn.execute(
+                            'UPDATE users SET oauth_provider = ?, oauth_id = ? WHERE id = ?',
+                            (provider, social_id, row[0])
+                        )
+
+                if row:
+                    if row[6]: # is_blocked
+                        return self.send_j(403, {'error': 'Аккаунт заблокирован администратором'})
+                    uid = row[0]
+                    conn.execute('UPDATE users SET last_login_at = ? WHERE id = ?', (now, uid))
+                    if avatar and not row[7]:
+                        conn.execute('UPDATE users SET avatar = ? WHERE id = ?', (avatar, uid))
+                    conn.execute('INSERT INTO user_sessions (token, user_id, expires_at) VALUES (?, ?, ?)', (tok, uid, now + 30 * 86400))
+                    st_row = conn.execute('SELECT data_json, updated_at FROM user_state WHERE user_id = ?', (uid,)).fetchone()
+                    conn.commit()
+                    user_data = user_dto((row[0], row[1], row[2], row[3], row[4], row[5], row[6], avatar or row[7]))
+                    user_st = json.loads(st_row[0]) if st_row else {}
+                    up_at = st_row[1] if st_row else 0
+                    return self.send_j(200, {'ok': True, 'token': tok, 'user': user_data, 'state': user_st, 'updatedAt': up_at})
+
+                # 3. Create new user in users table
+                clean_name = re.sub(r'[^a-z0-9_]', '', raw_username)
+                if len(clean_name) < 3:
+                    clean_name = f"{provider}_{re.sub(r'[^a-z0-9_]', '', social_id)[:10]}"
+                clean_name = clean_name[:20]
+                uname = clean_name
+                idx = 1
+                while conn.execute('SELECT 1 FROM users WHERE username = ?', (uname,)).fetchone():
+                    uname = f"{clean_name[:16]}_{idx}"
+                    idx += 1
+
+                if email and conn.execute('SELECT 1 FROM users WHERE email = ?', (email,)).fetchone():
+                    email = ''
+
+                cur = conn.execute(
+                    'INSERT INTO users (username, pw_salt, pw_hash, display_name, email, oauth_provider, oauth_id, avatar, plan, plan_expires_at, is_blocked, last_login_at, created_at) '
+                    'VALUES (?, "", "", ?, ?, ?, ?, ?, "free", 0, 0, ?, ?)',
+                    (uname, display_name, email, provider, social_id, avatar, now, now)
+                )
+                uid = cur.lastrowid
+                conn.execute('INSERT INTO user_sessions (token, user_id, expires_at) VALUES (?, ?, ?)', (tok, uid, now + 30 * 86400))
+                if state:
+                    conn.execute('INSERT INTO user_state (user_id, data_json, updated_at) VALUES (?, ?, ?)', (uid, json.dumps(state, ensure_ascii=False), now))
+                conn.commit()
+
+            fails.pop('soc:' + ip, None)
+            new_user = user_dto((uid, uname, display_name, email, 'free', 0, 0, avatar))
+            return self.send_j(200, {'ok': True, 'token': tok, 'user': new_user, 'state': state, 'updatedAt': now if state else 0})
         if p == '/api/user/profile':
             tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
             usr = get_user_by_token(tok)
