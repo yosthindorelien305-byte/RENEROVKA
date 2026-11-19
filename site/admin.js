@@ -53,7 +53,7 @@
     level: 8,
     days: 76,
     streakDays: 35,
-    friendsOnline: 14,
+    friendsOnline: 0,
     friendsLabelRu: 'Друзья',
     friendsLabelEn: 'Friends',
     streakTitleRu: 'Так держать!',
@@ -158,7 +158,10 @@
     if (!Array.isArray(draft.friends)) {
       draft.friends = [];
     } else {
-      draft.friends = draft.friends.filter(f => !['f1', 'f2', 'f3', 'f4', 's1', 's2', 's3'].includes(f.id));
+      draft.friends = draft.friends.filter(f => {
+        if (window.AthleteProfile && window.AthleteProfile.isFakeUser) return !window.AthleteProfile.isFakeUser(f);
+        return !['f1', 'f2', 'f3', 'f4', 's1', 's2', 's3'].includes(f.id);
+      });
     }
 
     const renderPreview = () => {

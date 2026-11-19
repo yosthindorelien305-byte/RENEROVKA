@@ -2,16 +2,90 @@
   const DEFAULT_FRIENDS = [];
   const SUGGESTED_FRIENDS = [];
 
+  const FAKE_MOCK_HANDLES = new Set([
+    '@alex_fit', '@masha_run', '@dima_iron', '@lena_flex',
+    '@ivan_titan', '@anna_yoga', '@bars_sw'
+  ]);
+  const FAKE_MOCK_NAMES = [
+    'алекс волков', 'alex volkov', 'мария соколова', 'maria sokolova',
+    'дмитрий к', 'dmitry k', 'елена громова', 'elena gromova',
+    'иван титов', 'ivan titov', 'анна к', 'anna k',
+    'максим барс', 'maxim bars'
+  ];
+  const FAKE_MOCK_IDS = new Set(['f1', 'f2', 'f3', 'f4', 's1', 's2', 's3']);
+
+  function isFakeUser(u) {
+    if (!u) return true;
+    const id = String(u.id || '').toLowerCase();
+    const handle = String(u.handle || '').toLowerCase();
+    const name = String(u.name || '').trim().toLowerCase();
+    if (FAKE_MOCK_IDS.has(id)) return true;
+    if (/^[fs]\d+$/i.test(id)) return true;
+    if (FAKE_MOCK_HANDLES.has(handle)) return true;
+    for (const fn of FAKE_MOCK_NAMES) {
+      if (name === fn || name.startsWith(fn) || name.includes(fn)) return true;
+    }
+    return false;
+  }
+
+  function purgeLegacyFakes() {
+    try {
+      const rawF = localStorage.getItem('athleteFriends');
+      if (rawF) {
+        const arr = JSON.parse(rawF);
+        if (Array.isArray(arr)) {
+          const cleaned = arr.filter(u => !isFakeUser(u));
+          localStorage.setItem('athleteFriends', JSON.stringify(cleaned));
+        }
+      }
+    } catch (e) {}
+    try {
+      const rawD = localStorage.getItem('athleteDuels');
+      if (rawD) {
+        const arr = JSON.parse(rawD);
+        if (Array.isArray(arr)) {
+          const cleaned = arr.filter(d => !isFakeUser({ id: d.friendId, name: d.friendName, handle: d.friendHandle }));
+          localStorage.setItem('athleteDuels', JSON.stringify(cleaned));
+        }
+      }
+    } catch (e) {}
+    try {
+      const rawQ = localStorage.getItem('athleteQuest');
+      if (rawQ) {
+        const q = JSON.parse(rawQ);
+        if (q && isFakeUser({ id: q.friendId, name: q.friendName, handle: q.friendHandle })) {
+          localStorage.removeItem('athleteQuest');
+        }
+      }
+    } catch (e) {}
+    try {
+      const rawC = localStorage.getItem('communityUsers');
+      if (rawC) {
+        const arr = JSON.parse(rawC);
+        if (Array.isArray(arr)) {
+          const cleaned = arr.filter(u => !isFakeUser(u));
+          localStorage.setItem('communityUsers', JSON.stringify(cleaned));
+        }
+      }
+    } catch (e) {}
+  }
+
+  // Run cleanup immediately
+  purgeLegacyFakes();
+
   let communityUsersCache = [];
   function getCommunityUsers() {
     try {
       const raw = localStorage.getItem('communityUsers');
-      if (raw) return JSON.parse(raw);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed.filter(u => !isFakeUser(u));
+      }
     } catch (e) {}
-    return communityUsersCache || [];
+    return (communityUsersCache || []).filter(u => !isFakeUser(u));
   }
   function setCommunityUsers(list) {
-    communityUsersCache = Array.isArray(list) ? list : [];
+    communityUsersCache = Array.isArray(list) ? list.filter(u => !isFakeUser(u)) : [];
     try {
       localStorage.setItem('communityUsers', JSON.stringify(communityUsersCache));
     } catch (e) {}
@@ -48,7 +122,7 @@
       if (raw !== null) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
-          customFriends = parsed.filter(x => !['f1', 'f2', 'f3', 'f4', 's1', 's2', 's3'].includes(x.id));
+          customFriends = parsed.filter(x => !isFakeUser(x));
           if (customFriends.length !== parsed.length) {
             localStorage.setItem('athleteFriends', JSON.stringify(customFriends));
           }
@@ -56,7 +130,7 @@
       }
     } catch (e) {}
 
-    const comm = getCommunityUsers();
+    const comm = getCommunityUsers().filter(u => !isFakeUser(u));
 
     let localAccs = [];
     try {
@@ -65,7 +139,7 @@
         const accObj = JSON.parse(rawAcc);
         Object.entries(accObj).forEach(([k, a]) => {
           if (a && a.username) {
-            localAccs.push({
+            const locU = {
               id: 'local_' + a.username.toLowerCase(),
               name: a.username,
               handle: '@' + a.username.toLowerCase(),
@@ -75,7 +149,8 @@
               online: true,
               color: '#3b4a34',
               shirt: '#6b8e4e'
-            });
+            };
+            if (!isFakeUser(locU)) localAccs.push(locU);
           }
         });
       }
@@ -86,24 +161,24 @@
 
     const mergedMap = new Map();
     comm.forEach(u => {
-      if ((u.handle || '').toLowerCase() !== myHandle && (u.name || '').toLowerCase() !== myName) {
+      if (!isFakeUser(u) && (u.handle || '').toLowerCase() !== myHandle && (u.name || '').toLowerCase() !== myName) {
         mergedMap.set(String(u.id), Object.assign({}, u));
       }
     });
     localAccs.forEach(u => {
-      if ((u.handle || '').toLowerCase() !== myHandle && (u.name || '').toLowerCase() !== myName) {
+      if (!isFakeUser(u) && (u.handle || '').toLowerCase() !== myHandle && (u.name || '').toLowerCase() !== myName) {
         if (!mergedMap.has(String(u.id))) mergedMap.set(String(u.id), u);
       }
     });
     customFriends.forEach(u => {
-      if ((u.handle || '').toLowerCase() !== myHandle && (u.name || '').toLowerCase() !== myName) {
+      if (!isFakeUser(u) && (u.handle || '').toLowerCase() !== myHandle && (u.name || '').toLowerCase() !== myName) {
         mergedMap.set(String(u.id), Object.assign(mergedMap.get(String(u.id)) || {}, u));
       }
     });
 
     if (cfgAthlete && Array.isArray(cfgAthlete.friends) && cfgAthlete.friends.length) {
       cfgAthlete.friends.forEach(u => {
-        if (!['f1', 'f2', 'f3', 'f4', 's1', 's2', 's3'].includes(u.id)) {
+        if (!isFakeUser(u)) {
           if ((u.handle || '').toLowerCase() !== myHandle && !mergedMap.has(String(u.id))) {
             mergedMap.set(String(u.id), u);
           }
@@ -111,7 +186,7 @@
       });
     }
 
-    return Array.from(mergedMap.values());
+    return Array.from(mergedMap.values()).filter(u => !isFakeUser(u));
   }
 
   function saveFriends(list) {
@@ -848,6 +923,8 @@
     DEFAULTS,
     DEFAULT_FRIENDS,
     SUGGESTED_FRIENDS,
+    isFakeUser,
+    purgeLegacyFakes,
     QUEST_TEMPLATES,
     getFriends,
     saveFriends,

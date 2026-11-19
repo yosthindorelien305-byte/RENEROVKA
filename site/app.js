@@ -2855,7 +2855,8 @@
     },
     friends() {
       const AP = window.AthleteProfile;
-      const list = AP ? AP.getFriends(CFG.athlete) : [];
+      if (AP && AP.purgeLegacyFakes) AP.purgeLegacyFakes();
+      const list = (AP ? AP.getFriends(CFG.athlete) : []).filter(f => !(AP && AP.isFakeUser ? AP.isFakeUser(f) : false));
       const online = list.filter(f => f.online).length;
       let loc = {};
       try { loc = JSON.parse(localStorage.athleteProfile || '{}'); } catch (e) {}
@@ -2866,7 +2867,7 @@
         prsCount: Object.keys(JSON.parse(localStorage.prs || '{}')).length
       }) : { name: 'Атлет', handle: '@athlete', points: 0, level: 1, streakDays: 0, duelReward: 500 };
 
-      const duels = AP ? AP.getDuels().filter(d => !d.claimed) : [];
+      const duels = AP ? AP.getDuels().filter(d => !d.claimed && !(AP.isFakeUser && AP.isFakeUser({ id: d.friendId, name: d.friendName, handle: d.friendHandle }))) : [];
       const duelByFriend = {};
       duels.forEach(d => { duelByFriend[String(d.friendId)] = d; });
       const rewardXp = Number(me.duelReward) || 500;
@@ -2878,7 +2879,8 @@
       const myRank = board.findIndex(x => x.isMe) + 1;
 
       const existingHandles = new Set(list.map(f => (f.handle || '').toLowerCase()));
-      const suggestions = (AP ? (AP.SUGGESTED_FRIENDS || []) : []).filter(s => !existingHandles.has((s.handle || '').toLowerCase()));
+      const suggestions = (AP && AP.SUGGESTED_FRIENDS ? AP.SUGGESTED_FRIENDS : [])
+        .filter(s => !(AP && AP.isFakeUser ? AP.isFakeUser(s) : false) && !existingHandles.has((s.handle || '').toLowerCase()));
 
       const duelsHtml = duels.length ? `
         <div class="duels-section">
@@ -4319,10 +4321,10 @@
       app.querySelectorAll('[data-add-sug]').forEach(btn => {
         btn.onclick = () => {
           if (!AP) return;
-          const s = AP.SUGGESTED_FRIENDS.find(x => x.id === btn.dataset.addSug);
-          if (!s) return;
+          const s = (AP.SUGGESTED_FRIENDS || []).find(x => x.id === btn.dataset.addSug);
+          if (!s || (AP.isFakeUser && AP.isFakeUser(s))) return;
           const cur = AP.getFriends(CFG.athlete);
-          if (!cur.some(f => f.handle.toLowerCase() === s.handle.toLowerCase())) {
+          if (!cur.some(f => (f.handle || '').toLowerCase() === (s.handle || '').toLowerCase())) {
             cur.unshift(Object.assign({}, s));
             AP.saveFriends(cur);
           }
@@ -5049,6 +5051,9 @@
 
   window.addEventListener('hashchange', () => { checkPendingPayment(); render(); });
   checkPendingPayment();
+  if (window.AthleteProfile && window.AthleteProfile.purgeLegacyFakes) {
+    window.AthleteProfile.purgeLegacyFakes();
+  }
   render();
   pullCloudSync(false);
   syncCommunityUsers().then(() => {
