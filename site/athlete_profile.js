@@ -1,16 +1,21 @@
 (function () {
-  const DEFAULT_FRIENDS = [
-    { id: 'f1', name: 'Алекс Волков', handle: '@alex_fit', level: 11, streak: 42, points: 24800, online: true, color: '#3b4a34', shirt: '#6b8e4e' },
-    { id: 'f2', name: 'Мария Соколова', handle: '@masha_run', level: 9, streak: 28, points: 19450, online: true, color: '#4d3e28', shirt: '#c68932' },
-    { id: 'f3', name: 'Дмитрий К.', handle: '@dima_iron', level: 7, streak: 19, points: 15200, online: false, color: '#2b3930', shirt: '#4f6d5a' },
-    { id: 'f4', name: 'Елена Громова', handle: '@lena_flex', level: 10, streak: 31, points: 21300, online: true, color: '#3b3342', shirt: '#7b6894' }
-  ];
+  const DEFAULT_FRIENDS = [];
+  const SUGGESTED_FRIENDS = [];
 
-  const SUGGESTED_FRIENDS = [
-    { id: 's1', name: 'Иван Титов', handle: '@ivan_titan', level: 12, streak: 50, points: 28100, online: true, color: '#2e3f2d', shirt: '#5b8a47' },
-    { id: 's2', name: 'Анна К.', handle: '@anna_yoga', level: 8, streak: 22, points: 16800, online: true, color: '#44372b', shirt: '#b87d38' },
-    { id: 's3', name: 'Максим Барс', handle: '@bars_sw', level: 14, streak: 64, points: 31900, online: false, color: '#283635', shirt: '#486c68' }
-  ];
+  let communityUsersCache = [];
+  function getCommunityUsers() {
+    try {
+      const raw = localStorage.getItem('communityUsers');
+      if (raw) return JSON.parse(raw);
+    } catch (e) {}
+    return communityUsersCache || [];
+  }
+  function setCommunityUsers(list) {
+    communityUsersCache = Array.isArray(list) ? list : [];
+    try {
+      localStorage.setItem('communityUsers', JSON.stringify(communityUsersCache));
+    } catch (e) {}
+  }
 
   const DEFAULTS = {
     name: 'Атлет',
@@ -21,7 +26,7 @@
     level: 1,
     days: 0,
     streakDays: 0,
-    friendsOnline: 14,
+    friendsOnline: 0,
     friendsLabelRu: 'Друзья',
     friendsLabelEn: 'Friends',
     streakTitleRu: 'Так держать!',
@@ -37,17 +42,76 @@
   };
 
   function getFriends(cfgAthlete) {
+    let customFriends = [];
     try {
       const raw = localStorage.getItem('athleteFriends');
       if (raw !== null) {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          customFriends = parsed.filter(x => !['f1', 'f2', 'f3', 'f4', 's1', 's2', 's3'].includes(x.id));
+          if (customFriends.length !== parsed.length) {
+            localStorage.setItem('athleteFriends', JSON.stringify(customFriends));
+          }
+        }
       }
     } catch (e) {}
+
+    const comm = getCommunityUsers();
+
+    let localAccs = [];
+    try {
+      const rawAcc = localStorage.getItem('localAccounts');
+      if (rawAcc) {
+        const accObj = JSON.parse(rawAcc);
+        Object.entries(accObj).forEach(([k, a]) => {
+          if (a && a.username) {
+            localAccs.push({
+              id: 'local_' + a.username.toLowerCase(),
+              name: a.username,
+              handle: '@' + a.username.toLowerCase(),
+              level: 1,
+              streak: 0,
+              points: 100,
+              online: true,
+              color: '#3b4a34',
+              shirt: '#6b8e4e'
+            });
+          }
+        });
+      }
+    } catch (e) {}
+
+    const myName = (localStorage.getItem('userName') || '').trim().toLowerCase();
+    const myHandle = '@' + myName;
+
+    const mergedMap = new Map();
+    comm.forEach(u => {
+      if ((u.handle || '').toLowerCase() !== myHandle && (u.name || '').toLowerCase() !== myName) {
+        mergedMap.set(String(u.id), Object.assign({}, u));
+      }
+    });
+    localAccs.forEach(u => {
+      if ((u.handle || '').toLowerCase() !== myHandle && (u.name || '').toLowerCase() !== myName) {
+        if (!mergedMap.has(String(u.id))) mergedMap.set(String(u.id), u);
+      }
+    });
+    customFriends.forEach(u => {
+      if ((u.handle || '').toLowerCase() !== myHandle && (u.name || '').toLowerCase() !== myName) {
+        mergedMap.set(String(u.id), Object.assign(mergedMap.get(String(u.id)) || {}, u));
+      }
+    });
+
     if (cfgAthlete && Array.isArray(cfgAthlete.friends) && cfgAthlete.friends.length) {
-      return cfgAthlete.friends;
+      cfgAthlete.friends.forEach(u => {
+        if (!['f1', 'f2', 'f3', 'f4', 's1', 's2', 's3'].includes(u.id)) {
+          if ((u.handle || '').toLowerCase() !== myHandle && !mergedMap.has(String(u.id))) {
+            mergedMap.set(String(u.id), u);
+          }
+        }
+      });
     }
-    return DEFAULT_FRIENDS.map(f => Object.assign({}, f));
+
+    return Array.from(mergedMap.values());
   }
 
   function saveFriends(list) {
@@ -663,7 +727,9 @@
     const lblStat1 = L === 'ru' ? 'Цель/Готово' : 'Win/Goal';
     const lblStat2 = L === 'ru' ? 'Уровень' : 'Level';
     const lblStat3 = L === 'ru' ? 'Дней' : 'Days';
-    const onlineTxt = L === 'ru' ? `${onlineCount} онлайн · ${friendsList.length}` : `${onlineCount} online · ${friendsList.length}`;
+    const onlineTxt = friendsList.length
+      ? (L === 'ru' ? `${onlineCount} онлайн · ${friendsList.length}` : `${onlineCount} online · ${friendsList.length}`)
+      : (L === 'ru' ? 'Клуб атлетов' : 'Athletes Club');
 
     const avatarHtml = a.avatar
       ? `<img src="${esc(a.avatar)}" alt="${esc(a.name)}">`
@@ -746,7 +812,7 @@
       <div class="ap-bento">
         <div class="ap-bento-card ap-friends-card" data-ap-action="friends">
           <div class="ap-av-stack">
-            ${(friendsList.length ? friendsList.slice(0, 3) : DEFAULT_FRIENDS.slice(0, 3)).map(f => miniAvatar(f.color, f.shirt, f.avatar)).join('')}
+            ${friendsList.length ? friendsList.slice(0, 3).map(f => miniAvatar(f.color, f.shirt, f.avatar)).join('') : '<span style="font-size:17px;line-height:26px;">👥</span>'}
           </div>
           <div class="ap-bento-title">${esc(friendsTitle)}</div>
           <div class="ap-bento-green">${esc(onlineTxt)}</div>
@@ -785,6 +851,8 @@
     QUEST_TEMPLATES,
     getFriends,
     saveFriends,
+    getCommunityUsers,
+    setCommunityUsers,
     getDuels,
     saveDuels,
     getDuelStats,

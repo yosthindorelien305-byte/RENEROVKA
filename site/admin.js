@@ -155,8 +155,10 @@
   function tabAthlete(el) {
     CFG.athlete = Object.assign(ATH_DEF(), CFG.athlete || {});
     let draft = JSON.parse(JSON.stringify(CFG.athlete));
-    if (!Array.isArray(draft.friends) || !draft.friends.length) {
-      draft.friends = (window.AthleteProfile ? window.AthleteProfile.DEFAULT_FRIENDS : []).map(f => Object.assign({}, f));
+    if (!Array.isArray(draft.friends)) {
+      draft.friends = [];
+    } else {
+      draft.friends = draft.friends.filter(f => !['f1', 'f2', 'f3', 'f4', 's1', 's2', 's3'].includes(f.id));
     }
 
     const renderPreview = () => {

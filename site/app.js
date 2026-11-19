@@ -1111,6 +1111,19 @@
     clearTimeout(cloudSyncTimer);
     cloudSyncTimer = setTimeout(pushCloudSync, 1200);
   }
+  async function syncCommunityUsers() {
+    try {
+      const r = await fetch('api/community/users');
+      if (r.ok) {
+        const j = await r.json();
+        if (j && Array.isArray(j.users) && window.AthleteProfile) {
+          window.AthleteProfile.setCommunityUsers(j.users);
+          return j.users;
+        }
+      }
+    } catch (e) {}
+    return [];
+  }
   function exportBackupJson() {
     const payload = { app: 'FLEXA', exportedAt: new Date().toISOString(), data: {} };
     BACKUP_KEYS.forEach(k => {
@@ -2851,7 +2864,7 @@
         workoutsCount: allH.length,
         streak: calcStreak(allH),
         prsCount: Object.keys(JSON.parse(localStorage.prs || '{}')).length
-      }) : { name: 'Mr.Bobrovsky', handle: '@mr.bobrovsky', points: 20710, level: 8, streakDays: 35, duelReward: 500 };
+      }) : { name: 'Атлет', handle: '@athlete', points: 0, level: 1, streakDays: 0, duelReward: 500 };
 
       const duels = AP ? AP.getDuels().filter(d => !d.claimed) : [];
       const duelByFriend = {};
@@ -2865,7 +2878,7 @@
       const myRank = board.findIndex(x => x.isMe) + 1;
 
       const existingHandles = new Set(list.map(f => (f.handle || '').toLowerCase()));
-      const suggestions = (AP ? AP.SUGGESTED_FRIENDS : []).filter(s => !existingHandles.has((s.handle || '').toLowerCase()));
+      const suggestions = (AP ? (AP.SUGGESTED_FRIENDS || []) : []).filter(s => !existingHandles.has((s.handle || '').toLowerCase()));
 
       const duelsHtml = duels.length ? `
         <div class="duels-section">
@@ -3032,6 +3045,7 @@
               <div class="fr-info">
                 <div class="fr-name-row">
                   <b>${esc(f.name)}</b>
+                  ${f.isPro ? '<span class="tag pro" style="font-size:9.5px;padding:1px 5px;margin-left:4px;">PRO</span>' : ''}
                   <span class="fr-rank-badge">#${rank}</span>
                 </div>
                 <div class="fr-sub">${esc(f.handle)} · Lv.${f.level || 1} · ${f.streak || 0} ${t('days')}</div>
@@ -3045,7 +3059,7 @@
                 <button type="button" class="fr-btn-del" data-del="${esc(f.id)}" title="${L == 'ru' ? 'Удалить' : 'Remove'}">✕</button>
               </div>
             </div>`;
-          }).join('') : `<div class="empty">${L == 'ru' ? 'Пока нет друзей. Добавьте первого!' : 'No friends yet. Add one!'}</div>`}
+          }).join('') : `<div class="empty">${L == 'ru' ? 'Пока нет других зарегистрированных атлетов. Пригласите друзей или зарегистрируйте второй аккаунт!' : 'No other registered athletes yet. Invite friends or register another account!'}</div>`}
         </div>
 
         ${suggestions.length ? `
@@ -4076,6 +4090,15 @@
     }
     if (name == 'friends') {
       const AP = window.AthleteProfile;
+      syncCommunityUsers().then(users => {
+        if (users && users.length) {
+          const prev = sessionStorage.getItem('lastCommCount');
+          if (prev !== String(users.length)) {
+            sessionStorage.setItem('lastCommCount', String(users.length));
+            render();
+          }
+        }
+      });
       let fTab = 'all';
       const applyFilter = () => {
         const q = (document.getElementById('fr-q')?.value || '').trim().toLowerCase();
@@ -5028,6 +5051,9 @@
   checkPendingPayment();
   render();
   pullCloudSync(false);
+  syncCommunityUsers().then(() => {
+    if (location.hash.includes('friends') || location.hash.includes('profile')) render();
+  });
   setTimeout(checkDailyReminder, 1500);
 })();
 

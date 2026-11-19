@@ -530,6 +530,84 @@ class H(SimpleHTTPRequestHandler):
             if p == '/api/coach/status':
                 c = ai_cfg()
                 return self.send_j(200, {'enabled': ai_ready(c)})
+            if p == '/api/community/users' or p == '/api/users':
+                now = int(time.time())
+                with db_lock, sqlite3.connect(DB_FILE) as conn:
+                    conn.row_factory = sqlite3.Row
+                    rows = conn.execute(
+                        'SELECT u.id, u.username, u.display_name, u.plan, u.plan_expires_at, u.last_login_at, u.created_at, '
+                        's.data_json '
+                        'FROM users u '
+                        'LEFT JOIN user_state s ON s.user_id = u.id '
+                        'WHERE u.is_blocked = 0 '
+                        'ORDER BY u.last_login_at DESC, u.id DESC LIMIT 150'
+                    ).fetchall()
+                    users_list = []
+                    for r in rows:
+                        uid = r['id']
+                        uname = r['username']
+                        dname = r['display_name'] or uname
+                        handle = '@' + uname.lower()
+                        last_active = int(r['last_login_at'] or r['created_at'] or 0)
+                        is_online = (now - last_active) < 1800
+                        plan = r['plan'] or 'free'
+                        exp = int(r['plan_expires_at'] or 0)
+                        is_pro = (plan == 'pro' and (exp == 0 or exp > now))
+
+                        profile_data = {}
+                        hist_data = []
+                        if r['data_json']:
+                            try:
+                                st = json.loads(r['data_json'])
+                                if isinstance(st, dict):
+                                    st_data = st.get('state') if isinstance(st.get('state'), dict) else st
+                                    prof_raw = st_data.get('athleteProfile')
+                                    if isinstance(prof_raw, str):
+                                        try: profile_data = json.loads(prof_raw)
+                                        except: profile_data = {}
+                                    elif isinstance(prof_raw, dict):
+                                        profile_data = prof_raw
+                                    h_raw = st_data.get('hist')
+                                    if isinstance(h_raw, str):
+                                        try: hist_data = json.loads(h_raw)
+                                        except: hist_data = []
+                                    elif isinstance(h_raw, list):
+                                        hist_data = h_raw
+                            except Exception:
+                                pass
+
+                        h_len = len(hist_data) if isinstance(hist_data, list) else 0
+                        base_pts = int(profile_data.get('points') or 0)
+                        calc_pts = max(base_pts, h_len * 250 + 100)
+                        lvl = int(profile_data.get('level') or max(1, 1 + h_len // 3))
+                        streak = int(profile_data.get('streakDays') or 0)
+                        avatar = profile_data.get('avatar') or ''
+                        name = profile_data.get('name') or dname or uname
+
+                        colors = ['#3b4a34', '#4d3e28', '#2b3930', '#3b3342', '#2e3f2d', '#44372b', '#283635', '#334155']
+                        shirts = ['#6b8e4e', '#c68932', '#4f6d5a', '#7b6894', '#5b8a47', '#b87d38', '#486c68', '#38bdf8']
+                        c_idx = uid % len(colors)
+                        color = profile_data.get('color') or colors[c_idx]
+                        shirt = profile_data.get('shirt') or shirts[c_idx]
+
+                        users_list.append({
+                            'id': 'u_' + str(uid),
+                            'userId': uid,
+                            'name': name,
+                            'handle': handle,
+                            'level': lvl,
+                            'streak': streak,
+                            'points': calc_pts,
+                            'online': is_online,
+                            'color': color,
+                            'shirt': shirt,
+                            'avatar': avatar,
+                            'isPro': is_pro,
+                            'workoutsCount': h_len
+                        })
+
+                    users_list.sort(key=lambda x: x['points'], reverse=True)
+                    return self.send_j(200, {'ok': True, 'users': users_list})
             if p == '/api/ai/settings' and self.authed():
                 c = ai_cfg()
                 return self.send_j(200, {'provider': c['provider'], 'baseUrl': c.get('base_url', ''), 'hasKey': bool(c.get('key')), 'keyHint': ('…' + c['key'][-4:]) if c.get('key') else '', 'model': c['model'], 'enabled': c['enabled'], 'prompt': c.get('prompt', '')})

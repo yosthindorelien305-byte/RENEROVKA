@@ -34,7 +34,7 @@
   "level": 1,
   "days": 0,
   "streakDays": 0,
-  "friendsOnline": 14,
+  "friendsOnline": 0,
   "friendsLabelRu": "Друзья",
   "friendsLabelEn": "Friends",
   "streakTitleRu": "Так держать!",
@@ -46,52 +46,7 @@
   "taskSubRu": "Получай бонусные очки за тренировки и личные рекорды",
   "taskSubEn": "Get a bonus on your progress with workouts in your plan",
   "useLiveStats": true,
-  "friends": [
-   {
-    "id": "f1",
-    "name": "Алекс Волков",
-    "handle": "@alex_fit",
-    "level": 11,
-    "streak": 42,
-    "points": 24800,
-    "online": true,
-    "color": "#3b4a34",
-    "shirt": "#6b8e4e"
-   },
-   {
-    "id": "f2",
-    "name": "Мария Соколова",
-    "handle": "@masha_run",
-    "level": 9,
-    "streak": 28,
-    "points": 19450,
-    "online": true,
-    "color": "#4d3e28",
-    "shirt": "#c68932"
-   },
-   {
-    "id": "f3",
-    "name": "Дмитрий К.",
-    "handle": "@dima_iron",
-    "level": 7,
-    "streak": 19,
-    "points": 15200,
-    "online": false,
-    "color": "#2b3930",
-    "shirt": "#4f6d5a"
-   },
-   {
-    "id": "f4",
-    "name": "Елена Громова",
-    "handle": "@lena_flex",
-    "level": 10,
-    "streak": 31,
-    "points": 21300,
-    "online": true,
-    "color": "#3b3342",
-    "shirt": "#7b6894"
-   }
-  ],
+  "friends": [],
   "duelReward": 6000
  }
 }
