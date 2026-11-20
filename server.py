@@ -137,6 +137,77 @@ def init_db():
             if col not in pay_cols:
                 conn.execute(f'ALTER TABLE payments ADD COLUMN {col} {ddl}')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_payments_payment_id ON payments(payment_id)')
+
+        # Social & Direct Messaging tables
+        conn.execute(
+            'CREATE TABLE IF NOT EXISTS friendships ('
+            'id INTEGER PRIMARY KEY AUTOINCREMENT, '
+            'requester_id INTEGER NOT NULL, '
+            'addressee_id INTEGER NOT NULL, '
+            'pair_min INTEGER NOT NULL, '
+            'pair_max INTEGER NOT NULL, '
+            'status TEXT NOT NULL DEFAULT "pending", '
+            'created_at INTEGER NOT NULL, '
+            'updated_at INTEGER NOT NULL)'
+        )
+        conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_friendships_pair ON friendships(pair_min, pair_max)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_friendships_req ON friendships(requester_id, status)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_friendships_addr ON friendships(addressee_id, status)')
+
+        conn.execute(
+            'CREATE TABLE IF NOT EXISTS conversations ('
+            'id INTEGER PRIMARY KEY AUTOINCREMENT, '
+            'user1_id INTEGER NOT NULL, '
+            'user2_id INTEGER NOT NULL, '
+            'created_at INTEGER NOT NULL, '
+            'last_message_at INTEGER NOT NULL DEFAULT 0, '
+            'last_message_text TEXT NOT NULL DEFAULT "", '
+            'last_sender_id INTEGER NOT NULL DEFAULT 0, '
+            'user1_hidden_at INTEGER NOT NULL DEFAULT 0, '
+            'user2_hidden_at INTEGER NOT NULL DEFAULT 0)'
+        )
+        conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_pair ON conversations(user1_id, user2_id)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_conversations_u1 ON conversations(user1_id, last_message_at DESC)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_conversations_u2 ON conversations(user2_id, last_message_at DESC)')
+
+        conn.execute(
+            'CREATE TABLE IF NOT EXISTS messages ('
+            'id INTEGER PRIMARY KEY AUTOINCREMENT, '
+            'conversation_id INTEGER NOT NULL, '
+            'sender_id INTEGER NOT NULL, '
+            'recipient_id INTEGER NOT NULL, '
+            'body TEXT NOT NULL, '
+            'client_msg_id TEXT NOT NULL DEFAULT "", '
+            'created_at INTEGER NOT NULL, '
+            'delivered_at INTEGER NOT NULL DEFAULT 0, '
+            'read_at INTEGER NOT NULL DEFAULT 0, '
+            'deleted_at INTEGER NOT NULL DEFAULT 0)'
+        )
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, id DESC)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_messages_unread ON messages(recipient_id, read_at, deleted_at)')
+        conn.execute(
+            'CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_client_id '
+            'ON messages(sender_id, client_msg_id) WHERE client_msg_id != ""'
+        )
+
+        conn.execute(
+            'CREATE TABLE IF NOT EXISTS user_blocks ('
+            'blocker_id INTEGER NOT NULL, '
+            'blocked_id INTEGER NOT NULL, '
+            'created_at INTEGER NOT NULL, '
+            'PRIMARY KEY (blocker_id, blocked_id))'
+        )
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_user_blocks_blocked ON user_blocks(blocked_id)')
+
+        conn.execute(
+            'CREATE TABLE IF NOT EXISTS user_reports ('
+            'id INTEGER PRIMARY KEY AUTOINCREMENT, '
+            'reporter_id INTEGER NOT NULL, '
+            'target_user_id INTEGER NOT NULL, '
+            'message_id INTEGER NOT NULL DEFAULT 0, '
+            'reason TEXT NOT NULL, '
+            'created_at INTEGER NOT NULL)'
+        )
         conn.commit()
 
 EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
@@ -183,6 +254,220 @@ def sanitize_state(raw):
     if not isinstance(raw, dict):
         return {}
     return {k: v for k, v in raw.items() if k in SYNC_KEYS and isinstance(v, str)}
+
+SAFE_HEX_COLOR_RE = re.compile(r'^#[0-9a-fA-F]{3,8}$')
+DEFAULT_AV_COLORS = ['#3b4a34', '#4d3e28', '#2b3930', '#3b3342', '#2e3f2d', '#44372b', '#283635', '#334155']
+DEFAULT_AV_SHIRTS = ['#6b8e4e', '#c68932', '#4f6d5a', '#7b6894', '#5b8a47', '#b87d38', '#486c68', '#38bdf8']
+
+def safe_hex_color(val, fallback):
+    s = str(val or '').strip()
+    return s if SAFE_HEX_COLOR_RE.match(s) else fallback
+
+msg_rate_lock = threading.Lock()
+msg_hits = {}  # user_id -> [timestamps]
+
+def check_message_rate_limit(uid):
+    now = time.time()
+    with msg_rate_lock:
+        if len(msg_hits) > 1000:
+            msg_hits.clear()
+        recent = [t for t in msg_hits.get(uid, []) if now - t < 60]
+        burst = [t for t in recent if now - t < 10]
+        if len(burst) >= 15 or len(recent) >= 40:
+            msg_hits[uid] = recent
+            return False
+        recent.append(now)
+        msg_hits[uid] = recent
+        return True
+
+def extract_public_user_card(r, now=None, include_details=False):
+    """Build safe public profile card from DB row (id, username, display_name, avatar, plan, plan_expires_at, last_login_at, created_at, data_json).
+    Never exposes email, password hashes, tokens, or raw internal integer user_id.
+    Never generates synthetic/fake PRs or workout stats.
+    """
+    if now is None:
+        now = int(time.time())
+    uid = int(r['id'])
+    uname = str(r['username'] or '').strip()
+    uname_low = uname.lower()
+    dname = str(r['display_name'] or '').strip() or uname
+    handle = '@' + uname_low
+    last_active = int(r['last_login_at'] or r['created_at'] or 0)
+    is_online = (now - last_active) < 1800
+    plan = r['plan'] or 'free'
+    exp = int(r['plan_expires_at'] or 0)
+    is_pro = True if FREE_ACCESS_MODE else (plan == 'pro' and (exp == 0 or exp > now))
+    db_avatar = str(r['avatar'] or '').strip() if 'avatar' in r.keys() else ''
+
+    profile_data = {}
+    hist_data = []
+    prs_data = {}
+    raw_json = r['data_json'] if 'data_json' in r.keys() else None
+    if raw_json:
+        try:
+            st = json.loads(raw_json)
+            if isinstance(st, dict):
+                st_data = st.get('state') if isinstance(st.get('state'), dict) else st
+                prof_raw = st_data.get('athleteProfile')
+                if isinstance(prof_raw, str):
+                    try:
+                        profile_data = json.loads(prof_raw)
+                    except Exception:
+                        profile_data = {}
+                elif isinstance(prof_raw, dict):
+                    profile_data = prof_raw
+                h_raw = st_data.get('hist')
+                if isinstance(h_raw, str):
+                    try:
+                        hist_data = json.loads(h_raw)
+                    except Exception:
+                        hist_data = []
+                elif isinstance(h_raw, list):
+                    hist_data = h_raw
+                if include_details:
+                    p_raw = st_data.get('prs')
+                    if isinstance(p_raw, str):
+                        try:
+                            prs_data = json.loads(p_raw)
+                        except Exception:
+                            prs_data = {}
+                    elif isinstance(p_raw, dict):
+                        prs_data = p_raw
+        except Exception:
+            pass
+
+    if not isinstance(profile_data, dict):
+        profile_data = {}
+    if not isinstance(hist_data, list):
+        hist_data = []
+    if not isinstance(prs_data, dict):
+        prs_data = {}
+
+    h_len = len(hist_data)
+    try:
+        base_pts = max(0, int(profile_data.get('points') or 0))
+    except Exception:
+        base_pts = 0
+    calc_pts = max(base_pts, h_len * 250)
+    try:
+        lvl = max(1, int(profile_data.get('level') or max(1, 1 + h_len // 3)))
+    except Exception:
+        lvl = max(1, 1 + h_len // 3)
+    try:
+        streak = max(0, int(profile_data.get('streakDays') or 0))
+    except Exception:
+        streak = 0
+
+    prof_name = str(profile_data.get('name') or '').strip()
+    if prof_name in ('', 'Mr.Bobrovsky', 'Атлет', 'Athlete'):
+        name = dname or uname
+    else:
+        name = prof_name[:40]
+
+    avatar = str(profile_data.get('avatar') or db_avatar or '').strip()
+    if avatar and not (avatar.startswith('http://') or avatar.startswith('https://') or avatar.startswith('content/uploads/') or avatar.startswith('img/') or avatar.startswith('data:image/')):
+        avatar = ''
+
+    c_idx = uid % len(DEFAULT_AV_COLORS)
+    color = safe_hex_color(profile_data.get('color'), DEFAULT_AV_COLORS[c_idx])
+    shirt = safe_hex_color(profile_data.get('shirt'), DEFAULT_AV_SHIRTS[c_idx])
+
+    card = {
+        'id': 'u_' + uname_low,
+        'userId': uid,
+        'username': uname_low,
+        'name': name,
+        'displayName': name,
+        'handle': handle,
+        'level': lvl,
+        'streak': streak,
+        'points': calc_pts,
+        'online': is_online,
+        'color': color,
+        'shirt': shirt,
+        'avatar': avatar,
+        'isPro': is_pro,
+        'workoutsCount': h_len,
+    }
+    if include_details:
+        total_sec = 0
+        for item in hist_data:
+            if isinstance(item, dict):
+                try:
+                    total_sec += max(0, int(item.get('s') or 0))
+                except Exception:
+                    pass
+        real_prs = []
+        for ex_id, val in prs_data.items():
+            try:
+                reps = int(val)
+                if reps > 0:
+                    real_prs.append({'exerciseId': str(ex_id), 'reps': reps})
+            except Exception:
+                pass
+        real_prs.sort(key=lambda x: x['reps'], reverse=True)
+        card['totalMinutes'] = round(total_sec / 60)
+        card['prs'] = {x['exerciseId']: x['reps'] for x in real_prs}
+        card['prsList'] = real_prs[:10]
+        card['prsCount'] = len(real_prs)
+        card['joinedAt'] = int(r['created_at'] or 0)
+    return card
+
+def get_friendship_status_map(conn, my_uid, other_uids):
+    """Return dict {other_uid: 'friends' | 'outgoing' | 'incoming' | 'none'}."""
+    res = {u: 'none' for u in other_uids}
+    if not other_uids:
+        return res
+    rows = conn.execute(
+        'SELECT requester_id, addressee_id, status FROM friendships '
+        'WHERE requester_id = ? OR addressee_id = ?',
+        (my_uid, my_uid)
+    ).fetchall()
+    for req_id, addr_id, st in rows:
+        other = addr_id if req_id == my_uid else req_id
+        if other not in res:
+            continue
+        if st == 'accepted':
+            res[other] = 'friends'
+        elif st == 'pending':
+            res[other] = 'outgoing' if req_id == my_uid else 'incoming'
+    return res
+
+def get_block_relation(conn, my_uid, other_uid):
+    """Return (blocked_by_me: bool, blocked_me: bool)."""
+    rows = conn.execute(
+        'SELECT blocker_id, blocked_id FROM user_blocks '
+        'WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)',
+        (my_uid, other_uid, other_uid, my_uid)
+    ).fetchall()
+    by_me = any(r[0] == my_uid for r in rows)
+    by_other = any(r[0] == other_uid for r in rows)
+    return by_me, by_other
+
+def resolve_target_user(conn, raw_identifier):
+    """Resolve user row by username or @handle (or legacy u_<username> / u_<id>)."""
+    ident = str(raw_identifier or '').strip().lower()
+    if not ident:
+        return None
+    if ident.startswith('@'):
+        ident = ident[1:]
+    elif ident.startswith('u_'):
+        ident = ident[2:]
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        'SELECT u.id, u.username, u.display_name, u.avatar, u.plan, u.plan_expires_at, u.last_login_at, u.created_at, u.is_blocked, s.data_json '
+        'FROM users u LEFT JOIN user_state s ON s.user_id = u.id '
+        'WHERE lower(u.username) = ? AND u.is_blocked = 0',
+        (ident,)
+    ).fetchone()
+    if not row and ident.isdigit():
+        row = conn.execute(
+            'SELECT u.id, u.username, u.display_name, u.avatar, u.plan, u.plan_expires_at, u.last_login_at, u.created_at, u.is_blocked, s.data_json '
+            'FROM users u LEFT JOIN user_state s ON s.user_id = u.id '
+            'WHERE u.id = ? AND u.is_blocked = 0',
+            (int(ident),)
+        ).fetchone()
+    return row
 
 def get_user_by_token(token):
     if not token:
@@ -811,83 +1096,345 @@ class H(SimpleHTTPRequestHandler):
                 c = ai_cfg()
                 return self.send_j(200, {'enabled': ai_ready(c)})
             if p == '/api/community/users' or p == '/api/users':
+                tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
+                usr = get_user_by_token(tok)
+                if p == '/api/users' and not usr:
+                    return self.send_j(401, {'error': 'unauthorized'})
+                qs = parse_qs(urlparse(self.path).query)
+                q = qs.get('q', [''])[0].strip().lstrip('@').lower()
+                try:
+                    limit = max(1, min(60, int(qs.get('limit', ['30'])[0])))
+                except Exception:
+                    limit = 30
+                try:
+                    offset = max(0, int(qs.get('offset', ['0'])[0]))
+                except Exception:
+                    offset = 0
+                include_self = (p == '/api/community/users')
+                now = int(time.time())
+                my_uid = usr['id'] if usr else None
+                with db_lock, sqlite3.connect(DB_FILE) as conn:
+                    conn.row_factory = sqlite3.Row
+                    params = []
+                    where_parts = ['u.is_blocked = 0']
+                    if not include_self and my_uid is not None:
+                        where_parts.append('u.id != ?')
+                        params.append(my_uid)
+                    if q:
+                        like = '%' + q + '%'
+                        where_parts.append('(lower(u.username) LIKE ? OR lower(u.display_name) LIKE ?)')
+                        params.extend([like, like])
+                    where_sql = ' AND '.join(where_parts)
+                    total = conn.execute(f'SELECT COUNT(*) FROM users u WHERE {where_sql}', tuple(params)).fetchone()[0]
+                    rows = conn.execute(
+                        'SELECT u.id, u.username, u.display_name, u.avatar, u.plan, u.plan_expires_at, u.last_login_at, u.created_at, '
+                        's.data_json '
+                        f'FROM users u LEFT JOIN user_state s ON s.user_id = u.id '
+                        f'WHERE {where_sql} '
+                        'ORDER BY u.last_login_at DESC, u.id DESC LIMIT ? OFFSET ?',
+                        tuple(params + [limit, offset])
+                    ).fetchall()
+                    if my_uid is not None:
+                        other_uids = [int(r['id']) for r in rows if int(r['id']) != my_uid]
+                        fmap = get_friendship_status_map(conn, my_uid, other_uids)
+                    else:
+                        fmap = {}
+                    users_list = []
+                    for r in rows:
+                        uid = int(r['id'])
+                        card = extract_public_user_card(r, now=now, include_details=False)
+                        card['friendshipStatus'] = 'self' if (my_uid is not None and uid == my_uid) else fmap.get(uid, 'none')
+                        users_list.append(card)
+                if p == '/api/community/users' and not q:
+                    users_list.sort(key=lambda x: x['points'], reverse=True)
+                return self.send_j(200, {
+                    'ok': True,
+                    'users': users_list,
+                    'total': total,
+                    'hasMore': (offset + len(users_list)) < total
+                })
+            if p == '/api/users/profile':
+                tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
+                usr = get_user_by_token(tok)
+                if not usr:
+                    return self.send_j(401, {'error': 'unauthorized'})
+                qs = parse_qs(urlparse(self.path).query)
+                target_ident = qs.get('username', [''])[0].strip()
+                if not target_ident:
+                    return self.send_j(400, {'error': 'Укажите username пользователя'})
+                my_uid = usr['id']
+                now = int(time.time())
+                with db_lock, sqlite3.connect(DB_FILE) as conn:
+                    row = resolve_target_user(conn, target_ident)
+                    if not row:
+                        return self.send_j(404, {'error': 'Пользователь не найден'})
+                    t_uid = int(row['id'])
+                    profile = extract_public_user_card(row, now=now, include_details=True)
+                    if t_uid == my_uid:
+                        profile['friendshipStatus'] = 'self'
+                        profile['isBlockedByMe'] = False
+                        profile['hasBlockedMe'] = False
+                        profile['isSelf'] = True
+                    else:
+                        fmap = get_friendship_status_map(conn, my_uid, [t_uid])
+                        by_me, by_other = get_block_relation(conn, my_uid, t_uid)
+                        profile['friendshipStatus'] = fmap.get(t_uid, 'none')
+                        profile['isBlockedByMe'] = by_me
+                        profile['hasBlockedMe'] = by_other
+                        profile['isSelf'] = False
+                return self.send_j(200, {'ok': True, 'profile': profile, 'user': profile, 'isBlockedByMe': profile.get('isBlockedByMe', False)})
+            if p == '/api/friends':
+                tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
+                usr = get_user_by_token(tok)
+                if not usr:
+                    return self.send_j(401, {'error': 'unauthorized'})
+                my_uid = usr['id']
                 now = int(time.time())
                 with db_lock, sqlite3.connect(DB_FILE) as conn:
                     conn.row_factory = sqlite3.Row
-                    rows = conn.execute(
-                        'SELECT u.id, u.username, u.display_name, u.plan, u.plan_expires_at, u.last_login_at, u.created_at, '
-                        's.data_json '
-                        'FROM users u '
-                        'LEFT JOIN user_state s ON s.user_id = u.id '
-                        'WHERE u.is_blocked = 0 '
-                        'ORDER BY u.last_login_at DESC, u.id DESC LIMIT 150'
+                    f_rows = conn.execute(
+                        'SELECT id, requester_id, addressee_id, status, created_at, updated_at '
+                        'FROM friendships WHERE requester_id = ? OR addressee_id = ? '
+                        'ORDER BY updated_at DESC, id DESC',
+                        (my_uid, my_uid)
                     ).fetchall()
-                    users_list = []
-                    for r in rows:
-                        uid = r['id']
-                        uname = r['username']
-                        dname = r['display_name'] or uname
-                        handle = '@' + uname.lower()
-                        last_active = int(r['last_login_at'] or r['created_at'] or 0)
-                        is_online = (now - last_active) < 1800
-                        plan = r['plan'] or 'free'
-                        exp = int(r['plan_expires_at'] or 0)
-                        is_pro = True if FREE_ACCESS_MODE else (plan == 'pro' and (exp == 0 or exp > now))
-
-                        profile_data = {}
-                        hist_data = []
-                        if r['data_json']:
-                            try:
-                                st = json.loads(r['data_json'])
-                                if isinstance(st, dict):
-                                    st_data = st.get('state') if isinstance(st.get('state'), dict) else st
-                                    prof_raw = st_data.get('athleteProfile')
-                                    if isinstance(prof_raw, str):
-                                        try: profile_data = json.loads(prof_raw)
-                                        except: profile_data = {}
-                                    elif isinstance(prof_raw, dict):
-                                        profile_data = prof_raw
-                                    h_raw = st_data.get('hist')
-                                    if isinstance(h_raw, str):
-                                        try: hist_data = json.loads(h_raw)
-                                        except: hist_data = []
-                                    elif isinstance(h_raw, list):
-                                        hist_data = h_raw
-                            except Exception:
-                                pass
-
-                        h_len = len(hist_data) if isinstance(hist_data, list) else 0
-                        base_pts = int(profile_data.get('points') or 0)
-                        calc_pts = max(base_pts, h_len * 250 + 100)
-                        lvl = int(profile_data.get('level') or max(1, 1 + h_len // 3))
-                        streak = int(profile_data.get('streakDays') or 0)
-                        avatar = profile_data.get('avatar') or ''
-                        name = profile_data.get('name') or dname or uname
-
-                        colors = ['#3b4a34', '#4d3e28', '#2b3930', '#3b3342', '#2e3f2d', '#44372b', '#283635', '#334155']
-                        shirts = ['#6b8e4e', '#c68932', '#4f6d5a', '#7b6894', '#5b8a47', '#b87d38', '#486c68', '#38bdf8']
-                        c_idx = uid % len(colors)
-                        color = profile_data.get('color') or colors[c_idx]
-                        shirt = profile_data.get('shirt') or shirts[c_idx]
-
-                        users_list.append({
-                            'id': 'u_' + str(uid),
-                            'userId': uid,
-                            'name': name,
-                            'handle': handle,
-                            'level': lvl,
-                            'streak': streak,
-                            'points': calc_pts,
-                            'online': is_online,
-                            'color': color,
-                            'shirt': shirt,
-                            'avatar': avatar,
-                            'isPro': is_pro,
-                            'workoutsCount': h_len
+                    friends_list = []
+                    incoming_list = []
+                    outgoing_list = []
+                    for fr in f_rows:
+                        req_id = int(fr['requester_id'])
+                        addr_id = int(fr['addressee_id'])
+                        other_uid = addr_id if req_id == my_uid else req_id
+                        u_row = conn.execute(
+                            'SELECT u.id, u.username, u.display_name, u.avatar, u.plan, u.plan_expires_at, u.last_login_at, u.created_at, '
+                            's.data_json FROM users u LEFT JOIN user_state s ON s.user_id = u.id '
+                            'WHERE u.id = ? AND u.is_blocked = 0',
+                            (other_uid,)
+                        ).fetchone()
+                        if not u_row:
+                            continue
+                        card = extract_public_user_card(u_row, now=now, include_details=False)
+                        card['requestCreatedAt'] = int(fr['created_at'] or 0)
+                        card['requestId'] = int(fr['id'])
+                        card['user'] = card
+                        if fr['status'] == 'accepted':
+                            card['friendshipStatus'] = 'friends'
+                            friends_list.append(card)
+                        elif fr['status'] == 'pending':
+                            if addr_id == my_uid:
+                                card['friendshipStatus'] = 'incoming'
+                                incoming_list.append(card)
+                            else:
+                                card['friendshipStatus'] = 'outgoing'
+                                outgoing_list.append(card)
+                return self.send_j(200, {
+                    'ok': True,
+                    'friends': friends_list,
+                    'incoming': incoming_list,
+                    'outgoing': outgoing_list
+                })
+            if p == '/api/messages/conversations':
+                tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
+                usr = get_user_by_token(tok)
+                if not usr:
+                    return self.send_j(401, {'error': 'unauthorized'})
+                my_uid = usr['id']
+                now = int(time.time())
+                with db_lock, sqlite3.connect(DB_FILE) as conn:
+                    conn.row_factory = sqlite3.Row
+                    # Mark undelivered incoming messages as delivered
+                    conn.execute(
+                        'UPDATE messages SET delivered_at = ? WHERE recipient_id = ? AND delivered_at = 0 AND deleted_at = 0',
+                        (now, my_uid)
+                    )
+                    c_rows = conn.execute(
+                        'SELECT id, user1_id, user2_id, created_at, last_message_at, last_message_text, last_sender_id, '
+                        'user1_hidden_at, user2_hidden_at '
+                        'FROM conversations WHERE user1_id = ? OR user2_id = ? '
+                        'ORDER BY last_message_at DESC, id DESC LIMIT 100',
+                        (my_uid, my_uid)
+                    ).fetchall()
+                    convs = []
+                    for c in c_rows:
+                        cid = int(c['id'])
+                        u1 = int(c['user1_id'])
+                        u2 = int(c['user2_id'])
+                        is_u1 = (my_uid == u1)
+                        peer_uid = u2 if is_u1 else u1
+                        hidden_at = int(c['user1_hidden_at'] if is_u1 else c['user2_hidden_at'] or 0)
+                        last_msg_at = int(c['last_message_at'] or 0)
+                        if hidden_at > 0 and last_msg_at <= hidden_at:
+                            continue
+                        p_row = conn.execute(
+                            'SELECT u.id, u.username, u.display_name, u.avatar, u.plan, u.plan_expires_at, u.last_login_at, u.created_at, '
+                            's.data_json FROM users u LEFT JOIN user_state s ON s.user_id = u.id '
+                            'WHERE u.id = ?',
+                            (peer_uid,)
+                        ).fetchone()
+                        if not p_row:
+                            continue
+                        peer_card = extract_public_user_card(p_row, now=now, include_details=False)
+                        unread_cnt = conn.execute(
+                            'SELECT COUNT(*) FROM messages '
+                            'WHERE conversation_id = ? AND recipient_id = ? AND read_at = 0 AND deleted_at = 0 AND created_at > ?',
+                            (cid, my_uid, hidden_at)
+                        ).fetchone()[0]
+                        by_me, by_other = get_block_relation(conn, my_uid, peer_uid)
+                        convs.append({
+                            'id': cid,
+                            'peer': peer_card,
+                            'lastMessageText': str(c['last_message_text'] or ''),
+                            'lastMessageAt': last_msg_at or int(c['created_at'] or 0),
+                            'lastMessageFromMe': int(c['last_sender_id'] or 0) == my_uid,
+                            'unreadCount': int(unread_cnt),
+                            'isBlockedByMe': by_me,
+                            'hasBlockedMe': by_other
                         })
+                    conn.commit()
+                return self.send_j(200, {'ok': True, 'conversations': convs})
+            if p == '/api/messages/history':
+                tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
+                usr = get_user_by_token(tok)
+                if not usr:
+                    return self.send_j(401, {'error': 'unauthorized'})
+                qs = parse_qs(urlparse(self.path).query)
+                try:
+                    cid = int(qs.get('conversationId', ['0'])[0])
+                except Exception:
+                    cid = 0
+                try:
+                    before_id = int(qs.get('beforeId', ['0'])[0])
+                except Exception:
+                    before_id = 0
+                try:
+                    limit = max(1, min(80, int(qs.get('limit', ['40'])[0])))
+                except Exception:
+                    limit = 40
+                if cid <= 0:
+                    return self.send_j(400, {'error': 'Укажите conversationId'})
+                my_uid = usr['id']
+                now = int(time.time())
+                with db_lock, sqlite3.connect(DB_FILE) as conn:
+                    conn.row_factory = sqlite3.Row
+                    c_row = conn.execute(
+                        'SELECT id, user1_id, user2_id, user1_hidden_at, user2_hidden_at '
+                        'FROM conversations WHERE id = ?',
+                        (cid,)
+                    ).fetchone()
+                    if not c_row:
+                        return self.send_j(404, {'error': 'Диалог не найден'})
+                    u1 = int(c_row['user1_id'])
+                    u2 = int(c_row['user2_id'])
+                    if my_uid not in (u1, u2):
+                        return self.send_j(403, {'error': 'Нет доступа к чужому диалогу'})
+                    is_u1 = (my_uid == u1)
+                    peer_uid = u2 if is_u1 else u1
+                    hidden_at = int(c_row['user1_hidden_at'] if is_u1 else c_row['user2_hidden_at'] or 0)
+                    p_row = conn.execute(
+                        'SELECT u.id, u.username, u.display_name, u.avatar, u.plan, u.plan_expires_at, u.last_login_at, u.created_at, '
+                        's.data_json FROM users u LEFT JOIN user_state s ON s.user_id = u.id WHERE u.id = ?',
+                        (peer_uid,)
+                    ).fetchone()
+                    peer_card = extract_public_user_card(p_row, now=now, include_details=False) if p_row else {'username': 'user', 'name': 'User', 'handle': '@user'}
+                    by_me, by_other = get_block_relation(conn, my_uid, peer_uid)
+                    fmap = get_friendship_status_map(conn, my_uid, [peer_uid])
+                    peer_card['friendshipStatus'] = fmap.get(peer_uid, 'none')
 
-                    users_list.sort(key=lambda x: x['points'], reverse=True)
-                    return self.send_j(200, {'ok': True, 'users': users_list})
+                    conn.execute(
+                        'UPDATE messages SET delivered_at = ? '
+                        'WHERE conversation_id = ? AND recipient_id = ? AND delivered_at = 0 AND deleted_at = 0',
+                        (now, cid, my_uid)
+                    )
+                    q_params = [cid, hidden_at]
+                    id_clause = ''
+                    if before_id > 0:
+                        id_clause = ' AND id < ?'
+                        q_params.append(before_id)
+                    q_params.append(limit + 1)
+                    m_rows = conn.execute(
+                        'SELECT id, sender_id, body, created_at, delivered_at, read_at, deleted_at '
+                        f'FROM messages WHERE conversation_id = ? AND created_at > ?{id_clause} '
+                        'ORDER BY id DESC LIMIT ?',
+                        tuple(q_params)
+                    ).fetchall()
+                    has_more = len(m_rows) > limit
+                    m_slice = list(reversed(m_rows[:limit]))
+                    msgs = []
+                    for m in m_slice:
+                        is_del = int(m['deleted_at'] or 0) > 0
+                        is_mine = int(m['sender_id']) == my_uid
+                        read_ts = int(m['read_at'] or 0)
+                        deliv_ts = int(m['delivered_at'] or 0)
+                        st_lbl = 'read' if read_ts > 0 else ('delivered' if deliv_ts > 0 else 'sent')
+                        msgs.append({
+                            'id': int(m['id']),
+                            'fromMe': is_mine,
+                            'text': '' if is_del else str(m['body'] or ''),
+                            'isDeleted': is_del,
+                            'createdAt': int(m['created_at'] or 0),
+                            'status': st_lbl
+                        })
+                    conn.commit()
+                return self.send_j(200, {
+                    'ok': True,
+                    'conversationId': cid,
+                    'peer': peer_card,
+                    'isBlockedByMe': by_me,
+                    'hasBlockedMe': by_other,
+                    'messages': msgs,
+                    'hasMore': has_more
+                })
+            if p == '/api/messages/unread-count':
+                tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
+                usr = get_user_by_token(tok)
+                if not usr:
+                    return self.send_j(401, {'error': 'unauthorized'})
+                my_uid = usr['id']
+                now = int(time.time())
+                with db_lock, sqlite3.connect(DB_FILE) as conn:
+                    conn.row_factory = sqlite3.Row
+                    conn.execute(
+                        'UPDATE messages SET delivered_at = ? WHERE recipient_id = ? AND delivered_at = 0 AND deleted_at = 0',
+                        (now, my_uid)
+                    )
+                    # Count unread messages only in non-hidden ranges
+                    unread_rows = conn.execute(
+                        'SELECT m.id, m.conversation_id, m.sender_id, m.body, m.created_at, '
+                        'c.user1_id, c.user1_hidden_at, c.user2_hidden_at, u.username, u.display_name '
+                        'FROM messages m '
+                        'JOIN conversations c ON c.id = m.conversation_id '
+                        'JOIN users u ON u.id = m.sender_id '
+                        'WHERE m.recipient_id = ? AND m.read_at = 0 AND m.deleted_at = 0 '
+                        'ORDER BY m.id DESC',
+                        (my_uid,)
+                    ).fetchall()
+                    valid_unreads = []
+                    for r in unread_rows:
+                        h_at = int(r['user1_hidden_at'] if int(r['user1_id']) == my_uid else r['user2_hidden_at'] or 0)
+                        if int(r['created_at']) > h_at:
+                            valid_unreads.append(r)
+                    inc_reqs = conn.execute(
+                        'SELECT COUNT(*) FROM friendships WHERE addressee_id = ? AND status = "pending"',
+                        (my_uid,)
+                    ).fetchone()[0]
+                    conn.commit()
+                latest_msg = None
+                if valid_unreads:
+                    top = valid_unreads[0]
+                    latest_msg = {
+                        'id': int(top['id']),
+                        'conversationId': int(top['conversation_id']),
+                        'senderUsername': str(top['username'] or '').lower(),
+                        'senderName': str(top['display_name'] or top['username'] or ''),
+                        'text': str(top['body'] or '')[:120],
+                        'createdAt': int(top['created_at'] or 0)
+                    }
+                return self.send_j(200, {
+                    'ok': True,
+                    'unreadCount': len(valid_unreads),
+                    'incomingRequestsCount': int(inc_reqs),
+                    'latestMessage': latest_msg
+                })
             if p == '/api/ai/settings' and self.authed():
                 c = ai_cfg()
                 return self.send_j(200, {'provider': c['provider'], 'baseUrl': c.get('base_url', ''), 'hasKey': bool(c.get('key')), 'keyHint': ('…' + c['key'][-4:]) if c.get('key') else '', 'model': c['model'], 'enabled': c['enabled'], 'prompt': c.get('prompt', '')})
@@ -1366,8 +1913,474 @@ class H(SimpleHTTPRequestHandler):
                     'ON CONFLICT(user_id) DO UPDATE SET data_json=excluded.data_json, updated_at=excluded.updated_at',
                     (usr['id'], json.dumps(state, ensure_ascii=False), now)
                 )
+                if 'athleteProfile' in state:
+                    try:
+                        ap_obj = json.loads(state['athleteProfile'])
+                        if isinstance(ap_obj, dict):
+                            ap_name = str(ap_obj.get('name') or '').strip()[:40]
+                            if ap_name and ap_name not in ('Mr.Bobrovsky', 'Атлет', 'Athlete'):
+                                conn.execute('UPDATE users SET display_name = ? WHERE id = ?', (ap_name, usr['id']))
+                    except Exception:
+                        pass
                 conn.commit()
             return self.send_j(200, {'ok': True, 'updatedAt': now})
+        if p in ('/api/friends/request', '/api/friends/accept', '/api/friends/decline', '/api/friends/cancel', '/api/friends/remove'):
+            tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
+            usr = get_user_by_token(tok)
+            if not usr:
+                return self.send_j(401, {'error': 'unauthorized'})
+            try:
+                j = json.loads(self.body(4096) or b'{}')
+            except Exception:
+                return self.send_j(400, {'error': 'bad json'})
+            req_id_raw = j.get('requestId')
+            target_ident = str(j.get('targetUserId') or j.get('targetId') or j.get('userId') or j.get('username') or j.get('handle') or '').strip()
+            if not target_ident and not req_id_raw:
+                return self.send_j(400, {'error': 'Укажите пользователя или requestId'})
+            my_uid = usr['id']
+            now = int(time.time())
+            with db_lock, sqlite3.connect(DB_FILE) as conn:
+                existing = None
+                t_uid = None
+                if req_id_raw:
+                    try:
+                        r_id = int(req_id_raw)
+                        existing = conn.execute(
+                            'SELECT id, requester_id, addressee_id, status FROM friendships WHERE id = ?',
+                            (r_id,)
+                        ).fetchone()
+                    except Exception:
+                        existing = None
+                    if existing:
+                        t_uid = int(existing[1]) if int(existing[2]) == my_uid else int(existing[2])
+                if not existing and target_ident:
+                    t_row = resolve_target_user(conn, target_ident)
+                    if not t_row:
+                        return self.send_j(404, {'error': 'Пользователь не найден'})
+                    t_uid = int(t_row['id'])
+                    if t_uid == my_uid:
+                        return self.send_j(400, {'error': 'Нельзя добавить в друзья самого себя'})
+                    p_min = min(my_uid, t_uid)
+                    p_max = max(my_uid, t_uid)
+                    existing = conn.execute(
+                        'SELECT id, requester_id, addressee_id, status FROM friendships WHERE pair_min = ? AND pair_max = ?',
+                        (p_min, p_max)
+                    ).fetchone()
+                if not existing and not t_uid:
+                    return self.send_j(404, {'error': 'Заявка или пользователь не найдены'})
+
+                if p == '/api/friends/request':
+                    if not t_uid:
+                        return self.send_j(400, {'error': 'Укажите пользователя'})
+                    by_me, by_other = get_block_relation(conn, my_uid, t_uid)
+                    if by_me or by_other:
+                        return self.send_j(403, {'error': 'Действие недоступно из-за ограничений блокировки'})
+                    if existing:
+                        fid, req_id, addr_id, st = int(existing[0]), int(existing[1]), int(existing[2]), existing[3]
+                        if st == 'accepted':
+                            return self.send_j(400, {'error': 'Вы уже друзья', 'friendshipStatus': 'friends'})
+                        if req_id == my_uid:
+                            return self.send_j(400, {'error': 'Заявка уже отправлена', 'friendshipStatus': 'outgoing'})
+                        # Counter-request exists from target -> auto-accept!
+                        conn.execute('UPDATE friendships SET status = "accepted", updated_at = ? WHERE id = ?', (now, fid))
+                        conn.commit()
+                        return self.send_j(200, {'ok': True, 'friendshipStatus': 'friends', 'autoAccepted': True})
+                    p_min = min(my_uid, t_uid)
+                    p_max = max(my_uid, t_uid)
+                    cur = conn.execute(
+                        'INSERT INTO friendships (requester_id, addressee_id, pair_min, pair_max, status, created_at, updated_at) '
+                        'VALUES (?, ?, ?, ?, "pending", ?, ?)',
+                        (my_uid, t_uid, p_min, p_max, now, now)
+                    )
+                    conn.commit()
+                    return self.send_j(200, {'ok': True, 'friendshipStatus': 'outgoing', 'requestId': cur.lastrowid})
+
+                if p == '/api/friends/accept':
+                    if not existing or existing[3] != 'pending':
+                        return self.send_j(404, {'error': 'Входящая заявка не найдена'})
+                    if int(existing[2]) != my_uid:
+                        return self.send_j(403, {'error': 'Нельзя принять чужую заявку'})
+                    conn.execute('UPDATE friendships SET status = "accepted", updated_at = ? WHERE id = ?', (now, int(existing[0])))
+                    conn.commit()
+                    return self.send_j(200, {'ok': True, 'friendshipStatus': 'friends'})
+
+                if p == '/api/friends/decline':
+                    if not existing or existing[3] != 'pending':
+                        return self.send_j(404, {'error': 'Входящая заявка не найдена'})
+                    if int(existing[2]) != my_uid:
+                        return self.send_j(403, {'error': 'Нельзя отклонить чужую заявку'})
+                    conn.execute('DELETE FROM friendships WHERE id = ?', (int(existing[0]),))
+                    conn.commit()
+                    return self.send_j(200, {'ok': True, 'friendshipStatus': 'none'})
+
+                if p == '/api/friends/cancel':
+                    if not existing or existing[3] != 'pending':
+                        return self.send_j(404, {'error': 'Исходящая заявка не найдена'})
+                    if int(existing[1]) != my_uid:
+                        return self.send_j(403, {'error': 'Нельзя отменить чужую заявку'})
+                    conn.execute('DELETE FROM friendships WHERE id = ?', (int(existing[0]),))
+                    conn.commit()
+                    return self.send_j(200, {'ok': True, 'friendshipStatus': 'none'})
+
+                if p == '/api/friends/remove':
+                    if not existing or existing[3] != 'accepted':
+                        return self.send_j(404, {'error': 'Пользователь не находится в списке друзей'})
+                    conn.execute('DELETE FROM friendships WHERE id = ?', (int(existing[0]),))
+                    conn.commit()
+                    return self.send_j(200, {'ok': True, 'friendshipStatus': 'none'})
+
+        if p == '/api/messages/open':
+            tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
+            usr = get_user_by_token(tok)
+            if not usr:
+                return self.send_j(401, {'error': 'unauthorized'})
+            try:
+                j = json.loads(self.body(4096) or b'{}')
+            except Exception:
+                return self.send_j(400, {'error': 'bad json'})
+            target_ident = str(j.get('targetUserId') or j.get('targetId') or j.get('userId') or j.get('username') or j.get('handle') or '').strip()
+            if not target_ident:
+                return self.send_j(400, {'error': 'Укажите собеседника'})
+            my_uid = usr['id']
+            now = int(time.time())
+            with db_lock, sqlite3.connect(DB_FILE) as conn:
+                t_row = resolve_target_user(conn, target_ident)
+                if not t_row:
+                    return self.send_j(404, {'error': 'Пользователь не найден'})
+                t_uid = int(t_row['id'])
+                if t_uid == my_uid:
+                    return self.send_j(400, {'error': 'Нельзя начать чат с самим собой'})
+                by_me, by_other = get_block_relation(conn, my_uid, t_uid)
+                if by_me or by_other:
+                    return self.send_j(403, {'error': 'Переписка недоступна из-за блокировки пользователя'})
+                u1 = min(my_uid, t_uid)
+                u2 = max(my_uid, t_uid)
+                c_row = conn.execute(
+                    'SELECT id, user1_hidden_at, user2_hidden_at FROM conversations WHERE user1_id = ? AND user2_id = ?',
+                    (u1, u2)
+                ).fetchone()
+                if c_row:
+                    cid = int(c_row[0])
+                else:
+                    cur = conn.execute(
+                        'INSERT INTO conversations (user1_id, user2_id, created_at, last_message_at, last_message_text, last_sender_id) '
+                        'VALUES (?, ?, ?, ?, "", 0)',
+                        (u1, u2, now, now)
+                    )
+                    cid = cur.lastrowid
+                peer_card = extract_public_user_card(t_row, now=now, include_details=False)
+                fmap = get_friendship_status_map(conn, my_uid, [t_uid])
+                peer_card['friendshipStatus'] = fmap.get(t_uid, 'none')
+                conn.commit()
+            conv_obj = {'id': cid, 'peer': peer_card}
+            return self.send_j(200, {'ok': True, 'conversationId': cid, 'conversation': conv_obj, 'peer': peer_card})
+
+        if p == '/api/messages/send':
+            tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
+            usr = get_user_by_token(tok)
+            if not usr:
+                return self.send_j(401, {'error': 'unauthorized'})
+            try:
+                raw_b = self.body(32 * 1024)
+                if raw_b is None:
+                    return self.send_j(413, {'error': 'Слишком длинный запрос'})
+                j = json.loads(raw_b or b'{}')
+            except Exception:
+                return self.send_j(400, {'error': 'bad json'})
+            text = str(j.get('text') or '').strip()
+            if not text:
+                return self.send_j(400, {'error': 'Сообщение не может быть пустым'})
+            if len(text) > 2000:
+                return self.send_j(400, {'error': 'Сообщение слишком длинное (максимум 2000 символов)'})
+            client_msg_id = re.sub(r'[^a-zA-Z0-9_:-]', '', str(j.get('clientMsgId') or '').strip())[:64]
+            my_uid = usr['id']
+            now = int(time.time())
+
+            with db_lock, sqlite3.connect(DB_FILE) as conn:
+                conn.row_factory = sqlite3.Row
+                # Idempotency check first before consuming rate-limit token
+                if client_msg_id:
+                    dup = conn.execute(
+                        'SELECT id, conversation_id, body, created_at, delivered_at, read_at '
+                        'FROM messages WHERE sender_id = ? AND client_msg_id = ?',
+                        (my_uid, client_msg_id)
+                    ).fetchone()
+                    if dup:
+                        st_lbl = 'read' if int(dup['read_at'] or 0) > 0 else ('delivered' if int(dup['delivered_at'] or 0) > 0 else 'sent')
+                        return self.send_j(200, {
+                            'ok': True,
+                            'conversationId': int(dup['conversation_id']),
+                            'message': {
+                                'id': int(dup['id']),
+                                'fromMe': True,
+                                'text': str(dup['body']),
+                                'isDeleted': False,
+                                'createdAt': int(dup['created_at']),
+                                'status': st_lbl
+                            },
+                            'deduplicated': True
+                        })
+
+                cid = 0
+                try:
+                    cid = int(j.get('conversationId') or 0)
+                except Exception:
+                    cid = 0
+                target_ident = str(j.get('username') or j.get('handle') or '').strip()
+
+                if cid > 0:
+                    c_row = conn.execute('SELECT id, user1_id, user2_id FROM conversations WHERE id = ?', (cid,)).fetchone()
+                    if not c_row:
+                        return self.send_j(404, {'error': 'Диалог не найден'})
+                    u1, u2 = int(c_row['user1_id']), int(c_row['user2_id'])
+                    if my_uid not in (u1, u2):
+                        return self.send_j(403, {'error': 'Нет доступа к чужому диалогу'})
+                    peer_uid = u2 if my_uid == u1 else u1
+                elif target_ident:
+                    t_row = resolve_target_user(conn, target_ident)
+                    if not t_row:
+                        return self.send_j(404, {'error': 'Получатель не найден'})
+                    peer_uid = int(t_row['id'])
+                    if peer_uid == my_uid:
+                        return self.send_j(400, {'error': 'Нельзя отправить сообщение самому себе'})
+                    u1, u2 = min(my_uid, peer_uid), max(my_uid, peer_uid)
+                    c_row = conn.execute('SELECT id FROM conversations WHERE user1_id = ? AND user2_id = ?', (u1, u2)).fetchone()
+                    if c_row:
+                        cid = int(c_row['id'])
+                    else:
+                        by_me, by_other = get_block_relation(conn, my_uid, peer_uid)
+                        if by_me or by_other:
+                            return self.send_j(403, {'error': 'Отправка невозможна: один из пользователей заблокировал переписку'})
+                        cur = conn.execute(
+                            'INSERT INTO conversations (user1_id, user2_id, created_at, last_message_at, last_message_text, last_sender_id) '
+                            'VALUES (?, ?, ?, ?, "", 0)',
+                            (u1, u2, now, now)
+                        )
+                        cid = cur.lastrowid
+                else:
+                    return self.send_j(400, {'error': 'Укажите conversationId или username получателя'})
+
+                if peer_uid == my_uid:
+                    return self.send_j(400, {'error': 'Нельзя отправить сообщение самому себе'})
+
+                by_me, by_other = get_block_relation(conn, my_uid, peer_uid)
+                if by_me or by_other:
+                    return self.send_j(403, {'error': 'Отправка невозможна: один из пользователей заблокировал переписку'})
+
+                if not check_message_rate_limit(my_uid):
+                    return self.send_j(429, {'error': 'Слишком много сообщений подряд. Подождите несколько секунд.'})
+
+                cur = conn.execute(
+                    'INSERT INTO messages (conversation_id, sender_id, recipient_id, body, client_msg_id, created_at, delivered_at, read_at, deleted_at) '
+                    'VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0)',
+                    (cid, my_uid, peer_uid, text, client_msg_id, now)
+                )
+                mid = cur.lastrowid
+                preview = text[:140]
+                conn.execute(
+                    'UPDATE conversations SET last_message_at = ?, last_message_text = ?, last_sender_id = ? WHERE id = ?',
+                    (now, preview, my_uid, cid)
+                )
+                conn.commit()
+            return self.send_j(200, {
+                'ok': True,
+                'conversationId': cid,
+                'message': {
+                    'id': mid,
+                    'fromMe': True,
+                    'text': text,
+                    'isDeleted': False,
+                    'createdAt': now,
+                    'status': 'sent'
+                }
+            })
+
+        if p == '/api/messages/read':
+            tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
+            usr = get_user_by_token(tok)
+            if not usr:
+                return self.send_j(401, {'error': 'unauthorized'})
+            try:
+                j = json.loads(self.body(4096) or b'{}')
+                cid = int(j.get('conversationId') or 0)
+            except Exception:
+                return self.send_j(400, {'error': 'bad json'})
+            if cid <= 0:
+                return self.send_j(400, {'error': 'Укажите conversationId'})
+            my_uid = usr['id']
+            now = int(time.time())
+            with db_lock, sqlite3.connect(DB_FILE) as conn:
+                c_row = conn.execute('SELECT user1_id, user2_id FROM conversations WHERE id = ?', (cid,)).fetchone()
+                if not c_row:
+                    return self.send_j(404, {'error': 'Диалог не найден'})
+                if my_uid not in (int(c_row[0]), int(c_row[1])):
+                    return self.send_j(403, {'error': 'Нет доступа к чужому диалогу'})
+                cur = conn.execute(
+                    'UPDATE messages SET read_at = ?, delivered_at = CASE WHEN delivered_at = 0 THEN ? ELSE delivered_at END '
+                    'WHERE conversation_id = ? AND recipient_id = ? AND read_at = 0 AND deleted_at = 0',
+                    (now, now, cid, my_uid)
+                )
+                marked = cur.rowcount
+                conn.commit()
+            return self.send_j(200, {'ok': True, 'markedCount': marked, 'readCount': marked})
+
+        if p == '/api/messages/delete':
+            tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
+            usr = get_user_by_token(tok)
+            if not usr:
+                return self.send_j(401, {'error': 'unauthorized'})
+            try:
+                j = json.loads(self.body(4096) or b'{}')
+                mid = int(j.get('messageId') or 0)
+            except Exception:
+                return self.send_j(400, {'error': 'bad json'})
+            if mid <= 0:
+                return self.send_j(400, {'error': 'Укажите messageId'})
+            my_uid = usr['id']
+            now = int(time.time())
+            with db_lock, sqlite3.connect(DB_FILE) as conn:
+                m_row = conn.execute(
+                    'SELECT id, conversation_id, sender_id, deleted_at FROM messages WHERE id = ?',
+                    (mid,)
+                ).fetchone()
+                if not m_row:
+                    return self.send_j(404, {'error': 'Сообщение не найдено'})
+                if int(m_row[2]) != my_uid:
+                    return self.send_j(403, {'error': 'Можно удалять только собственные сообщения'})
+                cid = int(m_row[1])
+                conn.execute(
+                    'UPDATE messages SET deleted_at = ?, body = "" WHERE id = ?',
+                    (now, mid)
+                )
+                # Refresh conversation preview from latest non-deleted message
+                latest = conn.execute(
+                    'SELECT body, sender_id, created_at FROM messages '
+                    'WHERE conversation_id = ? AND deleted_at = 0 ORDER BY id DESC LIMIT 1',
+                    (cid,)
+                ).fetchone()
+                if latest:
+                    conn.execute(
+                        'UPDATE conversations SET last_message_text = ?, last_sender_id = ?, last_message_at = ? WHERE id = ?',
+                        (str(latest[0])[:140], int(latest[1]), int(latest[2]), cid)
+                    )
+                else:
+                    conn.execute(
+                        'UPDATE conversations SET last_message_text = "" WHERE id = ?',
+                        (cid,)
+                    )
+                conn.commit()
+            return self.send_j(200, {'ok': True, 'deletedId': mid})
+
+        if p == '/api/messages/conversation/hide':
+            tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
+            usr = get_user_by_token(tok)
+            if not usr:
+                return self.send_j(401, {'error': 'unauthorized'})
+            try:
+                j = json.loads(self.body(4096) or b'{}')
+                cid = int(j.get('conversationId') or 0)
+            except Exception:
+                return self.send_j(400, {'error': 'bad json'})
+            if cid <= 0:
+                return self.send_j(400, {'error': 'Укажите conversationId'})
+            my_uid = usr['id']
+            now = int(time.time())
+            with db_lock, sqlite3.connect(DB_FILE) as conn:
+                c_row = conn.execute(
+                    'SELECT user1_id, user2_id, last_message_at FROM conversations WHERE id = ?',
+                    (cid,)
+                ).fetchone()
+                if not c_row:
+                    return self.send_j(404, {'error': 'Диалог не найден'})
+                u1, u2 = int(c_row[0]), int(c_row[1])
+                if my_uid not in (u1, u2):
+                    return self.send_j(403, {'error': 'Нет доступа к чужому диалогу'})
+                hide_ts = max(now, int(c_row[2] or 0))
+                if my_uid == u1:
+                    conn.execute('UPDATE conversations SET user1_hidden_at = ? WHERE id = ?', (hide_ts, cid))
+                else:
+                    conn.execute('UPDATE conversations SET user2_hidden_at = ? WHERE id = ?', (hide_ts, cid))
+                conn.execute(
+                    'UPDATE messages SET read_at = ?, delivered_at = CASE WHEN delivered_at = 0 THEN ? ELSE delivered_at END '
+                    'WHERE conversation_id = ? AND recipient_id = ? AND read_at = 0',
+                    (now, now, cid, my_uid)
+                )
+                conn.commit()
+            return self.send_j(200, {'ok': True, 'hiddenConversationId': cid})
+
+        if p in ('/api/users/block', '/api/users/unblock'):
+            tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
+            usr = get_user_by_token(tok)
+            if not usr:
+                return self.send_j(401, {'error': 'unauthorized'})
+            try:
+                j = json.loads(self.body(4096) or b'{}')
+            except Exception:
+                return self.send_j(400, {'error': 'bad json'})
+            target_ident = str(j.get('targetUserId') or j.get('targetId') or j.get('userId') or j.get('username') or j.get('handle') or '').strip()
+            if not target_ident:
+                return self.send_j(400, {'error': 'Укажите пользователя'})
+            my_uid = usr['id']
+            now = int(time.time())
+            with db_lock, sqlite3.connect(DB_FILE) as conn:
+                t_row = resolve_target_user(conn, target_ident)
+                if not t_row:
+                    return self.send_j(404, {'error': 'Пользователь не найден'})
+                t_uid = int(t_row['id'])
+                if t_uid == my_uid:
+                    return self.send_j(400, {'error': 'Нельзя заблокировать самого себя'})
+                if p == '/api/users/block':
+                    conn.execute(
+                        'INSERT OR IGNORE INTO user_blocks (blocker_id, blocked_id, created_at) VALUES (?, ?, ?)',
+                        (my_uid, t_uid, now)
+                    )
+                    conn.execute(
+                        'DELETE FROM friendships WHERE pair_min = ? AND pair_max = ?',
+                        (min(my_uid, t_uid), max(my_uid, t_uid))
+                    )
+                    conn.commit()
+                    return self.send_j(200, {'ok': True, 'isBlockedByMe': True})
+                else:
+                    conn.execute(
+                        'DELETE FROM user_blocks WHERE blocker_id = ? AND blocked_id = ?',
+                        (my_uid, t_uid)
+                    )
+                    conn.commit()
+                    return self.send_j(200, {'ok': True, 'isBlockedByMe': False})
+
+        if p == '/api/users/report':
+            tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
+            usr = get_user_by_token(tok)
+            if not usr:
+                return self.send_j(401, {'error': 'unauthorized'})
+            try:
+                j = json.loads(self.body(8192) or b'{}')
+            except Exception:
+                return self.send_j(400, {'error': 'bad json'})
+            target_ident = str(j.get('targetUserId') or j.get('targetId') or j.get('userId') or j.get('username') or j.get('handle') or '').strip()
+            reason = str(j.get('reason') or '').strip()[:500]
+            try:
+                mid = max(0, int(j.get('messageId') or 0))
+            except Exception:
+                mid = 0
+            if not target_ident or not reason:
+                return self.send_j(400, {'error': 'Укажите пользователя и причину жалобы'})
+            my_uid = usr['id']
+            now = int(time.time())
+            with db_lock, sqlite3.connect(DB_FILE) as conn:
+                t_row = resolve_target_user(conn, target_ident)
+                if not t_row:
+                    return self.send_j(404, {'error': 'Пользователь не найден'})
+                t_uid = int(t_row['id'])
+                if t_uid == my_uid:
+                    return self.send_j(400, {'error': 'Нельзя пожаловаться на самого себя'})
+                conn.execute(
+                    'INSERT INTO user_reports (reporter_id, target_user_id, message_id, reason, created_at) '
+                    'VALUES (?, ?, ?, ?, ?)',
+                    (my_uid, t_uid, mid, reason, now)
+                )
+                conn.commit()
+            return self.send_j(200, {'ok': True})
         if p == '/api/payment/create':
             if FREE_ACCESS_MODE:
                 return self.send_j(403, {

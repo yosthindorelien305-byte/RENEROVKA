@@ -777,11 +777,36 @@
     </svg>`;
   }
 
+  function safeColor(c, fallback) {
+    if (typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c.trim())) return c.trim();
+    return fallback;
+  }
+
   function miniAvatar(bg, shirt, avatarUrl) {
+    const safeBg = safeColor(bg, '#283327');
+    const safeShirt = safeColor(shirt, '#5b8a47');
     if (avatarUrl) {
-      return `<span class="ap-mini-av" style="background:${bg || '#283327'}"><img src="${esc(avatarUrl)}" alt="" style="width:100%;height:100%;object-fit:cover;"></span>`;
+      return `<span class="ap-mini-av" style="background:${safeBg}"><img src="${esc(avatarUrl)}" alt="" style="width:100%;height:100%;object-fit:cover;"></span>`;
     }
-    return `<span class="ap-mini-av" style="background:${bg || '#283327'}"><svg viewBox="0 0 32 32"><circle cx="16" cy="12" r="5.5" fill="#e2e5dd"/><path d="M6 30c1-7 5-10 10-10s9 3 10 10" fill="${shirt || '#5b8a47'}"/></svg></span>`;
+    return `<span class="ap-mini-av" style="background:${safeBg}"><svg viewBox="0 0 32 32"><circle cx="16" cy="12" r="5.5" fill="#e2e5dd"/><path d="M6 30c1-7 5-10 10-10s9 3 10 10" fill="${safeShirt}"/></svg></span>`;
+  }
+
+  function syncServerFriends(serverFriends) {
+    if (!Array.isArray(serverFriends)) return [];
+    const mapped = serverFriends.map(u => ({
+      id: String(u.id),
+      name: u.displayName || u.username,
+      handle: '@' + u.username,
+      avatar: u.avatar || '',
+      level: Number(u.level) || 1,
+      streak: Number(u.streak) || 0,
+      points: Number(u.points) || 100,
+      online: !!u.online,
+      color: safeColor(u.color, '#3b4a34'),
+      shirt: safeColor(u.shirt, '#6b8e4e')
+    }));
+    saveFriends(mapped);
+    return mapped;
   }
 
   function renderCard(cfgAthlete, opts) {
@@ -928,6 +953,7 @@
     QUEST_TEMPLATES,
     getFriends,
     saveFriends,
+    syncServerFriends,
     getCommunityUsers,
     setCommunityUsers,
     getDuels,

@@ -61,8 +61,17 @@
 
   function syncNavAthlete() {
     const avBox = document.getElementById('nav-ath-av');
+    const usersBtn = document.getElementById('nav-users-btn');
+    const msgBtn = document.getElementById('nav-messages-btn');
+    const msgBadge = document.getElementById('nav-msg-badge');
+    const logged = isLoggedIn();
+
+    if (usersBtn) usersBtn.classList.toggle('hidden', !logged);
+    if (msgBtn) msgBtn.classList.toggle('hidden', !logged);
+    if (!logged && msgBadge) msgBadge.classList.add('hidden');
+
     if (!avBox) return;
-    if (!isLoggedIn()) {
+    if (!logged) {
       avBox.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.5" r="3.5"/><path d="M5.5 19.5c1.4-3.1 3.8-4.5 6.5-4.5s5.1 1.4 6.5 4.5"/></svg>`;
       return;
     }
@@ -1702,6 +1711,62 @@
     );
   }
 
+  async function socialApi(endpoint, opts = {}) {
+    const tok = localStorage.userToken;
+    if (!tok) throw new Error('Not logged in');
+    const headers = Object.assign({
+      'Authorization': 'Bearer ' + tok
+    }, opts.headers || {});
+    let body = opts.body;
+    if (body && typeof body === 'object' && !(body instanceof FormData)) {
+      headers['Content-Type'] = 'application/json';
+      body = JSON.stringify(body);
+    }
+    const res = await fetch(endpoint, Object.assign({}, opts, { headers, body }));
+    if (res.status === 401) {
+      localStorage.removeItem('userToken');
+      syncNavAthlete();
+      render();
+      throw new Error('Unauthorized');
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || 'Server error');
+    }
+    return data;
+  }
+
+  function renderAuthGateStub(title, desc) {
+    return `
+      <div class="wrap" style="padding:32px 14px;text-align:center;">
+        <div class="auth-gate-card" style="max-width:440px;margin:0 auto;">
+          <div class="auth-gate-av">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>
+          </div>
+          <h2 style="margin:0 0 8px;font-size:20px;font-weight:800;color:var(--tx);">${esc(title || t('authRequired'))}</h2>
+          <p style="margin:0 0 20px;font-size:13.5px;color:var(--mut);line-height:1.45;">
+            ${esc(desc || t('authRequiredDesc'))}
+          </p>
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <button type="button" class="btn" id="social-gate-login" style="padding:12px;font-size:14px;justify-content:center;">
+              ${uiSvg('users', 16)} ${L == 'ru' ? 'Войти в аккаунт' : 'Sign In'}
+            </button>
+            <button type="button" class="btn alt" id="social-gate-reg" style="padding:12px;font-size:14px;justify-content:center;">
+              ${uiSvg('sparkles', 16)} ${L == 'ru' ? 'Создать аккаунт' : 'Create Account'}
+            </button>
+          </div>
+          <div class="auth-sep" style="margin:16px 0 14px;">
+            <span>${L == 'ru' ? 'или быстрый вход через соцсети' : 'or quick sign-in with'}</span>
+          </div>
+          <div class="social-auth-grid">
+            <button type="button" class="soc-btn tg" data-soc-provider="telegram" style="grid-column:1 / -1;">
+              ${socialSvg('telegram')} Telegram
+            </button>
+          </div>
+        </div>
+      </div>`;
+  }
+
   function renderGuestAuthGate() {
     return `
       <div class="auth-gate-card">
@@ -3157,6 +3222,7 @@
       return `${profileCard}${duelBanner}${kpis}${analyticsCard}${bodyCard}${prsHtml}${histHtml}`;
     },
     friends() {
+      if (!isLoggedIn()) return renderAuthGateStub(t('authRequired'), t('authRequiredDesc'));
       const AP = window.AthleteProfile;
       if (AP && AP.purgeLegacyFakes) AP.purgeLegacyFakes();
       const list = (AP ? AP.getFriends(CFG.athlete) : []).filter(f => !(AP && AP.isFakeUser ? AP.isFakeUser(f) : false));
@@ -3302,21 +3368,20 @@
       return `
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px;">
           <a href="#/profile" class="btn alt" style="padding:7px 14px;font-size:12.5px;">← ${L == 'ru' ? 'Профиль' : 'Profile'}</a>
-          <button type="button" class="btn" id="fr-add-open" style="padding:8px 14px;font-size:12.5px;">+ ${L == 'ru' ? 'Добавить друга' : 'Add friend'}</button>
+          <a href="#/users" class="btn" style="padding:8px 14px;font-size:12.5px;">🔍 ${L == 'ru' ? 'Найти атлетов' : 'Find athletes'}</a>
         </div>
 
-        ${!isLoggedIn() ? `
-          <div class="ss-card" style="margin-bottom:14px;background:linear-gradient(135deg,rgba(var(--acr),0.18) 0%,rgba(0,0,0,0.3) 100%);border:1px solid rgba(var(--acr),0.4);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-            <div>
-              <div style="font-size:13.5px;font-weight:800;color:var(--tx);">${L == 'ru' ? 'Вы не авторизованы' : 'You are not signed in'}</div>
-              <div style="font-size:11.5px;color:var(--mut);">${L == 'ru' ? 'Войдите или зарегистрируйтесь, чтобы занять своё место в рейтинге!' : 'Sign in to join the club and claim your rank!'}</div>
-            </div>
-            <button type="button" class="btn" id="fr-guest-login" style="padding:7px 14px;font-size:12px;">${L == 'ru' ? 'Войти' : 'Sign In'}</button>
-          </div>` : ''}
+        <div class="social-tabs" id="fr-tabs-bar" style="margin-bottom:14px;">
+          <button type="button" class="social-tab-btn active" data-fr-main-tab="friends">👥 ${t('friends')}</button>
+          <button type="button" class="social-tab-btn" data-fr-main-tab="incoming">📥 ${t('incomingRequests')} <span class="social-tab-badge" id="fr-badge-inc" style="display:none;">0</span></button>
+          <button type="button" class="social-tab-btn" data-fr-main-tab="outgoing">📤 ${t('outgoingRequests')} <span class="social-tab-badge" id="fr-badge-out" style="display:none;">0</span></button>
+        </div>
+        <div id="fr-requests-panel" style="display:none;margin-bottom:16px;"></div>
 
-        ${questHtml}
+        <div id="fr-friends-content">
+          ${questHtml}
 
-        ${duelsHtml}
+          ${duelsHtml}
 
         <div class="ss-card" style="margin-bottom:14px;">
           <div class="ss-card-title">
@@ -3409,10 +3474,79 @@
               </div>`;
             }).join('')}
           </div>` : ''}
+        </div>
       `;
     },
     history() {
       return this.profile();
+    },
+    users() {
+      if (!isLoggedIn()) return renderAuthGateStub(t('authRequired'), t('authRequiredDesc'));
+      return `
+        <div class="social-wrap">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+            <h1 style="font-size:22px;font-weight:800;color:var(--tx);margin:0;">${t('users')}</h1>
+            <a href="#/friends" class="btn alt" style="padding:7px 12px;font-size:12.5px;">👥 ${t('friends')}</a>
+          </div>
+          <div class="social-search-bar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="users-search-input" placeholder="${esc(t('userSearchPlaceholder'))}" autocomplete="off">
+          </div>
+          <div id="users-grid" class="user-grid">
+            <div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--tx-sub);">${L == 'ru' ? 'Загрузка атлетов…' : 'Loading athletes…'}</div>
+          </div>
+          <div id="users-more-wrap" style="text-align:center;margin-top:16px;"></div>
+        </div>`;
+    },
+    user(username) {
+      if (!isLoggedIn()) return renderAuthGateStub(t('authRequired'), t('authRequiredDesc'));
+      return `
+        <div class="pub-profile" id="pub-profile-wrap">
+          <div style="text-align:center;padding:40px;color:var(--tx-sub);">${L == 'ru' ? 'Загрузка профиля…' : 'Loading profile…'}</div>
+        </div>`;
+    },
+    messages(convId) {
+      if (!isLoggedIn()) return renderAuthGateStub(t('authRequired'), t('authRequiredDesc'));
+      return `
+        <div class="wrap" style="padding:10px 10px 80px;">
+          <div class="messages-layout ${convId ? 'chat-open' : ''}" id="messages-layout">
+            <div class="conv-sidebar">
+              <div class="conv-sidebar-header">
+                <span>💬 ${t('messages')}</span>
+                <a href="#/users" class="btn alt" style="padding:4px 8px;font-size:11px;" title="${t('users')}">+ ${t('users')}</a>
+              </div>
+              <div class="conv-list" id="conv-list">
+                <div style="text-align:center;padding:24px;color:var(--tx-sub);font-size:12px;">${L == 'ru' ? 'Загрузка диалогов…' : 'Loading chats…'}</div>
+              </div>
+            </div>
+            <div class="chat-pane" id="chat-pane">
+              ${convId ? `
+                <div class="chat-header" id="chat-header">
+                  <div style="display:flex;align-items:center;gap:10px;">
+                    <a href="#/messages" class="btn alt" style="padding:5px 8px;font-size:12px;line-height:1;">‹</a>
+                    <span style="font-size:13px;color:var(--tx-sub);">${L == 'ru' ? 'Загрузка…' : 'Loading…'}</span>
+                  </div>
+                </div>
+                <div class="chat-messages" id="chat-messages">
+                  <div style="text-align:center;padding:30px;color:var(--tx-sub);font-size:12.5px;">${L == 'ru' ? 'Загрузка истории…' : 'Loading messages…'}</div>
+                </div>
+                <div class="chat-input-bar" id="chat-input-bar">
+                  <textarea class="chat-textarea" id="chat-textarea" placeholder="${esc(t('typeMessage'))}" rows="1"></textarea>
+                  <button type="button" class="chat-send-btn" id="chat-send-btn" aria-label="Send">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                  </button>
+                </div>
+              ` : `
+                <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--tx-sub);padding:30px;text-align:center;">
+                  <div style="font-size:40px;margin-bottom:12px;opacity:0.6;">💬</div>
+                  <div style="font-size:15px;font-weight:700;color:var(--tx);margin-bottom:6px;">${t('noConversations')}</div>
+                  <div style="font-size:12.5px;max-width:280px;line-height:1.4;">${L == 'ru' ? 'Выберите диалог из списка слева или найдите атлета в разделе «Пользователи»' : 'Choose a conversation from the left or find an athlete in Users'}</div>
+                  <a href="#/users" class="btn" style="margin-top:16px;font-size:13px;">🔍 ${t('users')}</a>
+                </div>
+              `}
+            </div>
+          </div>
+        </div>`;
     }
   };
 
@@ -4632,12 +4766,135 @@
           ? `⚔️ Правила дуэли на 7 дней:\n\n• +100 XP за каждую завершённую тренировку\n• +15 XP за каждую минуту активности\n• +60 XP за новый личный рекорд (PR)\n• Победитель через 7 дней получает +${rw} XP в профиль!`
           : `⚔️ 7-Day Duel Rules:\n\n• +100 XP per completed workout\n• +15 XP per active minute\n• +60 XP per new Personal Record (PR)\n• Winner after 7 days earns +${rw} XP!`);
       };
+      // Server sync for friends and incoming/outgoing requests
+      if (isLoggedIn()) {
+        socialApi('/api/friends').then(res => {
+          if (res && res.friends && AP && AP.syncServerFriends) {
+            AP.syncServerFriends(res.friends);
+          }
+          const incBadge = document.getElementById('fr-badge-inc');
+          const outBadge = document.getElementById('fr-badge-out');
+          if (incBadge && res.incoming && res.incoming.length) {
+            incBadge.textContent = String(res.incoming.length);
+            incBadge.style.display = 'inline-block';
+          }
+          if (outBadge && res.outgoing && res.outgoing.length) {
+            outBadge.textContent = String(res.outgoing.length);
+            outBadge.style.display = 'inline-block';
+          }
+
+          const tabsBar = document.getElementById('fr-tabs-bar');
+          const reqPanel = document.getElementById('fr-requests-panel');
+          const friendsContent = document.getElementById('fr-friends-content');
+          if (tabsBar && reqPanel && friendsContent) {
+            tabsBar.querySelectorAll('[data-fr-main-tab]').forEach(btn => {
+              btn.onclick = () => {
+                tabsBar.querySelectorAll('[data-fr-main-tab]').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                const mode = btn.dataset.frMainTab;
+                if (mode === 'friends') {
+                  reqPanel.style.display = 'none';
+                  friendsContent.style.display = '';
+                } else if (mode === 'incoming') {
+                  friendsContent.style.display = 'none';
+                  reqPanel.style.display = 'block';
+                  const inc = res.incoming || [];
+                  if (!inc.length) {
+                    reqPanel.innerHTML = `<div class="empty">${L == 'ru' ? 'Нет входящих заявок' : 'No incoming requests'}</div>`;
+                  } else {
+                    reqPanel.innerHTML = `
+                      <div class="user-grid">
+                        ${inc.map(r => `
+                          <div class="user-card">
+                            <div class="user-card-head" onclick="location.hash='#/user/${esc(r.user.username)}'">
+                              <div class="user-avatar-wrap">
+                                ${r.user.avatar ? `<img src="${esc(r.user.avatar)}" alt="">` : (r.user.displayName || r.user.username).charAt(0).toUpperCase()}
+                              </div>
+                              <div class="user-card-meta">
+                                <div class="user-card-name">${esc(r.user.displayName || r.user.username)}</div>
+                                <div class="user-card-handle">@${esc(r.user.username)}</div>
+                              </div>
+                            </div>
+                            <div class="user-card-actions">
+                              <button type="button" class="btn" data-req-acc="${r.id}">${t('acceptRequest')}</button>
+                              <button type="button" class="btn alt" data-req-dec="${r.id}">${t('declineRequest')}</button>
+                            </div>
+                          </div>
+                        `).join('')}
+                      </div>`;
+                    reqPanel.querySelectorAll('[data-req-acc]').forEach(b => {
+                      b.onclick = async () => {
+                        b.disabled = true;
+                        try {
+                          await socialApi('/api/friends/accept', { method: 'POST', body: { requestId: b.dataset.reqAcc } });
+                          render();
+                        } catch (e) { alert(e.message); b.disabled = false; }
+                      };
+                    });
+                    reqPanel.querySelectorAll('[data-req-dec]').forEach(b => {
+                      b.onclick = async () => {
+                        b.disabled = true;
+                        try {
+                          await socialApi('/api/friends/decline', { method: 'POST', body: { requestId: b.dataset.reqDec } });
+                          render();
+                        } catch (e) { alert(e.message); b.disabled = false; }
+                      };
+                    });
+                  }
+                } else if (mode === 'outgoing') {
+                  friendsContent.style.display = 'none';
+                  reqPanel.style.display = 'block';
+                  const outg = res.outgoing || [];
+                  if (!outg.length) {
+                    reqPanel.innerHTML = `<div class="empty">${L == 'ru' ? 'Нет исходящих заявок' : 'No outgoing requests'}</div>`;
+                  } else {
+                    reqPanel.innerHTML = `
+                      <div class="user-grid">
+                        ${outg.map(r => `
+                          <div class="user-card">
+                            <div class="user-card-head" onclick="location.hash='#/user/${esc(r.user.username)}'">
+                              <div class="user-avatar-wrap">
+                                ${r.user.avatar ? `<img src="${esc(r.user.avatar)}" alt="">` : (r.user.displayName || r.user.username).charAt(0).toUpperCase()}
+                              </div>
+                              <div class="user-card-meta">
+                                <div class="user-card-name">${esc(r.user.displayName || r.user.username)}</div>
+                                <div class="user-card-handle">@${esc(r.user.username)}</div>
+                              </div>
+                            </div>
+                            <div class="user-card-actions">
+                              <button type="button" class="btn alt" data-req-cancel="${r.id}">${t('cancelRequest')}</button>
+                            </div>
+                          </div>
+                        `).join('')}
+                      </div>`;
+                    reqPanel.querySelectorAll('[data-req-cancel]').forEach(b => {
+                      b.onclick = async () => {
+                        b.disabled = true;
+                        try {
+                          await socialApi('/api/friends/cancel', { method: 'POST', body: { requestId: b.dataset.reqCancel } });
+                          render();
+                        } catch (e) { alert(e.message); b.disabled = false; }
+                      };
+                    });
+                  }
+                }
+              };
+            });
+          }
+        }).catch(() => {});
+      }
+
       app.querySelectorAll('[data-del]').forEach(btn => {
-        btn.onclick = () => {
-          if (!AP) return;
+        btn.onclick = async () => {
+          if (!confirm(L == 'ru' ? 'Удалить из друзей?' : 'Remove friend?')) return;
           const id = btn.dataset.del;
-          const next = AP.getFriends(CFG.athlete).filter(f => String(f.id) !== String(id));
-          AP.saveFriends(next);
+          try {
+            await socialApi('/api/friends/remove', { method: 'POST', body: { userId: id } });
+          } catch (e) {}
+          if (AP) {
+            const next = AP.getFriends(CFG.athlete).filter(f => String(f.id) !== String(id));
+            AP.saveFriends(next);
+          }
           vib(25);
           render();
         };
@@ -4710,6 +4967,491 @@
           render();
         };
       };
+    }
+
+    if (name === 'users') {
+      const searchInput = document.getElementById('users-search-input');
+      const grid = document.getElementById('users-grid');
+      const moreWrap = document.getElementById('users-more-wrap');
+      let offset = 0;
+      const limit = 24;
+      let currentQuery = '';
+      let searchDebounce = null;
+
+      async function fetchUsers(append = false) {
+        if (!grid) return;
+        if (!append) {
+          offset = 0;
+          grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--tx-sub);">${L == 'ru' ? 'Поиск…' : 'Searching…'}</div>`;
+        }
+        try {
+          const res = await socialApi(`/api/users?q=${encodeURIComponent(currentQuery)}&limit=${limit}&offset=${offset}`);
+          const users = res.users || [];
+          if (!append) grid.innerHTML = '';
+          if (!users.length && !append) {
+            grid.innerHTML = `<div class="empty" style="grid-column:1/-1;">${t('noUsersFound')}</div>`;
+            if (moreWrap) moreWrap.innerHTML = '';
+            return;
+          }
+          users.forEach(u => {
+            const card = document.createElement('div');
+            card.className = 'user-card';
+            let actionBtn = '';
+            if (u.friendshipStatus === 'friends') {
+              actionBtn = `<span class="user-status-pill friend">${t('inFriends')}</span>`;
+            } else if (u.friendshipStatus === 'outgoing') {
+              actionBtn = `<button type="button" class="btn alt" data-u-cancel="${u.id}">${t('cancelRequest')}</button>`;
+            } else if (u.friendshipStatus === 'incoming') {
+              actionBtn = `<button type="button" class="btn" data-u-acc="${u.id}">${t('acceptRequest')}</button>`;
+            } else {
+              actionBtn = `<button type="button" class="btn alt" data-u-req="${u.id}">+ ${t('sendRequest')}</button>`;
+            }
+            card.innerHTML = `
+              <div class="user-card-head" data-go-user="${esc(u.username)}">
+                <div class="user-avatar-wrap">
+                  ${u.avatar ? `<img src="${esc(u.avatar)}" alt="">` : (u.displayName || u.username).charAt(0).toUpperCase()}
+                </div>
+                <div class="user-card-meta">
+                  <div class="user-card-name">${esc(u.displayName || u.username)}</div>
+                  <div class="user-card-handle">@${esc(u.username)}</div>
+                </div>
+              </div>
+              <div class="user-card-stats">
+                <span>Lv.<b>${u.level || 1}</b></span>
+                <span><b>${(u.points || 0).toLocaleString()}</b> XP</span>
+                <span>🔥 <b>${u.streak || 0}</b> ${t('days')}</span>
+              </div>
+              <div class="user-card-actions">
+                ${actionBtn}
+                <button type="button" class="btn" data-u-msg="${u.id}" title="${t('sendMessage')}">💬</button>
+              </div>`;
+            grid.appendChild(card);
+          });
+
+          grid.querySelectorAll('[data-go-user]').forEach(el => {
+            el.onclick = () => { location.hash = '#/user/' + el.dataset.goUser; };
+          });
+          grid.querySelectorAll('[data-u-req]').forEach(b => {
+            b.onclick = async () => {
+              b.disabled = true;
+              try {
+                await socialApi('/api/friends/request', { method: 'POST', body: { targetUserId: b.dataset.uReq } });
+                b.outerHTML = `<span class="user-status-pill">${t('requestSent')}</span>`;
+              } catch (e) { alert(e.message); b.disabled = false; }
+            };
+          });
+          grid.querySelectorAll('[data-u-cancel]').forEach(b => {
+            b.onclick = async () => {
+              b.disabled = true;
+              try {
+                await socialApi('/api/friends/cancel', { method: 'POST', body: { targetUserId: b.dataset.uCancel } });
+                b.outerHTML = `<span class="user-status-pill">${L == 'ru' ? 'Отменена' : 'Cancelled'}</span>`;
+              } catch (e) { alert(e.message); b.disabled = false; }
+            };
+          });
+          grid.querySelectorAll('[data-u-acc]').forEach(b => {
+            b.onclick = async () => {
+              b.disabled = true;
+              try {
+                await socialApi('/api/friends/accept', { method: 'POST', body: { targetUserId: b.dataset.uAcc } });
+                b.outerHTML = `<span class="user-status-pill friend">${t('inFriends')}</span>`;
+              } catch (e) { alert(e.message); b.disabled = false; }
+            };
+          });
+          grid.querySelectorAll('[data-u-msg]').forEach(b => {
+            b.onclick = async () => {
+              b.disabled = true;
+              try {
+                const openRes = await socialApi('/api/messages/open', { method: 'POST', body: { targetUserId: b.dataset.uMsg } });
+                if (openRes && openRes.conversation) {
+                  location.hash = '#/messages/' + openRes.conversation.id;
+                }
+              } catch (e) { alert(e.message); b.disabled = false; }
+            };
+          });
+
+          if (moreWrap) {
+            if (res.hasMore) {
+              moreWrap.innerHTML = `<button type="button" class="btn alt" id="users-load-more">${t('loadMore')}</button>`;
+              const lmBtn = document.getElementById('users-load-more');
+              if (lmBtn) {
+                lmBtn.onclick = () => {
+                  offset += limit;
+                  fetchUsers(true);
+                };
+              }
+            } else {
+              moreWrap.innerHTML = '';
+            }
+          }
+        } catch (e) {
+          if (!append) grid.innerHTML = `<div class="empty" style="grid-column:1/-1;">${esc(e.message)}</div>`;
+        }
+      }
+
+      if (searchInput) {
+        searchInput.oninput = () => {
+          clearTimeout(searchDebounce);
+          searchDebounce = setTimeout(() => {
+            currentQuery = searchInput.value.trim();
+            fetchUsers(false);
+          }, 300);
+        };
+      }
+      fetchUsers(false);
+    }
+
+    if (name === 'user') {
+      const wrap = document.getElementById('pub-profile-wrap');
+      if (!wrap || !arg) return;
+      socialApi('/api/users/profile?username=' + encodeURIComponent(arg)).then(res => {
+        const u = res.user;
+        const myName = (localStorage.userName || '').toLowerCase();
+        const isMe = (u.username || '').toLowerCase() === myName;
+        let frBtn = '';
+        if (isMe) {
+          frBtn = `<a href="#/profile" class="btn">${t('history')}</a>`;
+        } else if (u.friendshipStatus === 'friends') {
+          frBtn = `<button type="button" class="btn alt" id="pub-fr-remove" style="color:#ef4444;">${t('removeFriend')}</button>`;
+        } else if (u.friendshipStatus === 'outgoing') {
+          frBtn = `<button type="button" class="btn alt" id="pub-fr-cancel">${t('cancelRequest')}</button>`;
+        } else if (u.friendshipStatus === 'incoming') {
+          frBtn = `<button type="button" class="btn" id="pub-fr-accept">${t('acceptRequest')}</button> <button type="button" class="btn alt" id="pub-fr-decline">${t('declineRequest')}</button>`;
+        } else {
+          frBtn = `<button type="button" class="btn" id="pub-fr-add">+ ${t('sendRequest')}</button>`;
+        }
+
+        const prEntries = Object.entries(u.prs || {});
+        let prsHtml = '';
+        if (prEntries.length) {
+          prsHtml = `
+            <div class="pub-prs-card">
+              <div style="font-size:14px;font-weight:700;color:var(--tx);margin-bottom:8px;">🏆 ${t('personalRecords')}</div>
+              <div class="pub-prs-grid">
+                ${prEntries.map(([exId, val]) => {
+                  const ex = exMap[exId];
+                  const exN = ex ? exName(ex) : '#' + exId;
+                  return `<div class="pub-pr-item"><div class="pub-pr-val">${val} ${t('rep')}</div><div class="pub-pr-title">${esc(exN)}</div></div>`;
+                }).join('')}
+              </div>
+            </div>`;
+        } else {
+          prsHtml = `
+            <div class="pub-prs-card" style="text-align:center;padding:20px;color:var(--tx-sub);font-size:12.5px;">
+              🏆 ${t('noPrsYet')}
+            </div>`;
+        }
+
+        wrap.innerHTML = `
+          <div style="margin-bottom:12px;">
+            <a href="#/users" class="btn alt" style="padding:6px 12px;font-size:12px;">← ${t('users')}</a>
+          </div>
+          <div class="pub-profile-header">
+            <div class="pub-profile-av">
+              ${u.avatar ? `<img src="${esc(u.avatar)}" alt="">` : (u.displayName || u.username).charAt(0).toUpperCase()}
+            </div>
+            <div class="pub-profile-name">${esc(u.displayName || u.username)}</div>
+            <div class="pub-profile-handle">@${esc(u.username)}</div>
+            <div class="pub-profile-stats">
+              <div>
+                <div class="pub-stat-val">${u.level || 1}</div>
+                <div class="pub-stat-lbl">${t('lvl')}</div>
+              </div>
+              <div>
+                <div class="pub-stat-val">${(u.points || 0).toLocaleString()}</div>
+                <div class="pub-stat-lbl">XP</div>
+              </div>
+              <div>
+                <div class="pub-stat-val">🔥 ${u.streak || 0}</div>
+                <div class="pub-stat-lbl">${t('days')}</div>
+              </div>
+            </div>
+            <div class="pub-actions">
+              ${frBtn}
+              ${!isMe ? `<button type="button" class="btn" id="pub-msg-btn">💬 ${t('sendMessage')}</button>` : ''}
+              ${!isMe ? `<button type="button" class="btn alt" id="pub-block-btn" style="font-size:11px;">${res.isBlockedByMe ? t('unblockUser') : t('blockUser')}</button>` : ''}
+              ${!isMe ? `<button type="button" class="btn alt" id="pub-report-btn" style="font-size:11px;">⚠️ ${t('reportUser')}</button>` : ''}
+            </div>
+          </div>
+          ${prsHtml}
+        `;
+
+        const addB = document.getElementById('pub-fr-add');
+        if (addB) addB.onclick = async () => {
+          try { await socialApi('/api/friends/request', { method: 'POST', body: { targetUserId: u.id } }); render(); } catch (e) { alert(e.message); }
+        };
+        const cancelB = document.getElementById('pub-fr-cancel');
+        if (cancelB) cancelB.onclick = async () => {
+          try { await socialApi('/api/friends/cancel', { method: 'POST', body: { targetUserId: u.id } }); render(); } catch (e) { alert(e.message); }
+        };
+        const accB = document.getElementById('pub-fr-accept');
+        if (accB) accB.onclick = async () => {
+          try { await socialApi('/api/friends/accept', { method: 'POST', body: { targetUserId: u.id } }); render(); } catch (e) { alert(e.message); }
+        };
+        const decB = document.getElementById('pub-fr-decline');
+        if (decB) decB.onclick = async () => {
+          try { await socialApi('/api/friends/decline', { method: 'POST', body: { targetUserId: u.id } }); render(); } catch (e) { alert(e.message); }
+        };
+        const remB = document.getElementById('pub-fr-remove');
+        if (remB) remB.onclick = async () => {
+          if (!confirm(L == 'ru' ? 'Удалить из друзей?' : 'Remove friend?')) return;
+          try { await socialApi('/api/friends/remove', { method: 'POST', body: { targetUserId: u.id } }); render(); } catch (e) { alert(e.message); }
+        };
+        const msgB = document.getElementById('pub-msg-btn');
+        if (msgB) msgB.onclick = async () => {
+          try {
+            const convRes = await socialApi('/api/messages/open', { method: 'POST', body: { targetUserId: u.id } });
+            if (convRes && convRes.conversation) {
+              location.hash = '#/messages/' + convRes.conversation.id;
+            }
+          } catch (e) { alert(e.message); }
+        };
+        const blkB = document.getElementById('pub-block-btn');
+        if (blkB) blkB.onclick = async () => {
+          try {
+            if (res.isBlockedByMe) {
+              await socialApi('/api/users/unblock', { method: 'POST', body: { targetUserId: u.id } });
+              showAppToast(CFG.brand || 'RizzaFit', L == 'ru' ? 'Пользователь разблокирован' : 'User unblocked');
+            } else {
+              if (!confirm(L == 'ru' ? 'Заблокировать этого пользователя? Он не сможет писать вам и будет удалён из друзей.' : 'Block user?')) return;
+              await socialApi('/api/users/block', { method: 'POST', body: { targetUserId: u.id } });
+              showAppToast(CFG.brand || 'RizzaFit', L == 'ru' ? 'Пользователь заблокирован' : 'User blocked');
+            }
+            render();
+          } catch (e) { alert(e.message); }
+        };
+        const repB = document.getElementById('pub-report-btn');
+        if (repB) repB.onclick = async () => {
+          const reason = prompt(t('reportReasonPrompt'));
+          if (reason && reason.trim()) {
+            try {
+              await socialApi('/api/users/report', { method: 'POST', body: { targetUserId: u.id, reason: reason.trim() } });
+              showAppToast(CFG.brand || 'RizzaFit', L == 'ru' ? 'Жалоба отправлена модераторам' : 'Report sent');
+            } catch (e) { alert(e.message); }
+          }
+        };
+      }).catch(err => {
+        wrap.innerHTML = `<div class="empty">${esc(err.message)}</div>`;
+      });
+    }
+
+    if (name === 'messages') {
+      if (window._chatPollTimer) {
+        clearInterval(window._chatPollTimer);
+        window._chatPollTimer = null;
+      }
+      const convListEl = document.getElementById('conv-list');
+      const chatHeaderEl = document.getElementById('chat-header');
+      const chatMessagesEl = document.getElementById('chat-messages');
+      const chatInputBarEl = document.getElementById('chat-input-bar');
+      const textarea = document.getElementById('chat-textarea');
+      const sendBtn = document.getElementById('chat-send-btn');
+      const activeConvId = arg ? Number(arg) : null;
+
+      async function loadConversations() {
+        if (!convListEl) return;
+        try {
+          const res = await socialApi('/api/messages/conversations');
+          const convs = res.conversations || [];
+          if (!convs.length) {
+            convListEl.innerHTML = `<div style="text-align:center;padding:24px;color:var(--tx-sub);font-size:12px;">${t('noConversations')}</div>`;
+            return;
+          }
+          convListEl.innerHTML = convs.map(c => {
+            const p = c.peer || {};
+            const pName = p.displayName || p.username || 'User';
+            const isActive = activeConvId && activeConvId === c.id;
+            let timeStr = '';
+            if (c.lastMessageAt) {
+              const d = new Date(c.lastMessageAt * 1000);
+              const now = new Date();
+              timeStr = (d.toDateString() === now.toDateString())
+                ? d.toLocaleTimeString(L, { hour: '2-digit', minute: '2-digit' })
+                : d.toLocaleDateString(L, { day: 'numeric', month: 'short' });
+            }
+            return `
+              <div class="conv-item ${isActive ? 'active' : ''}" data-conv-go="${c.id}">
+                <div class="conv-av">
+                  ${p.avatar ? `<img src="${esc(p.avatar)}" alt="">` : pName.charAt(0).toUpperCase()}
+                </div>
+                <div class="conv-body">
+                  <div class="conv-top-line">
+                    <span class="conv-name">${esc(pName)}</span>
+                    <span class="conv-time">${esc(timeStr)}</span>
+                  </div>
+                  <div class="conv-bot-line">
+                    <span class="conv-preview">${esc(c.lastMessagePreview || '')}</span>
+                    ${c.unreadCount > 0 ? `<span class="conv-badge">${c.unreadCount}</span>` : ''}
+                  </div>
+                </div>
+              </div>`;
+          }).join('');
+
+          convListEl.querySelectorAll('[data-conv-go]').forEach(item => {
+            item.onclick = () => { location.hash = '#/messages/' + item.dataset.convGo; };
+          });
+        } catch (e) {}
+      }
+
+      async function loadActiveChat(silent = false) {
+        if (!activeConvId || !chatMessagesEl) return;
+        try {
+          const res = await socialApi('/api/messages/history?conversationId=' + encodeURIComponent(activeConvId));
+          const conv = res.conversation || {};
+          const peer = conv.peer || {};
+          const peerName = peer.displayName || peer.username || 'User';
+          const isBlocked = conv.isBlockedByMe || conv.isBlockedByPeer;
+
+          if (chatHeaderEl && !silent) {
+            chatHeaderEl.innerHTML = `
+              <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+                <a href="#/messages" class="btn alt" style="padding:6px 9px;font-size:12px;line-height:1;">‹</a>
+                <div class="chat-header-user" onclick="location.hash='#/user/${esc(peer.username || '')}'">
+                  <div class="conv-av" style="width:34px;height:34px;font-size:14px;">
+                    ${peer.avatar ? `<img src="${esc(peer.avatar)}" alt="">` : peerName.charAt(0).toUpperCase()}
+                  </div>
+                  <div style="min-width:0;">
+                    <div class="chat-header-name">${esc(peerName)}</div>
+                    <div class="chat-header-handle">@${esc(peer.username || '')}</div>
+                  </div>
+                </div>
+              </div>
+              <div class="chat-header-actions">
+                <button type="button" class="btn alt" id="chat-hide-btn" style="padding:5px 8px;font-size:11px;" title="${t('hideDialogConfirm')}">✕</button>
+              </div>`;
+
+            const hideB = document.getElementById('chat-hide-btn');
+            if (hideB) hideB.onclick = async () => {
+              if (!confirm(t('hideDialogConfirm'))) return;
+              try {
+                await socialApi('/api/messages/conversation/hide', { method: 'POST', body: { conversationId: activeConvId } });
+                location.hash = '#/messages';
+              } catch (e) { alert(e.message); }
+            };
+          }
+
+          if (isBlocked) {
+            if (chatInputBarEl) {
+              chatInputBarEl.outerHTML = `<div class="chat-blocked-notice">${t('chatBlocked')}</div>`;
+            }
+          }
+
+          const msgs = res.messages || [];
+          if (!msgs.length) {
+            chatMessagesEl.innerHTML = `<div style="text-align:center;padding:30px;color:var(--tx-sub);font-size:12.5px;">${t('noMessagesInChat')}</div>`;
+          } else {
+            let lastDay = '';
+            let html = '';
+            msgs.forEach(m => {
+              const d = new Date(m.createdAt * 1000);
+              const now = new Date();
+              let dayStr = '';
+              if (d.toDateString() === now.toDateString()) {
+                dayStr = t('today');
+              } else {
+                dayStr = d.toLocaleDateString(L, { day: 'numeric', month: 'long' });
+              }
+              if (dayStr !== lastDay) {
+                html += `<div class="chat-date-sep"><span>${esc(dayStr)}</span></div>`;
+                lastDay = dayStr;
+              }
+              const isMine = m.senderId === conv.myUid;
+              const timeFormatted = d.toLocaleTimeString(L, { hour: '2-digit', minute: '2-digit' });
+              let tick = '';
+              if (isMine) {
+                tick = m.readAt ? '<span class="msg-status-tick" title="Read">✓✓</span>' : '<span class="msg-status-tick" title="Delivered">✓</span>';
+              }
+              const isDel = !!m.isDeleted;
+              html += `
+                <div class="msg-row ${isMine ? 'mine' : 'peer'}" id="msg-${m.id}">
+                  <div class="msg-bubble ${isMine ? 'mine' : 'peer'} ${isDel ? 'deleted' : ''}">
+                    ${isDel ? (L == 'ru' ? 'Сообщение удалено' : 'Message deleted') : esc(m.text)}
+                    <div class="msg-meta">
+                      <span>${timeFormatted}</span>
+                      ${tick}
+                      ${isMine && !isDel ? `<button type="button" class="msg-del-btn" data-del-msg="${m.id}" title="${t('deleteMessageConfirm')}">🗑️</button>` : ''}
+                    </div>
+                  </div>
+                </div>`;
+            });
+            chatMessagesEl.innerHTML = html;
+
+            chatMessagesEl.querySelectorAll('[data-del-msg]').forEach(b => {
+              b.onclick = async () => {
+                if (!confirm(t('deleteMessageConfirm'))) return;
+                try {
+                  await socialApi('/api/messages/delete', { method: 'POST', body: { messageId: Number(b.dataset.delMsg) } });
+                  loadActiveChat(true);
+                } catch (e) { alert(e.message); }
+              };
+            });
+
+            if (!silent) {
+              chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+            }
+          }
+
+          socialApi('/api/messages/read', { method: 'POST', body: { conversationId: activeConvId } }).catch(() => {});
+        } catch (e) {
+          if (!silent) chatMessagesEl.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+        }
+      }
+
+      async function sendMessage() {
+        if (!textarea || !activeConvId) return;
+        const text = textarea.value.trim();
+        if (!text) return;
+        if (text.length > 2000) {
+          alert(L == 'ru' ? 'Сообщение слишком длинное (макс 2000 символов)' : 'Message too long (max 2000 chars)');
+          return;
+        }
+        textarea.value = '';
+        const clientMsgId = 'c_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+        try {
+          await socialApi('/api/messages/send', {
+            method: 'POST',
+            body: {
+              conversationId: activeConvId,
+              text,
+              clientMsgId
+            }
+          });
+          loadActiveChat(false);
+          loadConversations();
+        } catch (e) {
+          alert(e.message);
+        }
+      }
+
+      if (sendBtn) sendBtn.onclick = sendMessage;
+      if (textarea) {
+        textarea.onkeydown = e => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+          }
+        };
+      }
+
+      loadConversations();
+      if (activeConvId) {
+        loadActiveChat(false);
+        window._chatPollTimer = setInterval(() => {
+          if (document.visibilityState === 'visible' && (location.hash || '').startsWith('#/messages/' + activeConvId)) {
+            loadActiveChat(true);
+          }
+        }, 3500);
+      }
+    }
+
+    if (name === 'authGate') {
+      const loginB = document.getElementById('social-gate-login');
+      if (loginB) loginB.onclick = () => openCloudAuthModal('login');
+      const regB = document.getElementById('social-gate-reg');
+      if (regB) regB.onclick = () => openCloudAuthModal('register');
+      app.querySelectorAll('[data-soc-provider]').forEach(btn => {
+        btn.onclick = () => handleSocialAuth(btn.dataset.socProvider);
+      });
     }
   }
 
@@ -5295,7 +6037,18 @@
   function render() {
     const [, name = 'home', a] = (location.hash || '#/').slice(1).split('/');
     const key = routes[name] ? name : 'home'; arg = a;
-    document.querySelectorAll('#nav a').forEach(x => { x.querySelector('b').textContent = t(x.dataset.i); x.classList.toggle('on', x.dataset.k == key || ((key == 'profile' || key == 'friends') && x.dataset.k == 'history') || ((key == 'workout' || key == 'builder' || key == 'program' || key == 'programs') && x.dataset.k == 'workouts') || (key == 'exercise' && x.dataset.k == 'exercises')); });
+    document.querySelectorAll('#nav a').forEach(x => {
+      const b = x.querySelector('b');
+      if (b && x.dataset.i) b.textContent = t(x.dataset.i);
+      x.classList.toggle('on',
+        x.dataset.k == key ||
+        (key == 'profile' && x.dataset.k == 'history') ||
+        ((key == 'users' || key == 'user' || key == 'friends') && x.dataset.k == 'users') ||
+        (key == 'messages' && x.dataset.k == 'messages') ||
+        ((key == 'workout' || key == 'builder' || key == 'program' || key == 'programs') && x.dataset.k == 'workouts') ||
+        (key == 'exercise' && x.dataset.k == 'exercises')
+      );
+    });
     const langBtn = document.getElementById('lang');
     if (langBtn) {
       const codeEl = langBtn.querySelector('.lang-code');
@@ -5372,6 +6125,43 @@
     }
   }
   setInterval(checkDailyReminder, 30000);
+
+  let lastUnreadCheck = 0;
+  let lastNotifiedMsgId = 0;
+  try { lastNotifiedMsgId = Number(localStorage.getItem('last_notified_msg_id') || 0); } catch (e) {}
+
+  async function checkUnreadMessages() {
+    if (!isLoggedIn() || document.visibilityState !== 'visible') return;
+    const now = Date.now();
+    if (now - lastUnreadCheck < 6000) return;
+    lastUnreadCheck = now;
+    try {
+      const data = await socialApi('/api/messages/unread-count');
+      const badge = document.getElementById('nav-msg-badge');
+      if (badge) {
+        if (data.unreadCount > 0) {
+          badge.textContent = data.unreadCount > 99 ? '99+' : String(data.unreadCount);
+          badge.classList.remove('hidden');
+        } else {
+          badge.classList.add('hidden');
+        }
+      }
+      if (data.latestMessage && data.latestMessage.id > lastNotifiedMsgId) {
+        lastNotifiedMsgId = data.latestMessage.id;
+        try { localStorage.setItem('last_notified_msg_id', String(data.latestMessage.id)); } catch (e) {}
+        const isCurrentChat = (location.hash || '').startsWith('#/messages/' + data.latestMessage.conversationId);
+        if (!isCurrentChat) {
+          showAppToast(
+            data.latestMessage.senderName || 'RizzaFit',
+            data.latestMessage.previewText || (L == 'ru' ? 'Новое сообщение' : 'New message'),
+            '#/messages/' + data.latestMessage.conversationId
+          );
+        }
+      }
+    } catch (e) {}
+  }
+  setInterval(checkUnreadMessages, 12000);
+  setTimeout(checkUnreadMessages, 2000);
 
   window.addEventListener('hashchange', () => { checkPendingPayment(); render(); });
   checkPendingPayment();
