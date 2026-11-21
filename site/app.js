@@ -2014,8 +2014,11 @@
           localStorage.userToken = j.token;
           saveUserMeta(j.user);
           if (window.RizzaAnalytics) {
-            if (isReg) window.RizzaAnalytics.trackSignUp('credentials');
-            window.RizzaAnalytics.trackLogin('credentials');
+            if (isReg) {
+              window.RizzaAnalytics.trackSignUp('credentials');
+            } else {
+              window.RizzaAnalytics.trackLogin('credentials');
+            }
           }
           if (j.state && Object.keys(j.state).length) applyServerState(j.state, j.updatedAt);
           else if (Object.keys(collectLocalState()).length) await pushCloudSync();
@@ -6266,6 +6269,18 @@
 
   // ---------- router ----------
   let arg = null;
+  const langBtn = document.getElementById('lang');
+  if (langBtn) {
+    langBtn.onclick = () => {
+      vib(15);
+      L = L == 'ru' ? 'en' : 'ru';
+      localStorage.lang = L;
+      if (window.RizzaAnalytics) {
+        window.RizzaAnalytics.trackCta('toggle_language', 'settings');
+      }
+      render();
+    };
+  }
   function render() {
     const [, name = 'home', a] = (location.hash || '#/').slice(1).split('/');
     const key = routes[name] ? name : 'home'; arg = a;
@@ -6282,7 +6297,6 @@
         (key == 'exercise' && x.dataset.k == 'exercises')
       );
     });
-    const langBtn = document.getElementById('lang');
     if (langBtn) {
       const codeEl = langBtn.querySelector('.lang-code');
       if (codeEl) codeEl.textContent = L.toUpperCase();
@@ -6304,15 +6318,6 @@
     }
     if (!['workouts', 'exercises'].includes(key)) window.scrollTo(0, 0);
   }
-  document.getElementById('lang').onclick = () => {
-    vib(15);
-    L = L == 'ru' ? 'en' : 'ru';
-    localStorage.lang = L;
-    if (window.RizzaAnalytics) {
-      window.RizzaAnalytics.trackCta('toggle_language', 'settings');
-    }
-    render();
-  };
   document.querySelectorAll('#nav a').forEach(a => a.addEventListener('click', () => vib(12)));
   
   document.addEventListener('click', e => {
