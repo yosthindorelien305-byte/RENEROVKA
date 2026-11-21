@@ -1567,6 +1567,9 @@
       }
       localStorage.userToken = j.token;
       saveUserMeta(j.user);
+      if (window.RizzaAnalytics) {
+        window.RizzaAnalytics.trackLogin(payload.provider || 'social');
+      }
       if (j.state && Object.keys(j.state).length) applyServerState(j.state, j.updatedAt);
       else if (Object.keys(collectLocalState()).length) await pushCloudSync();
       vib(35);
@@ -1663,6 +1666,12 @@
       try {
         window.open(data.url, '_blank');
       } catch (err) {}
+      const tgOpenLink = bd.querySelector('#tg-open-link');
+      if (tgOpenLink) {
+        tgOpenLink.addEventListener('click', () => {
+          if (window.RizzaAnalytics) window.RizzaAnalytics.trackCta('open_telegram_bot', 'auth');
+        });
+      }
 
       // Start polling
       let attempts = 0;
@@ -1686,6 +1695,9 @@
             cleanup();
             localStorage.userToken = pollData.sessionToken;
             saveUserMeta(pollData.user);
+            if (window.RizzaAnalytics) {
+              window.RizzaAnalytics.trackLogin('telegram');
+            }
             if (pollData.state && Object.keys(pollData.state).length) applyServerState(pollData.state, pollData.updatedAt);
             else if (Object.keys(collectLocalState()).length) await pushCloudSync();
             vib(35);
@@ -1856,6 +1868,9 @@
     }
     vib(20);
     let mode = (typeof initialMode === 'string' && ['login', 'register', 'reset'].includes(initialMode)) ? initialMode : 'login';
+    if (window.RizzaAnalytics) {
+      window.RizzaAnalytics.trackCta('open_auth_modal', mode);
+    }
     const bd = document.createElement('div');
     bd.className = 'ap-modal-backdrop';
     const drawAuth = () => {
@@ -1998,6 +2013,10 @@
           if (!r.ok) { errEl.textContent = j.error || 'Error'; return; }
           localStorage.userToken = j.token;
           saveUserMeta(j.user);
+          if (window.RizzaAnalytics) {
+            if (isReg) window.RizzaAnalytics.trackSignUp('credentials');
+            window.RizzaAnalytics.trackLogin('credentials');
+          }
           if (j.state && Object.keys(j.state).length) applyServerState(j.state, j.updatedAt);
           else if (Object.keys(collectLocalState()).length) await pushCloudSync();
           vib(35);
@@ -5671,6 +5690,9 @@
       openPaywallModal();
       return;
     }
+    if (window.RizzaAnalytics) {
+      window.RizzaAnalytics.trackWorkoutStart(w.id, woName(w));
+    }
     unlockAudio();
     requestWakeLock();
     const getRestPreset = () => +(localStorage.restPreset || 0);
@@ -5718,6 +5740,9 @@
         speak(L == 'ru' ? 'Тренировка окончена! Отличная работа!' : 'Workout complete! Great job!');
         const totalSec = Math.round((Date.now() - start) / 1000);
         const finishTs = Date.now();
+        if (window.RizzaAnalytics) {
+          window.RizzaAnalytics.trackWorkoutComplete(w.id, totalSec);
+        }
         const totalSetsPlanned = w.s.reduce((acc, st) => acc + (st.length - 1) * st[0], 0);
         const exDone = sessionEx || totalSetsPlanned;
         const h = hist(); h.push({ id: w.id, t: finishTs, s: totalSec, reps: sessionReps, ex: exDone, vol: sessionVolume }); localStorage.hist = JSON.stringify(h);
@@ -6273,9 +6298,21 @@
     void app.offsetWidth;
     app.classList.add('fx-enter');
     after(key);
+    if (window.RizzaAnalytics) {
+      const pageTitle = 'RizzaFit · ' + (t(key) || key);
+      window.RizzaAnalytics.trackPageView(location.pathname + (location.hash || '#/'), pageTitle);
+    }
     if (!['workouts', 'exercises'].includes(key)) window.scrollTo(0, 0);
   }
-  document.getElementById('lang').onclick = () => { vib(15); L = L == 'ru' ? 'en' : 'ru'; localStorage.lang = L; render(); };
+  document.getElementById('lang').onclick = () => {
+    vib(15);
+    L = L == 'ru' ? 'en' : 'ru';
+    localStorage.lang = L;
+    if (window.RizzaAnalytics) {
+      window.RizzaAnalytics.trackCta('toggle_language', 'settings');
+    }
+    render();
+  };
   document.querySelectorAll('#nav a').forEach(a => a.addEventListener('click', () => vib(12)));
   
   document.addEventListener('click', e => {
