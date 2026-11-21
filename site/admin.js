@@ -137,16 +137,20 @@
       ['workouts', '🏋️ Тренировки'],
       ['exercises', '🤸 Упражнения & Видео'],
       ['users', '👥 Пользователи'],
+      ['reports', '🚩 Жалобы'],
       ['telegram', '✈️ Telegram бот'],
       ['payments', '💳 ЮKassa & СБП'],
       ['ai', '🤖 AI-тренер'],
       ['settings', '⚙️ Настройки']
     ].map(([k, n]) => `<button data-t="${k}" class="${tab == k ? 'on' : ''}">${n}</button>`).join('')}</div><div id="tabc"></div></div>`;
 
-    $('#lo').onclick = () => { token = ''; sessionStorage.removeItem('atok'); showLogin(); };
+    $('#lo').onclick = () => {
+      if (token) fetch('/api/admin/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + token } }).catch(() => {});
+      token = ''; sessionStorage.removeItem('atok'); showLogin();
+    };
     $$('.tabs button').forEach(b => b.onclick = () => { tab = b.dataset.t; sub = null; shell(); });
 
-    const tabs = { athlete: tabAthlete, ui: tabUI, programs: tabPrograms, workouts: tabWorkouts, exercises: tabExercises, users: tabUsers, telegram: tabTelegram, payments: tabPayments, ai: tabAI, settings: tabSettings };
+    const tabs = { athlete: tabAthlete, ui: tabUI, programs: tabPrograms, workouts: tabWorkouts, exercises: tabExercises, users: tabUsers, reports: tabReports, telegram: tabTelegram, payments: tabPayments, ai: tabAI, settings: tabSettings };
     if (tabs[tab]) tabs[tab]($('#tabc'));
   }
 
@@ -1286,6 +1290,115 @@
 
     } catch (e) {
       $('#tg-form').innerHTML = `<div style="color:#f87171">Ошибка загрузки: ${esc(e.message)}</div>`;
+    }
+  }
+
+  // ---------- tab: reports ----------
+  let repStatusFilter = 'all';
+  let repSelectedId = null;
+  async function tabReports(el) {
+    el.innerHTML = `<div class="box"><h2 style="margin-top:0">🚩 Жалобы пользователей</h2>
+      <div id="rep-filters" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;"></div>
+      <div id="rep-list"><div style="color:var(--mut)">Загрузка жалоб…</div></div>
+    </div>`;
+
+    const statusMeta = {
+      new: { label: 'Новая', bg: 'rgba(239,68,68,0.18)', color: '#f87171' },
+      reviewed: { label: 'Рассмотрена', bg: 'rgba(245,158,11,0.18)', color: '#fbbf24' },
+      closed: { label: 'Закрыта', bg: 'rgba(34,197,94,0.18)', color: '#4ade80' }
+    };
+
+    const fmtDate = ts => ts ? new Date(ts * 1000).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+
+    try {
+      const data = await api('admin/reports?status=' + encodeURIComponent(repStatusFilter));
+      const counts = data.counts || { all: 0, new: 0, reviewed: 0, closed: 0 };
+      const reports = data.reports || [];
+
+      const fWrap = $('#rep-filters');
+      fWrap.innerHTML = [
+        ['all', `Все (${counts.all || 0})`],
+        ['new', `Новые (${counts.new || 0})`],
+        ['reviewed', `Рассмотренные (${counts.reviewed || 0})`],
+        ['closed', `Закрытые (${counts.closed || 0})`]
+      ].map(([k, lbl]) => `<button type="button" class="btn ${repStatusFilter === k ? '' : 'alt'}" data-rep-filter="${k}" style="padding:7px 12px;font-size:12.5px;animation:none">${lbl}</button>`).join('');
+
+      $$('[data-rep-filter]', fWrap).forEach(b => {
+        b.onclick = () => {
+          repStatusFilter = b.dataset.repFilter;
+          repSelectedId = null;
+          tabReports(el);
+        };
+      });
+
+      const listEl = $('#rep-list');
+      if (!reports.length) {
+        listEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--mut);font-size:13px;">Жалоб в этой категории нет</div>`;
+        return;
+      }
+
+      listEl.innerHTML = reports.map(r => {
+        const sm = statusMeta[r.status] || statusMeta.new;
+        const isOpen = repSelectedId === r.id;
+        return `
+          <div class="rep-card" data-rep-id="${r.id}" style="border:1px solid var(--bdr, rgba(255,255,255,0.1));border-radius:12px;padding:12px 14px;margin-bottom:10px;background:rgba(255,255,255,0.02);">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <span style="padding:3px 8px;border-radius:8px;font-size:11.5px;font-weight:700;background:${sm.bg};color:${sm.color};">${sm.label}</span>
+                <b style="font-size:13px;">#${r.id}</b>
+                <span style="font-size:12px;color:var(--mut);">${fmtDate(r.createdAt)}</span>
+              </div>
+              <button type="button" class="btn alt" data-rep-toggle="${r.id}" style="padding:5px 10px;font-size:12px;">${isOpen ? 'Скрыть' : 'Подробнее'}</button>
+            </div>
+            <div style="margin-top:8px;font-size:13px;display:flex;gap:16px;flex-wrap:wrap;">
+              <span>Автор: <b>${esc(r.reporter.displayName)}</b> <span style="color:var(--mut)">@${esc(r.reporter.username)}</span></span>
+              <span>На кого: <b>${esc(r.target.displayName)}</b> <span style="color:var(--mut)">@${esc(r.target.username)}</span>${r.target.isBlocked ? ' <span style="color:#f87171;font-size:11px;">(заблокирован)</span>' : ''}</span>
+            </div>
+            <div style="margin-top:6px;font-size:13px;color:var(--tx);word-break:break-word;"><b>Причина:</b> ${esc(r.reason)}</div>
+            ${isOpen ? `
+              <div style="margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.08);font-size:12.5px;">
+                ${r.messageId ? `<div style="margin-bottom:8px;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,0.04);"><b>Сообщение #${r.messageId}:</b> ${esc(r.messageText || '(удалено или недоступно)')}</div>` : ''}
+                ${r.reviewedAt ? `<div style="margin-bottom:8px;color:var(--mut);">Обработано: ${fmtDate(r.reviewedAt)}</div>` : ''}
+                <label class="f" style="margin-bottom:10px;">Заметка администратора
+                  <input type="text" data-rep-note="${r.id}" value="${esc(r.adminNote || '')}" placeholder="Комментарий модератора (необязательно)">
+                </label>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                  <button type="button" class="btn" data-rep-set="${r.id}" data-rep-st="reviewed" style="padding:7px 12px;font-size:12px;animation:none">✓ Пометить рассмотренной</button>
+                  <button type="button" class="btn alt" data-rep-set="${r.id}" data-rep-st="closed" style="padding:7px 12px;font-size:12px;">✕ Закрыть жалобу</button>
+                  ${r.status !== 'new' ? `<button type="button" class="btn alt" data-rep-set="${r.id}" data-rep-st="new" style="padding:7px 12px;font-size:12px;">↺ Вернуть в новые</button>` : ''}
+                </div>
+              </div>
+            ` : ''}
+          </div>`;
+      }).join('');
+
+      $$('[data-rep-toggle]', listEl).forEach(b => {
+        b.onclick = () => {
+          const rid = Number(b.dataset.repToggle);
+          repSelectedId = (repSelectedId === rid) ? null : rid;
+          tabReports(el);
+        };
+      });
+
+      $$('[data-rep-set]', listEl).forEach(b => {
+        b.onclick = async () => {
+          const rid = Number(b.dataset.repSet);
+          const st = b.dataset.repSt;
+          const noteInp = listEl.querySelector(`[data-rep-note="${rid}"]`);
+          const note = noteInp ? noteInp.value.trim() : '';
+          b.disabled = true;
+          try {
+            await post('admin/reports/status', { reportId: rid, status: st, note });
+            toast('Статус жалобы обновлён ✓');
+            tabReports(el);
+          } catch (e) {
+            toast(e.message, 1);
+            b.disabled = false;
+          }
+        };
+      });
+    } catch (e) {
+      $('#rep-list').innerHTML = `<div style="color:#f87171">Ошибка загрузки: ${esc(e.message)}</div>`;
     }
   }
 
