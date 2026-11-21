@@ -6560,6 +6560,7 @@ main#app.fx-enter {
 
 .chat-textarea {
   flex: 1;
+  min-width: 0;
   background: var(--card-inset, #131720);
   border: 1px solid var(--line, rgba(255, 255, 255, 0.08));
   border-radius: 12px;
@@ -6571,6 +6572,8 @@ main#app.fx-enter {
   min-height: 38px;
   max-height: 120px;
   outline: none;
+  overflow-x: hidden;
+  word-break: break-word;
 }
 
 .chat-send-btn {
@@ -6606,10 +6609,12 @@ main#app.fx-enter {
   border-top: 1px solid rgba(239, 68, 68, 0.2);
 }
 
-@media (max-width: 640px) {
+/* Responsive adjustments for Mobile (< 768px) */
+@media (max-width: 767px) {
   .messages-layout {
     height: calc(100vh - 110px);
-    border-radius: 12px;
+    border-radius: 14px;
+    max-width: 100%;
   }
   .messages-layout.chat-open .conv-sidebar {
     display: none;
@@ -6620,6 +6625,92 @@ main#app.fx-enter {
   .conv-sidebar {
     width: 100%;
     border-right: none;
+  }
+  .chat-header .chat-back-btn {
+    display: inline-flex !important;
+  }
+}
+
+/* Responsive Desktop Messenger (>= 768px: iPad, Laptop, 1366x768, 1920x1080) */
+@media (min-width: 768px) {
+  body.mob-app.view-messages,
+  body.mob-app:has(.messages-layout) {
+    max-width: 1040px;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.07), 0 32px 90px rgba(0, 0, 0, 0.85);
+    transition: max-width 0.2s ease;
+  }
+
+  body.mob-app.view-messages .top,
+  body.mob-app:has(.messages-layout) .top {
+    max-width: 1040px;
+  }
+
+  body.mob-app.view-messages #nav,
+  body.mob-app:has(.messages-layout) #nav {
+    max-width: 500px;
+  }
+
+  .messages-wrap {
+    padding: 14px 20px 84px !important;
+    display: flex;
+    justify-content: center;
+    width: 100%;
+  }
+
+  .messages-layout {
+    max-width: 1000px;
+    height: calc(100vh - 150px);
+    min-height: 520px;
+    max-height: 860px;
+    border-radius: 20px;
+  }
+
+  .conv-sidebar {
+    width: 320px;
+    min-width: 290px;
+    max-width: 340px;
+    flex-shrink: 0;
+  }
+
+  .chat-pane {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .chat-header {
+    padding: 12px 18px;
+    min-height: 60px;
+  }
+
+  .chat-header .chat-back-btn {
+    display: none !important;
+  }
+
+  .chat-messages {
+    padding: 20px 22px;
+  }
+
+  .msg-bubble {
+    max-width: 70%;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+
+  .chat-input-bar {
+    padding: 12px 18px;
+    gap: 12px;
+  }
+
+  .chat-textarea {
+    font-size: 14px;
+    min-height: 42px;
+    max-height: 140px;
+    padding: 10px 14px;
+  }
+
+  .chat-send-btn {
+    width: 42px;
+    height: 42px;
   }
 }
 

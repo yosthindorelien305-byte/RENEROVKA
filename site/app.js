@@ -3668,7 +3668,7 @@
     messages(convId) {
       if (!isLoggedIn()) return renderAuthGateStub(t('authRequired'), t('authRequiredDesc'));
       return `
-        <div class="wrap" style="padding:10px 10px 80px;">
+        <div class="wrap messages-wrap" style="padding:10px 10px 80px;">
           <div class="messages-layout ${convId ? 'chat-open' : ''}" id="messages-layout">
             <div class="conv-sidebar">
               <div class="conv-sidebar-header">
@@ -3683,7 +3683,7 @@
               ${convId ? `
                 <div class="chat-header" id="chat-header">
                   <div style="display:flex;align-items:center;gap:10px;">
-                    <a href="#/messages" class="btn alt" style="padding:5px 8px;font-size:12px;line-height:1;">‹</a>
+                    <a href="#/messages" class="btn alt chat-back-btn" id="chat-back-btn" style="padding:5px 8px;font-size:12px;line-height:1;">‹</a>
                     <span style="font-size:13px;color:var(--tx-sub);">${L == 'ru' ? 'Загрузка…' : 'Loading…'}</span>
                   </div>
                 </div>
@@ -5486,7 +5486,7 @@
           if (chatHeaderEl && !silent) {
             chatHeaderEl.innerHTML = `
               <div style="display:flex;align-items:center;gap:10px;min-width:0;">
-                <a href="#/messages" class="btn alt" style="padding:6px 9px;font-size:12px;line-height:1;">‹</a>
+                <a href="#/messages" class="btn alt chat-back-btn" id="chat-back-btn" style="padding:6px 9px;font-size:12px;line-height:1;">‹</a>
                 <div class="chat-header-user" id="chat-header-user-link" style="cursor:pointer;">
                   <div class="conv-av" style="width:34px;height:34px;font-size:14px;">
                     ${peer.avatar ? `<img src="${esc(peer.avatar)}" alt="">` : peerName.charAt(0).toUpperCase()}
@@ -6244,6 +6244,7 @@
   function render() {
     const [, name = 'home', a] = (location.hash || '#/').slice(1).split('/');
     const key = routes[name] ? name : 'home'; arg = a;
+    document.body.classList.toggle('view-messages', key === 'messages');
     document.querySelectorAll('#nav a').forEach(x => {
       const b = x.querySelector('b');
       if (b && x.dataset.i) b.textContent = t(x.dataset.i);
