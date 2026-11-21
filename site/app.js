@@ -1053,9 +1053,12 @@
     localStorage.userPlan = u.plan || 'free';
     localStorage.userPlanExp = String(u.planExpiresAt || 0);
     localStorage.userIsPro = u.isPro ? '1' : '0';
+    if (typeof u.hasPassword === 'boolean') {
+      localStorage.userHasPassword = u.hasPassword ? '1' : '0';
+    }
   }
   function clearUserMeta() {
-    ['userToken', 'userName', 'userEmail', 'userAvatar', 'userPlan', 'userPlanExp', 'userIsPro', 'cloudSyncTs'].forEach(k => localStorage.removeItem(k));
+    ['userToken', 'userName', 'userEmail', 'userAvatar', 'userPlan', 'userPlanExp', 'userIsPro', 'userHasPassword', 'cloudSyncTs', 'athleteProfile', 'athleteFriends', 'last_notified_msg_id'].forEach(k => localStorage.removeItem(k));
   }
   let cloudSyncTimer = null;
   async function pushCloudSync() {
@@ -1211,6 +1214,10 @@
 
   async function performCloudLogout() {
     vib(20);
+    if (window._chatPollTimer) {
+      clearInterval(window._chatPollTimer);
+      window._chatPollTimer = null;
+    }
     const tok = localStorage.userToken;
     if (tok && isLocalToken(tok)) await pushCloudSync();
     else if (tok) fetch('api/user/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + tok } }).catch(() => {});
@@ -1471,13 +1478,17 @@
 
   function openCloudAcctModal(cb) {
     vib(20);
+    const hasPw = localStorage.userHasPassword !== '0';
     const bd = document.createElement('div');
     bd.className = 'ap-modal-backdrop';
     bd.innerHTML = `<div class="ap-modal">
       <h3>${uiSvg('users', 17)} ${L == 'ru' ? 'Настройки аккаунта' : 'Account Settings'}</h3>
+      ${!hasPw ? `<div style="font-size:12px;color:var(--mut);margin-bottom:10px;line-height:1.4;background:rgba(255,255,255,0.04);padding:8px 10px;border-radius:8px;">
+        ${L == 'ru' ? 'У вашего аккаунта (Telegram/OAuth) ещё не задан пароль. Задайте пароль, чтобы также входить по логину/email и паролю.' : 'Your Telegram/OAuth account has no password yet. Set one to also sign in with username/email and password.'}
+      </div>` : ''}
       <label>Email<input id="ac-email" type="email" value="${esc(localStorage.userEmail || '')}" placeholder="alex@mail.ru"></label>
-      <label>${L == 'ru' ? 'Текущий пароль (если меняете)' : 'Current password (if changing)'}<input id="ac-old" type="password" autocomplete="current-password"></label>
-      <label>${L == 'ru' ? 'Новый пароль (мин. 6 символов)' : 'New password (min 6 chars)'}<input id="ac-new" type="password" autocomplete="new-password"></label>
+      ${hasPw ? `<label>${L == 'ru' ? 'Текущий пароль (если меняете)' : 'Current password (if changing)'}<input id="ac-old" type="password" autocomplete="current-password"></label>` : ''}
+      <label>${hasPw ? (L == 'ru' ? 'Новый пароль (мин. 6 символов)' : 'New password (min 6 chars)') : (L == 'ru' ? 'Установить пароль (мин. 6 символов)' : 'Set password (min 6 chars)')}<input id="ac-new" type="password" autocomplete="new-password"></label>
       <div id="ac-err" style="font-size:12px;color:#f87171;min-height:16px;margin-top:4px;"></div>
       <div class="ap-modal-actions">
         <button type="button" class="btn alt" id="ac-cancel">${L == 'ru' ? 'Отмена' : 'Cancel'}</button>
@@ -1495,10 +1506,15 @@
         errEl.textContent = L == 'ru' ? 'Доступно на серверной версии сайта' : 'Available on server deployment';
         return;
       }
-      const payload = { email: bd.querySelector('#ac-email').value.trim().toLowerCase() };
+      const emailVal = bd.querySelector('#ac-email').value.trim().toLowerCase();
       const npw = bd.querySelector('#ac-new').value;
+      const payload = {};
+      if (emailVal || !npw) payload.email = emailVal;
       if (npw) {
-        payload.oldPassword = bd.querySelector('#ac-old').value;
+        if (hasPw) {
+          const oldEl = bd.querySelector('#ac-old');
+          payload.oldPassword = oldEl ? oldEl.value : '';
+        }
         payload.newPassword = npw;
       }
       try {
@@ -1987,6 +2003,8 @@
           vib(35);
           bd.remove();
           render();
+          lastUnreadCheck = 0;
+          checkUnreadMessages();
           showAppToast(CFG.brand || 'RizzaFit', L == 'ru' ? 'Синхронизация подключена' : 'Cloud sync connected');
           if (typeof cb === 'function') cb(j.user);
         } catch (e) {
@@ -2061,9 +2079,10 @@
                 <input id="ap-m-name" value="${esc(base.name || '')}" class="ap-set-input">
               </label>
               <label class="ap-set-field-label" style="margin-top:8px;">@username
-                <input id="ap-m-handle" value="${esc(base.handle || '')}" class="ap-set-input">
+                <input id="ap-m-handle" value="${esc(cUser ? '@' + cUser : (base.handle || ''))}" class="ap-set-input" autocomplete="off">
               </label>
-              <div class="theme-row" style="margin-top:12px;">
+              <div id="ap-set-err" style="font-size:12px;color:#f87171;min-height:16px;margin-top:6px;"></div>
+              <div class="theme-row" style="margin-top:8px;">
                 <span style="font-size:12px;color:var(--mut);font-weight:700;">${L == 'ru' ? 'Цвет акцента' : 'Accent theme'}</span>
                 <div class="theme-swatches">${renderThemeSwatchesHtml()}</div>
               </div>
@@ -2110,7 +2129,7 @@
               <div class="ap-set-item-btn" id="set-cloud-acct-btn">
                 <span style="display:flex;align-items:center;gap:10px;">
                   <span class="ap-set-icon-box">${uiSvg('lock', 15)}</span>
-                  <span>${L == 'ru' ? 'Сменить пароль или Email' : 'Change Password / Email'}</span>
+                  <span>${localStorage.userHasPassword === '0' ? (L == 'ru' ? 'Задать пароль или Email' : 'Set Password / Email') : (L == 'ru' ? 'Сменить пароль или Email' : 'Change Password / Email')}</span>
                 </span>
                 <span class="ap-set-arrow">›</span>
               </div>
@@ -2125,6 +2144,13 @@
               </div>
             `}
           </div>
+
+          <!-- Секция 3.5: Заблокированные пользователи -->
+          ${cTok && !isLocalToken(cTok) ? `
+          <div class="ap-set-group-title">${L == 'ru' ? 'Заблокированные пользователи' : 'Blocked Users'}</div>
+          <div class="ap-set-card" id="set-blocked-wrap">
+            <div style="padding:12px;font-size:12px;color:var(--mut);">${L == 'ru' ? 'Загрузка списка…' : 'Loading…'}</div>
+          </div>` : ''}
 
           <!-- Секция 4: Данные и память -->
           <div class="ap-set-group-title">${L == 'ru' ? 'Данные и память' : 'Data & Storage'}</div>
@@ -2224,26 +2250,160 @@
       };
     });
 
-    bd.querySelector('#ap-m-save').onclick = () => {
+    bd.querySelector('#ap-m-save').onclick = async () => {
+      const saveBtn = bd.querySelector('#ap-m-save');
+      const errEl = bd.querySelector('#ap-set-err');
+      if (errEl) errEl.textContent = '';
+      const rawName = bd.querySelector('#ap-m-name').value.trim();
+      const rawHandle = bd.querySelector('#ap-m-handle').value;
+      const isServerUser = !!(localStorage.userToken && !isLocalToken(localStorage.userToken));
+
+      let finalHandle = rawHandle.trim() || base.handle;
+      let usernameChanged = false;
+
+      if (isServerUser) {
+        const curU = (localStorage.userName || '').toLowerCase();
+        const candRaw = rawHandle.startsWith('@') ? rawHandle.slice(1) : rawHandle;
+        if (candRaw.toLowerCase() !== curU || /\s/.test(rawHandle)) {
+          if (saveBtn) saveBtn.disabled = true;
+          try {
+            const uRes = await socialApi('/api/user/username', {
+              method: 'POST',
+              body: { username: rawHandle }
+            });
+            if (uRes && uRes.user && uRes.user.username) {
+              saveUserMeta(uRes.user);
+              finalHandle = '@' + uRes.user.username;
+              usernameChanged = !uRes.unchanged;
+            }
+          } catch (e) {
+            if (errEl) errEl.textContent = e.message || (L == 'ru' ? 'Не удалось изменить @username' : 'Failed to change @username');
+            if (saveBtn) saveBtn.disabled = false;
+            return;
+          }
+          if (saveBtn) saveBtn.disabled = false;
+        } else {
+          finalHandle = '@' + curU;
+        }
+      }
+
       const next = {
-        name: bd.querySelector('#ap-m-name').value.trim() || base.name,
-        handle: bd.querySelector('#ap-m-handle').value.trim() || base.handle,
+        name: rawName || (localStorage.userName || base.name),
+        handle: finalHandle,
         avatar: pendingAv
       };
       localStorage.athleteProfile = JSON.stringify(next);
-      scheduleCloudSync();
+      localStorage.userAvatar = pendingAv || '';
+      if (isServerUser) {
+        const ok = await pushCloudSync();
+        if (!ok) {
+          if (errEl) errEl.textContent = L == 'ru' ? 'Не удалось синхронизировать изменения с сервером' : 'Failed to sync changes to server';
+          return;
+        }
+      } else {
+        scheduleCloudSync();
+      }
       bd.remove();
       render();
-      showAppToast(CFG.brand || 'RizzaFit', L == 'ru' ? 'Настройки сохранены' : 'Settings saved');
+      showAppToast(
+        CFG.brand || 'RizzaFit',
+        usernameChanged
+          ? (L == 'ru' ? 'Профиль и @username обновлены' : 'Profile and @username updated')
+          : (L == 'ru' ? 'Настройки сохранены' : 'Settings saved')
+      );
     };
 
-    bd.querySelector('#ap-m-reset').onclick = () => {
-      localStorage.removeItem('athleteProfile');
+    bd.querySelector('#ap-m-reset').onclick = async () => {
+      const msg = L == 'ru'
+        ? 'Сбросить имя, фото профиля и цвет акцента к значениям по умолчанию? Аккаунт, @username, друзья, чаты и тренировки сохранятся.'
+        : 'Reset display name, avatar, and accent color to defaults? Your account, @username, friends, chats, and workouts will be preserved.';
+      if (!confirm(msg)) return;
+      const errEl = bd.querySelector('#ap-set-err');
+      if (errEl) errEl.textContent = '';
+      const resetBtn = bd.querySelector('#ap-m-reset');
+      if (resetBtn) resetBtn.disabled = true;
+
+      const prevProf = localStorage.getItem('athleteProfile');
+      const prevAccent = localStorage.getItem('accentTheme');
+      const prevAvatar = localStorage.getItem('userAvatar');
+
+      const curU = localStorage.userName || '';
+      const resetProf = {
+        name: curU,
+        handle: curU ? '@' + curU : '',
+        avatar: ''
+      };
+      localStorage.athleteProfile = JSON.stringify(resetProf);
+      localStorage.userAvatar = '';
       localStorage.removeItem('accentTheme');
       applyAccent();
+
+      if (localStorage.userToken && !isLocalToken(localStorage.userToken)) {
+        const ok = await pushCloudSync();
+        if (!ok) {
+          // Restore previous local values on sync failure
+          if (prevProf !== null) localStorage.setItem('athleteProfile', prevProf);
+          else localStorage.removeItem('athleteProfile');
+          if (prevAccent !== null) localStorage.setItem('accentTheme', prevAccent);
+          if (prevAvatar !== null) localStorage.setItem('userAvatar', prevAvatar);
+          applyAccent();
+          if (errEl) errEl.textContent = L == 'ru' ? 'Ошибка синхронизации сброса с сервером. Попробуйте позже.' : 'Failed to sync reset with server. Please try again.';
+          if (resetBtn) resetBtn.disabled = false;
+          return;
+        }
+      }
       bd.remove();
       render();
+      showAppToast(CFG.brand || 'RizzaFit', L == 'ru' ? 'Настройки профиля сброшены' : 'Profile settings reset');
     };
+
+    const blockedWrap = bd.querySelector('#set-blocked-wrap');
+    if (blockedWrap) {
+      async function loadBlockedList() {
+        try {
+          const res = await socialApi('/api/users/blocked');
+          const list = res.blocked || [];
+          if (!list.length) {
+            blockedWrap.innerHTML = `<div style="padding:12px;font-size:12px;color:var(--mut);">${L == 'ru' ? 'Нет заблокированных пользователей' : 'No blocked users'}</div>`;
+            return;
+          }
+          blockedWrap.innerHTML = list.map(bu => `
+            <div class="ap-set-row" style="gap:10px;">
+              <div style="display:flex;align-items:center;gap:10px;min-width:0;cursor:pointer;" data-go-blocked="${esc(bu.username)}">
+                <div class="user-avatar-wrap" style="width:34px;height:34px;font-size:13px;">
+                  ${bu.avatar ? `<img src="${esc(bu.avatar)}" alt="">` : esc((bu.displayName || bu.username).charAt(0).toUpperCase())}
+                </div>
+                <div style="min-width:0;">
+                  <div style="font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(bu.displayName || bu.username)}</div>
+                  <div style="font-size:11px;color:var(--mut);">@${esc(bu.username)}</div>
+                </div>
+              </div>
+              <button type="button" class="btn alt" data-unblock-uid="${esc(String(bu.userId || bu.id))}" style="padding:5px 10px;font-size:11.5px;white-space:nowrap;">${t('unblockUser')}</button>
+            </div>
+          `).join('');
+          blockedWrap.querySelectorAll('[data-go-blocked]').forEach(el => {
+            el.onclick = () => { bd.remove(); location.hash = '#/user/' + encodeURIComponent(el.dataset.goBlocked); };
+          });
+          blockedWrap.querySelectorAll('[data-unblock-uid]').forEach(btn => {
+            btn.onclick = async () => {
+              btn.disabled = true;
+              try {
+                await socialApi('/api/users/unblock', { method: 'POST', body: { targetUserId: btn.dataset.unblockUid } });
+                showAppToast(CFG.brand || 'RizzaFit', L == 'ru' ? 'Пользователь разблокирован' : 'User unblocked');
+                loadBlockedList();
+                render();
+              } catch (e) {
+                alert(e.message);
+                btn.disabled = false;
+              }
+            };
+          });
+        } catch (e) {
+          blockedWrap.innerHTML = `<div style="padding:12px;font-size:12px;color:#f87171;">${esc(e.message || 'Error')}</div>`;
+        }
+      }
+      loadBlockedList();
+    }
 
     const proBtn = bd.querySelector('#set-cloud-pro-btn');
     if (proBtn) proBtn.onclick = () => { openCloudProModal(); };
@@ -4770,7 +4930,13 @@
       if (isLoggedIn()) {
         socialApi('/api/friends').then(res => {
           if (res && res.friends && AP && AP.syncServerFriends) {
+            const prevFriendsJson = localStorage.getItem('athleteFriends');
             AP.syncServerFriends(res.friends);
+            const nextFriendsJson = localStorage.getItem('athleteFriends');
+            if (prevFriendsJson !== nextFriendsJson) {
+              render();
+              return;
+            }
           }
           const incBadge = document.getElementById('fr-badge-inc');
           const outBadge = document.getElementById('fr-badge-out');
@@ -4804,29 +4970,35 @@
                   } else {
                     reqPanel.innerHTML = `
                       <div class="user-grid">
-                        ${inc.map(r => `
+                        ${inc.map(r => {
+                          const ru = r.user || r;
+                          const reqId = r.requestId || r.id;
+                          return `
                           <div class="user-card">
-                            <div class="user-card-head" onclick="location.hash='#/user/${esc(r.user.username)}'">
+                            <div class="user-card-head" data-go-user="${esc(ru.username)}">
                               <div class="user-avatar-wrap">
-                                ${r.user.avatar ? `<img src="${esc(r.user.avatar)}" alt="">` : (r.user.displayName || r.user.username).charAt(0).toUpperCase()}
+                                ${ru.avatar ? `<img src="${esc(ru.avatar)}" alt="">` : (ru.displayName || ru.username).charAt(0).toUpperCase()}
                               </div>
                               <div class="user-card-meta">
-                                <div class="user-card-name">${esc(r.user.displayName || r.user.username)}</div>
-                                <div class="user-card-handle">@${esc(r.user.username)}</div>
+                                <div class="user-card-name">${esc(ru.displayName || ru.username)}</div>
+                                <div class="user-card-handle">@${esc(ru.username)}</div>
                               </div>
                             </div>
                             <div class="user-card-actions">
-                              <button type="button" class="btn" data-req-acc="${r.id}">${t('acceptRequest')}</button>
-                              <button type="button" class="btn alt" data-req-dec="${r.id}">${t('declineRequest')}</button>
+                              <button type="button" class="btn" data-req-acc="${esc(String(reqId))}">${t('acceptRequest')}</button>
+                              <button type="button" class="btn alt" data-req-dec="${esc(String(reqId))}">${t('declineRequest')}</button>
                             </div>
-                          </div>
-                        `).join('')}
+                          </div>`;
+                        }).join('')}
                       </div>`;
+                    reqPanel.querySelectorAll('[data-go-user]').forEach(el => {
+                      el.onclick = () => { location.hash = '#/user/' + encodeURIComponent(el.dataset.goUser); };
+                    });
                     reqPanel.querySelectorAll('[data-req-acc]').forEach(b => {
                       b.onclick = async () => {
                         b.disabled = true;
                         try {
-                          await socialApi('/api/friends/accept', { method: 'POST', body: { requestId: b.dataset.reqAcc } });
+                          await socialApi('/api/friends/accept', { method: 'POST', body: { requestId: Number(b.dataset.reqAcc) } });
                           render();
                         } catch (e) { alert(e.message); b.disabled = false; }
                       };
@@ -4835,7 +5007,7 @@
                       b.onclick = async () => {
                         b.disabled = true;
                         try {
-                          await socialApi('/api/friends/decline', { method: 'POST', body: { requestId: b.dataset.reqDec } });
+                          await socialApi('/api/friends/decline', { method: 'POST', body: { requestId: Number(b.dataset.reqDec) } });
                           render();
                         } catch (e) { alert(e.message); b.disabled = false; }
                       };
@@ -4850,28 +5022,34 @@
                   } else {
                     reqPanel.innerHTML = `
                       <div class="user-grid">
-                        ${outg.map(r => `
+                        ${outg.map(r => {
+                          const ru = r.user || r;
+                          const reqId = r.requestId || r.id;
+                          return `
                           <div class="user-card">
-                            <div class="user-card-head" onclick="location.hash='#/user/${esc(r.user.username)}'">
+                            <div class="user-card-head" data-go-user="${esc(ru.username)}">
                               <div class="user-avatar-wrap">
-                                ${r.user.avatar ? `<img src="${esc(r.user.avatar)}" alt="">` : (r.user.displayName || r.user.username).charAt(0).toUpperCase()}
+                                ${ru.avatar ? `<img src="${esc(ru.avatar)}" alt="">` : (ru.displayName || ru.username).charAt(0).toUpperCase()}
                               </div>
                               <div class="user-card-meta">
-                                <div class="user-card-name">${esc(r.user.displayName || r.user.username)}</div>
-                                <div class="user-card-handle">@${esc(r.user.username)}</div>
+                                <div class="user-card-name">${esc(ru.displayName || ru.username)}</div>
+                                <div class="user-card-handle">@${esc(ru.username)}</div>
                               </div>
                             </div>
                             <div class="user-card-actions">
-                              <button type="button" class="btn alt" data-req-cancel="${r.id}">${t('cancelRequest')}</button>
+                              <button type="button" class="btn alt" data-req-cancel="${esc(String(reqId))}">${t('cancelRequest')}</button>
                             </div>
-                          </div>
-                        `).join('')}
+                          </div>`;
+                        }).join('')}
                       </div>`;
+                    reqPanel.querySelectorAll('[data-go-user]').forEach(el => {
+                      el.onclick = () => { location.hash = '#/user/' + encodeURIComponent(el.dataset.goUser); };
+                    });
                     reqPanel.querySelectorAll('[data-req-cancel]').forEach(b => {
                       b.onclick = async () => {
                         b.disabled = true;
                         try {
-                          await socialApi('/api/friends/cancel', { method: 'POST', body: { requestId: b.dataset.reqCancel } });
+                          await socialApi('/api/friends/cancel', { method: 'POST', body: { requestId: Number(b.dataset.reqCancel) } });
                           render();
                         } catch (e) { alert(e.message); b.disabled = false; }
                       };
@@ -4969,7 +5147,7 @@
       };
     }
 
-    if (name === 'users') {
+    if (name === 'users' && isLoggedIn()) {
       const searchInput = document.getElementById('users-search-input');
       const grid = document.getElementById('users-grid');
       const moreWrap = document.getElementById('users-more-wrap');
@@ -5101,7 +5279,7 @@
       fetchUsers(false);
     }
 
-    if (name === 'user') {
+    if (name === 'user' && isLoggedIn()) {
       const wrap = document.getElementById('pub-profile-wrap');
       if (!wrap || !arg) return;
       socialApi('/api/users/profile?username=' + encodeURIComponent(arg)).then(res => {
@@ -5235,7 +5413,7 @@
       });
     }
 
-    if (name === 'messages') {
+    if (name === 'messages' && isLoggedIn()) {
       if (window._chatPollTimer) {
         clearInterval(window._chatPollTimer);
         window._chatPollTimer = null;
@@ -5269,6 +5447,7 @@
                 ? d.toLocaleTimeString(L, { hour: '2-digit', minute: '2-digit' })
                 : d.toLocaleDateString(L, { day: 'numeric', month: 'short' });
             }
+            const previewText = c.lastMessageText || c.lastMessagePreview || '';
             return `
               <div class="conv-item ${isActive ? 'active' : ''}" data-conv-go="${c.id}">
                 <div class="conv-av">
@@ -5280,7 +5459,7 @@
                     <span class="conv-time">${esc(timeStr)}</span>
                   </div>
                   <div class="conv-bot-line">
-                    <span class="conv-preview">${esc(c.lastMessagePreview || '')}</span>
+                    <span class="conv-preview">${esc(previewText)}</span>
                     ${c.unreadCount > 0 ? `<span class="conv-badge">${c.unreadCount}</span>` : ''}
                   </div>
                 </div>
@@ -5297,16 +5476,18 @@
         if (!activeConvId || !chatMessagesEl) return;
         try {
           const res = await socialApi('/api/messages/history?conversationId=' + encodeURIComponent(activeConvId));
-          const conv = res.conversation || {};
-          const peer = conv.peer || {};
+          const conv = res.conversation || res;
+          const peer = res.peer || conv.peer || {};
           const peerName = peer.displayName || peer.username || 'User';
-          const isBlocked = conv.isBlockedByMe || conv.isBlockedByPeer;
+          const isBlockedByMe = !!(res.isBlockedByMe || conv.isBlockedByMe);
+          const hasBlockedMe = !!(res.hasBlockedMe || conv.hasBlockedMe || conv.isBlockedByPeer);
+          const isBlocked = isBlockedByMe || hasBlockedMe;
 
           if (chatHeaderEl && !silent) {
             chatHeaderEl.innerHTML = `
               <div style="display:flex;align-items:center;gap:10px;min-width:0;">
                 <a href="#/messages" class="btn alt" style="padding:6px 9px;font-size:12px;line-height:1;">‹</a>
-                <div class="chat-header-user" onclick="location.hash='#/user/${esc(peer.username || '')}'">
+                <div class="chat-header-user" id="chat-header-user-link" style="cursor:pointer;">
                   <div class="conv-av" style="width:34px;height:34px;font-size:14px;">
                     ${peer.avatar ? `<img src="${esc(peer.avatar)}" alt="">` : peerName.charAt(0).toUpperCase()}
                   </div>
@@ -5320,6 +5501,11 @@
                 <button type="button" class="btn alt" id="chat-hide-btn" style="padding:5px 8px;font-size:11px;" title="${t('hideDialogConfirm')}">✕</button>
               </div>`;
 
+            const userLink = document.getElementById('chat-header-user-link');
+            if (userLink && peer.username) {
+              userLink.onclick = () => { location.hash = '#/user/' + encodeURIComponent(peer.username); };
+            }
+
             const hideB = document.getElementById('chat-hide-btn');
             if (hideB) hideB.onclick = async () => {
               if (!confirm(t('hideDialogConfirm'))) return;
@@ -5330,9 +5516,21 @@
             };
           }
 
-          if (isBlocked) {
-            if (chatInputBarEl) {
-              chatInputBarEl.outerHTML = `<div class="chat-blocked-notice">${t('chatBlocked')}</div>`;
+          if (chatInputBarEl) {
+            let noticeEl = document.getElementById('chat-blocked-notice');
+            if (isBlocked) {
+              chatInputBarEl.style.display = 'none';
+              if (!noticeEl) {
+                noticeEl = document.createElement('div');
+                noticeEl.id = 'chat-blocked-notice';
+                noticeEl.className = 'chat-blocked-notice';
+                chatInputBarEl.parentNode.insertBefore(noticeEl, chatInputBarEl.nextSibling);
+              }
+              noticeEl.textContent = t('chatBlocked');
+              noticeEl.style.display = '';
+            } else {
+              chatInputBarEl.style.display = '';
+              if (noticeEl) noticeEl.style.display = 'none';
             }
           }
 
@@ -5355,11 +5553,12 @@
                 html += `<div class="chat-date-sep"><span>${esc(dayStr)}</span></div>`;
                 lastDay = dayStr;
               }
-              const isMine = m.senderId === conv.myUid;
+              const isMine = typeof m.fromMe === 'boolean' ? m.fromMe : (conv.myUid !== undefined && m.senderId === conv.myUid);
               const timeFormatted = d.toLocaleTimeString(L, { hour: '2-digit', minute: '2-digit' });
               let tick = '';
               if (isMine) {
-                tick = m.readAt ? '<span class="msg-status-tick" title="Read">✓✓</span>' : '<span class="msg-status-tick" title="Delivered">✓</span>';
+                const isRead = m.status === 'read' || !!m.readAt;
+                tick = isRead ? '<span class="msg-status-tick" title="Read">✓✓</span>' : '<span class="msg-status-tick" title="Delivered">✓</span>';
               }
               const isDel = !!m.isDeleted;
               html += `
@@ -5382,6 +5581,7 @@
                 try {
                   await socialApi('/api/messages/delete', { method: 'POST', body: { messageId: Number(b.dataset.delMsg) } });
                   loadActiveChat(true);
+                  loadConversations();
                 } catch (e) { alert(e.message); }
               };
             });
@@ -5391,7 +5591,13 @@
             }
           }
 
-          socialApi('/api/messages/read', { method: 'POST', body: { conversationId: activeConvId } }).catch(() => {});
+          socialApi('/api/messages/read', { method: 'POST', body: { conversationId: activeConvId } }).then(readRes => {
+            if (readRes && readRes.readCount > 0) {
+              lastUnreadCheck = 0;
+              checkUnreadMessages();
+              loadConversations();
+            }
+          }).catch(() => {});
         } catch (e) {
           if (!silent) chatMessagesEl.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
         }
@@ -5419,6 +5625,7 @@
           loadActiveChat(false);
           loadConversations();
         } catch (e) {
+          textarea.value = text;
           alert(e.message);
         }
       }
@@ -5444,11 +5651,11 @@
       }
     }
 
-    if (name === 'authGate') {
-      const loginB = document.getElementById('social-gate-login');
-      if (loginB) loginB.onclick = () => openCloudAuthModal('login');
-      const regB = document.getElementById('social-gate-reg');
-      if (regB) regB.onclick = () => openCloudAuthModal('register');
+    const loginB = document.getElementById('social-gate-login');
+    if (loginB) loginB.onclick = () => openCloudAuthModal('login');
+    const regB = document.getElementById('social-gate-reg');
+    if (regB) regB.onclick = () => openCloudAuthModal('register');
+    if (loginB || regB) {
       app.querySelectorAll('[data-soc-provider]').forEach(btn => {
         btn.onclick = () => handleSocialAuth(btn.dataset.socProvider);
       });

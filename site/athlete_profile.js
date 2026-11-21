@@ -159,6 +159,13 @@
     const myName = (localStorage.getItem('userName') || '').trim().toLowerCase();
     const myHandle = '@' + myName;
 
+    // For authenticated users with synced server friends, return only their actual friends list
+    if (localStorage.getItem('userToken') && localStorage.getItem('athleteFriends') !== null) {
+      return customFriends.filter(u =>
+        !isFakeUser(u) && (u.handle || '').toLowerCase() !== myHandle && (u.name || '').toLowerCase() !== myName
+      );
+    }
+
     const mergedMap = new Map();
     comm.forEach(u => {
       if (!isFakeUser(u) && (u.handle || '').toLowerCase() !== myHandle && (u.name || '').toLowerCase() !== myName) {

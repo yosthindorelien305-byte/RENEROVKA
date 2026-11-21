@@ -1,7 +1,7 @@
 """Flexa server: static site + small admin API (stdlib only).
 Run:  python server.py   ->  http://localhost:8080   admin: /admin.html
 """
-import base64, hashlib, hmac, html, json, os, re, secrets, sqlite3, sys, threading, time, urllib.request, urllib.error
+import base64, hashlib, hmac, html, ipaddress, json, os, re, secrets, sqlite3, sys, threading, time, urllib.request, urllib.error
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, parse_qsl
 
@@ -22,13 +22,189 @@ db_lock = threading.Lock()
 PORT = int(os.environ.get('PORT', 8080))
 FREE_ACCESS_MODE = os.environ.get('FLEXA_FREE_MODE', '1').strip().lower() not in ('0', 'false', 'no', 'off')
 MAX_UPLOAD = 64 * 1024 * 1024
-EXT = {'.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg', '.mp4', '.webm', '.mov'}
+EXT = {'.png', '.jpg', '.jpeg', '.webp', '.gif', '.mp4', '.webm', '.mov'}
 for d in (CONTENT, UPLOADS, SECRET_DIR):
     os.makedirs(d, exist_ok=True)
 
 lock = threading.Lock()
 tokens = {}          # token -> expiry
-fails = {}           # ip -> (count, last)
+fails_lock = threading.Lock()
+fails = {}           # key -> (count, last, expires_at)
+MAX_FAILS_CAPACITY = 500
+
+TRUSTED_PROXIES = {
+    ipaddress.ip_address('127.0.0.1'),
+    ipaddress.ip_address('::1'),
+}
+
+def get_client_ip(handler):
+    # 1. Получаем непосредственный IP соединения из handler.client_address
+    raw_socket_ip = handler.client_address[0] if hasattr(handler, 'client_address') and handler.client_address else ''
+    socket_ip_obj = None
+    if raw_socket_ip:
+        try:
+            socket_ip_obj = ipaddress.ip_address(raw_socket_ip)
+        except ValueError:
+            socket_ip_obj = None
+
+    # 2. Проверяем, пришёл ли запрос от доверенного локального reverse proxy (Nginx)
+    is_trusted_proxy = bool(socket_ip_obj and socket_ip_obj in TRUSTED_PROXIES)
+
+    # 3. Доверяем X-Real-IP ТОЛЬКО если непосредственное подключение выполнено через доверенный прокси
+    if is_trusted_proxy and hasattr(handler, 'headers') and handler.headers:
+        x_real = handler.headers.get('X-Real-IP', '').strip()
+        if x_real:
+            try:
+                return str(ipaddress.ip_address(x_real))
+            except ValueError:
+                pass
+
+    # 4. Если запрос пришёл напрямую от другого адреса (или X-Real-IP некорректен),
+    # X-Real-IP и X-Forwarded-For полностью игнорируются, используется непосредственный IP соединения
+    if socket_ip_obj:
+        return str(socket_ip_obj)
+
+    return '127.0.0.1'
+
+def record_fail(key, ttl=300, max_size=MAX_FAILS_CAPACITY):
+    now = time.time()
+    # Гарантируем, что переданный max_size не превышает установленный глобальный лимит
+    effective_max = min(max_size, MAX_FAILS_CAPACITY)
+    with fails_lock:
+        exists = key in fails
+        if not exists and len(fails) >= effective_max:
+            # 1. Сначала удаляем записи с истекшим сроком жизни
+            expired = [k for k, v in fails.items() if (v[2] if len(v) > 2 else v[1] + 300) <= now]
+            for k in expired:
+                fails.pop(k, None)
+            # 2. Если размер всё ещё >= effective_max, вытесняем только неактивные записи (ошибок < 5)
+            if len(fails) >= effective_max:
+                low_cnt_keys = [k for k, v in fails.items() if v[0] < 5]
+                low_cnt_keys.sort(key=lambda k: fails[k][1])
+                needed = len(fails) - effective_max + 1
+                for k in low_cnt_keys[:needed]:
+                    fails.pop(k, None)
+            # 3. Безопасное поведение fail-closed:
+            # Если все записи имеют >= 5 ошибок (активные блокировки), ни одна из них не удаляется,
+            # и новый ключ не добавляется, чтобы предотвратить бесконтрольный рост словаря.
+            # При этом для ключа возвращается безопасное значение (5 ошибок), чтобы он сразу блокировался (fail-closed).
+            if len(fails) >= effective_max:
+                return 5
+
+        c = fails.get(key, (0, 0))[0]
+        fails[key] = (c + 1, now, now + ttl)
+        return c + 1
+
+def check_fail_limit(key, max_attempts, window_sec):
+    now = time.time()
+    with fails_lock:
+        val = fails.get(key, (0, 0))
+        c, last = val[0], val[1]
+        if c >= max_attempts and (now - last) < window_sec:
+            return False, c, last
+        # Если словарь переполнен действующими блокировками (fail-closed режим), блокируем новые запросы
+        if key not in fails and len(fails) >= MAX_FAILS_CAPACITY:
+            return False, max_attempts, now
+        return True, c, last
+
+def reset_fail(key):
+    with fails_lock:
+        fails.pop(key, None)
+
+def validate_upload_content(ext, raw_bytes):
+    if not raw_bytes or len(raw_bytes) < 4:
+        return False, 'Файл слишком мал или повреждён'
+    if ext == '.png':
+        if not raw_bytes.startswith(b'\x89PNG\r\n\x1a\n'):
+            return False, 'Некорректный формат PNG'
+    elif ext in ('.jpg', '.jpeg'):
+        if not raw_bytes.startswith(b'\xff\xd8\xff'):
+            return False, 'Некорректный формат JPEG'
+    elif ext == '.gif':
+        if not (raw_bytes.startswith(b'GIF87a') or raw_bytes.startswith(b'GIF89a')):
+            return False, 'Некорректный формат GIF'
+    elif ext == '.webp':
+        if len(raw_bytes) < 12 or not (raw_bytes[:4] == b'RIFF' and raw_bytes[8:12] == b'WEBP'):
+            return False, 'Некорректный формат WEBP'
+    elif ext == '.webm':
+        if not raw_bytes.startswith(b'\x1a\x45\xdf\xa3'):
+            return False, 'Некорректный формат WEBM'
+    elif ext in ('.mp4', '.mov'):
+        # Валидация структуры боксов верхнего уровня ISOBMFF контейнера MP4/MOV.
+        # ВНИМАНИЕ: Данная проверка верифицирует только целостность заголовков боксов верхнего уровня,
+        # границы боксов и начальную сигнатуру ftyp/moov без глубокого декодирования медиапотоков (H.264/AAC/HEVC),
+        # для которого в рамках stdlib Python без внешних бинарных декодеров (ffmpeg) нет поддержки.
+        file_len = len(raw_bytes)
+        if file_len < 16:
+            return False, 'Некорректный видеофайл (слишком короткий)'
+        pos = 0
+        valid_box_types = {
+            b'ftyp', b'moov', b'mdat', b'free', b'skip', b'wide',
+            b'meta', b'uuid', b'pdin', b'prft', b'sidx', b'styp'
+        }
+        first_box = True
+        has_ftyp_or_moov = False
+        parsed_boxes = 0
+
+        while pos < file_len:
+            if pos + 8 > file_len:
+                return False, 'Некорректная структура ISOBMFF: неполный заголовок бокса'
+            raw_box_size = int.from_bytes(raw_bytes[pos:pos+4], 'big')
+            box_type = raw_bytes[pos+4:pos+8]
+            header_size = 8
+
+            # Проверка типа бокса на печатные ASCII символы и известные ISOBMFF боксы
+            if any(b < 32 or b > 126 for b in box_type) or box_type not in valid_box_types:
+                return False, f'Некорректная сигнатура или тип бокса ISOBMFF: {repr(box_type)}'
+
+            if raw_box_size == 1:
+                # 64-битный extended size (large size)
+                header_size = 16
+                if pos + 16 > file_len:
+                    return False, 'Некорректный extended size бокса ISOBMFF'
+                box_size = int.from_bytes(raw_bytes[pos+8:pos+16], 'big')
+                if box_size < 16:
+                    return False, 'Некорректный extended size бокса ISOBMFF (< 16)'
+            elif raw_box_size == 0:
+                # Бокс длится до конца файла (обычно mdat)
+                box_size = file_len - pos
+            elif raw_box_size < 8:
+                return False, f'Некорректный размер бокса ISOBMFF: {raw_box_size} (< 8)'
+            else:
+                box_size = raw_box_size
+
+            if pos + box_size > file_len:
+                return False, f'Размер бокса {repr(box_type)} ({box_size} байт) выходит за границы файла ({file_len} байт)'
+
+            if first_box:
+                if box_type not in (b'ftyp', b'moov', b'wide', b'free'):
+                    return False, f'Некорректный начальный бокс ISOBMFF: {repr(box_type)}'
+                if box_type == b'ftyp':
+                    # ftyp box должен содержать: header (8 или 16 байт) + major_brand (4 байта) + minor_version (4 байта)
+                    # Минимальный размер: 16 байт для стандартного заголовка, 24 байта для extended-size (64-бит)
+                    min_ftyp_size = header_size + 8
+                    if box_size < min_ftyp_size:
+                        return False, f'Бокс ftyp слишком короткий ({box_size} байт, требуется минимум {min_ftyp_size} байт для major_brand и minor_version)'
+                    major_brand = raw_bytes[pos + header_size : pos + header_size + 4]
+                    if any(b < 32 or b > 126 for b in major_brand):
+                        return False, 'Некорректный бренд (major_brand) в боксе ftyp'
+                    # minor_version - 4 байта (uint32 big-endian), проверяем, что байты доступны
+                    # minor_version = raw_bytes[pos + header_size + 4 : pos + header_size + 8]
+                first_box = False
+
+            if box_type in (b'ftyp', b'moov'):
+                has_ftyp_or_moov = True
+
+            pos += box_size
+            parsed_boxes += 1
+            if parsed_boxes > 500:
+                return False, 'Превышено максимальное число боксов ISOBMFF'
+
+        if not has_ftyp_or_moov:
+            return False, 'В видеофайле отсутствует обязательный бокс ftyp или moov'
+    elif ext == '.svg':
+        return False, 'Загрузка SVG-файлов запрещена по соображениям безопасности (риск XSS)'
+    return True, ''
 
 def hash_pw(pw, salt):
     return hashlib.pbkdf2_hmac('sha256', pw.encode(), bytes.fromhex(salt), 200_000).hex()
@@ -206,13 +382,50 @@ def init_db():
             'target_user_id INTEGER NOT NULL, '
             'message_id INTEGER NOT NULL DEFAULT 0, '
             'reason TEXT NOT NULL, '
+            'status TEXT NOT NULL DEFAULT "new", '
+            'reviewed_at INTEGER NOT NULL DEFAULT 0, '
+            'admin_note TEXT NOT NULL DEFAULT "", '
             'created_at INTEGER NOT NULL)'
         )
+        rep_cols = {r[1] for r in conn.execute('PRAGMA table_info(user_reports)').fetchall()}
+        for col, ddl in [
+            ('status', 'TEXT NOT NULL DEFAULT "new"'),
+            ('reviewed_at', 'INTEGER NOT NULL DEFAULT 0'),
+            ('admin_note', 'TEXT NOT NULL DEFAULT ""'),
+        ]:
+            if col not in rep_cols:
+                conn.execute(f'ALTER TABLE user_reports ADD COLUMN {col} {ddl}')
         conn.commit()
 
 EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
+USERNAME_RE = re.compile(r'^[a-zA-Z0-9_]{3,24}$')
+RESERVED_USERNAMES = {
+    'admin', 'administrator', 'root', 'system', 'support', 'help', 'moderator',
+    'mod', 'staff', 'api', 'auth', 'login', 'logout', 'register', 'profile',
+    'settings', 'users', 'user', 'friends', 'messages', 'workouts', 'exercises',
+    'programs', 'coach', 'flexa', 'rizzafit', 'me', 'self', 'guest',
+    'anonymous', 'null', 'undefined', 'bot', 'telegram', 'official', 'security',
+    'owner', 'team', 'info', 'contact', 'about', 'terms', 'privacy', 'reports'
+}
 
-def user_dto(row, respect_free_mode=True):
+def validate_new_username(raw_val):
+    if not isinstance(raw_val, str):
+        return None, 'Укажите корректный @username'
+    if any(ch.isspace() for ch in raw_val):
+        return None, 'Username не может содержать пробелы'
+    cand = raw_val[1:] if raw_val.startswith('@') else raw_val
+    if not cand:
+        return None, 'Username не может быть пустым'
+    if len(cand) < 3 or len(cand) > 24:
+        return None, 'Username должен быть длиной от 3 до 24 символов'
+    if not USERNAME_RE.match(cand):
+        return None, 'Допустимы только латинские буквы, цифры и символ _'
+    norm = cand.lower()
+    if norm in RESERVED_USERNAMES:
+        return None, 'Это имя зарезервировано системой'
+    return norm, ''
+
+def user_dto(row, respect_free_mode=True, has_password=None):
     """row: (id, username, display_name, email, plan, plan_expires_at, is_blocked, [avatar]) or sqlite3.Row"""
     now = int(time.time())
     if isinstance(row, sqlite3.Row) or isinstance(row, dict):
@@ -220,7 +433,7 @@ def user_dto(row, respect_free_mode=True):
         exp = int(row['plan_expires_at'] or 0)
         real_pro = (plan == 'pro') and (exp == 0 or exp > now)
         eff_pro = True if (respect_free_mode and FREE_ACCESS_MODE) else real_pro
-        return {
+        dto = {
             'id': row['id'],
             'username': row['username'],
             'displayName': row['display_name'] if 'display_name' in row.keys() and row['display_name'] else row['username'],
@@ -232,12 +445,17 @@ def user_dto(row, respect_free_mode=True):
             'freeAccessMode': bool(FREE_ACCESS_MODE),
             'isBlocked': bool(row['is_blocked']) if 'is_blocked' in row.keys() else False,
         }
+        if has_password is not None:
+            dto['hasPassword'] = bool(has_password)
+        elif 'pw_salt' in row.keys() and 'pw_hash' in row.keys():
+            dto['hasPassword'] = bool(row['pw_salt'] and row['pw_hash'])
+        return dto
     plan = row[4] or 'free'
     exp = int(row[5] or 0)
     real_pro = (plan == 'pro') and (exp == 0 or exp > now)
     eff_pro = True if (respect_free_mode and FREE_ACCESS_MODE) else real_pro
     av = row[7] if len(row) > 7 and row[7] else ''
-    return {
+    dto = {
         'id': row[0],
         'username': row[1],
         'displayName': row[2] or row[1],
@@ -249,6 +467,9 @@ def user_dto(row, respect_free_mode=True):
         'freeAccessMode': bool(FREE_ACCESS_MODE),
         'isBlocked': bool(row[6]),
     }
+    if has_password is not None:
+        dto['hasPassword'] = bool(has_password)
+    return dto
 
 def sanitize_state(raw):
     if not isinstance(raw, dict):
@@ -364,7 +585,10 @@ def extract_public_user_card(r, now=None, include_details=False):
     else:
         name = prof_name[:40]
 
-    avatar = str(profile_data.get('avatar') or db_avatar or '').strip()
+    if 'avatar' in profile_data:
+        avatar = str(profile_data.get('avatar') or '').strip()
+    else:
+        avatar = db_avatar
     if avatar and not (avatar.startswith('http://') or avatar.startswith('https://') or avatar.startswith('content/uploads/') or avatar.startswith('img/') or avatar.startswith('data:image/')):
         avatar = ''
 
@@ -475,7 +699,7 @@ def get_user_by_token(token):
     now = int(time.time())
     with db_lock, sqlite3.connect(DB_FILE) as conn:
         row = conn.execute(
-            'SELECT u.id, u.username, u.display_name, u.email, u.plan, u.plan_expires_at, u.is_blocked, u.avatar, s.expires_at '
+            'SELECT u.id, u.username, u.display_name, u.email, u.plan, u.plan_expires_at, u.is_blocked, u.avatar, s.expires_at, u.pw_salt, u.pw_hash '
             'FROM user_sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?',
             (token,)
         ).fetchone()
@@ -485,7 +709,7 @@ def get_user_by_token(token):
             conn.execute('DELETE FROM user_sessions WHERE token = ?', (token,))
             conn.commit()
             return None
-        return user_dto(row[:8])
+        return user_dto(row[:8], has_password=bool(row[9] and row[10]))
 
 def write_json(name, obj):
     tmp = os.path.join(CONTENT, name + '.tmp')
@@ -796,7 +1020,7 @@ def process_telegram_auth_code(auth_code, from_user, chat_id, bot_token):
                 (uname, display_name, tg_id, now, now)
             )
             uid = cur.lastrowid
-            u_data = user_dto((uid, uname, display_name, "", "free", 0, 0, ""))
+            u_data = user_dto((uid, uname, display_name, "", "free", 0, 0, ""), has_password=False)
 
         stok = secrets.token_urlsafe(32)
         conn.execute('INSERT INTO user_sessions (token, user_id, expires_at) VALUES (?, ?, ?)', (stok, uid, now + 30 * 86400))
@@ -1051,7 +1275,7 @@ class H(SimpleHTTPRequestHandler):
         self.send_header('X-Frame-Options', 'SAMEORIGIN')
         self.send_header('Referrer-Policy', 'same-origin')
         if p.startswith('/content/uploads/'):
-            self.send_header('Content-Security-Policy', "default-src 'none'; img-src 'self'; media-src 'self'; sandbox")
+            self.send_header('Content-Security-Policy', "default-src 'none'; img-src 'self'; media-src 'self'; object-src 'none'; sandbox")
         if p.startswith('/api/'):
             self.send_header('Cache-Control', 'no-store')
         elif any(p.endswith(ext) or (ext + '?') in p for ext in ('.html', '.css', '.js', '.json', '/')):
@@ -1070,10 +1294,20 @@ class H(SimpleHTTPRequestHandler):
         self.wfile.write(b)
 
     def authed(self):
-        t = self.headers.get('Authorization', '').replace('Bearer ', '')
+        auth = self.headers.get('Authorization', '').strip()
+        if not auth:
+            return False
+        t = auth[7:].strip() if auth.lower().startswith('bearer ') else auth
+        if not t:
+            return False
+        now = time.time()
         with lock:
+            if len(tokens) > 50:
+                exp_keys = [k for k, exp in tokens.items() if exp <= now]
+                for k in exp_keys:
+                    tokens.pop(k, None)
             exp = tokens.get(t)
-            if exp and exp > time.time():
+            if exp and exp > now:
                 return True
             tokens.pop(t, None)
         return False
@@ -1153,6 +1387,31 @@ class H(SimpleHTTPRequestHandler):
                     'total': total,
                     'hasMore': (offset + len(users_list)) < total
                 })
+            if p == '/api/users/blocked':
+                tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
+                usr = get_user_by_token(tok)
+                if not usr:
+                    return self.send_j(401, {'error': 'unauthorized'})
+                my_uid = usr['id']
+                now = int(time.time())
+                with db_lock, sqlite3.connect(DB_FILE) as conn:
+                    conn.row_factory = sqlite3.Row
+                    rows = conn.execute(
+                        'SELECT u.id, u.username, u.display_name, u.avatar, u.plan, u.plan_expires_at, u.last_login_at, u.created_at, '
+                        's.data_json, b.created_at AS blocked_at '
+                        'FROM user_blocks b '
+                        'JOIN users u ON u.id = b.blocked_id '
+                        'LEFT JOIN user_state s ON s.user_id = u.id '
+                        'WHERE b.blocker_id = ? '
+                        'ORDER BY b.created_at DESC',
+                        (my_uid,)
+                    ).fetchall()
+                    blocked_list = []
+                    for r in rows:
+                        card = extract_public_user_card(r, now=now, include_details=False)
+                        card['blockedAt'] = int(r['blocked_at'] or 0)
+                        blocked_list.append(card)
+                return self.send_j(200, {'ok': True, 'blocked': blocked_list})
             if p == '/api/users/profile':
                 tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
                 usr = get_user_by_token(tok)
@@ -1216,7 +1475,7 @@ class H(SimpleHTTPRequestHandler):
                         card = extract_public_user_card(u_row, now=now, include_details=False)
                         card['requestCreatedAt'] = int(fr['created_at'] or 0)
                         card['requestId'] = int(fr['id'])
-                        card['user'] = card
+                        card['user'] = dict(card)
                         if fr['status'] == 'accepted':
                             card['friendshipStatus'] = 'friends'
                             friends_list.append(card)
@@ -1435,51 +1694,136 @@ class H(SimpleHTTPRequestHandler):
                     'incomingRequestsCount': int(inc_reqs),
                     'latestMessage': latest_msg
                 })
-            if p == '/api/ai/settings' and self.authed():
-                c = ai_cfg()
-                return self.send_j(200, {'provider': c['provider'], 'baseUrl': c.get('base_url', ''), 'hasKey': bool(c.get('key')), 'keyHint': ('…' + c['key'][-4:]) if c.get('key') else '', 'model': c['model'], 'enabled': c['enabled'], 'prompt': c.get('prompt', '')})
-            if p == '/api/uploads' and self.authed():
-                return self.send_j(200, sorted(os.listdir(UPLOADS)))
-            if p == '/api/admin/users' and self.authed():
-                q = parse_qs(urlparse(self.path).query).get('q', [''])[0].strip().lower()
-                now = int(time.time())
-                with db_lock, sqlite3.connect(DB_FILE) as conn:
-                    if q:
-                        like = '%' + q + '%'
-                        rows = conn.execute(
-                            'SELECT id, username, display_name, email, plan, plan_expires_at, is_blocked, created_at, last_login_at '
-                            'FROM users WHERE lower(username) LIKE ? OR lower(email) LIKE ? ORDER BY id DESC LIMIT 200',
-                            (like, like)
+            if p == '/api/ai/settings' or p == '/api/uploads' or p.startswith('/api/admin/'):
+                if not self.authed():
+                    return self.send_j(401, {'error': 'unauthorized'})
+                if p == '/api/ai/settings':
+                    c = ai_cfg()
+                    return self.send_j(200, {'provider': c['provider'], 'baseUrl': c.get('base_url', ''), 'hasKey': bool(c.get('key')), 'keyHint': ('…' + c['key'][-4:]) if c.get('key') else '', 'model': c['model'], 'enabled': c['enabled'], 'prompt': c.get('prompt', '')})
+                if p == '/api/uploads':
+                    return self.send_j(200, sorted(os.listdir(UPLOADS)))
+                if p == '/api/admin/users':
+                    q = parse_qs(urlparse(self.path).query).get('q', [''])[0].strip().lower()
+                    now = int(time.time())
+                    with db_lock, sqlite3.connect(DB_FILE) as conn:
+                        if q:
+                            like = '%' + q + '%'
+                            rows = conn.execute(
+                                'SELECT id, username, display_name, email, plan, plan_expires_at, is_blocked, created_at, last_login_at '
+                                'FROM users WHERE lower(username) LIKE ? OR lower(email) LIKE ? ORDER BY id DESC LIMIT 200',
+                                (like, like)
+                            ).fetchall()
+                        else:
+                            rows = conn.execute(
+                                'SELECT id, username, display_name, email, plan, plan_expires_at, is_blocked, created_at, last_login_at '
+                                'FROM users ORDER BY id DESC LIMIT 200'
+                            ).fetchall()
+                        tot = conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]
+                        pro_cnt = conn.execute(
+                            'SELECT COUNT(*) FROM users WHERE plan = "pro" AND is_blocked = 0 AND (plan_expires_at = 0 OR plan_expires_at > ?)',
+                            (now,)
+                        ).fetchone()[0]
+                        blk_cnt = conn.execute('SELECT COUNT(*) FROM users WHERE is_blocked = 1').fetchone()[0]
+                        pays = conn.execute(
+                            'SELECT p.id, u.username, p.plan, p.days, p.amount, p.currency, p.provider, p.status, p.note, p.created_at '
+                            'FROM payments p LEFT JOIN users u ON u.id = p.user_id ORDER BY p.id DESC LIMIT 40'
                         ).fetchall()
-                    else:
-                        rows = conn.execute(
-                            'SELECT id, username, display_name, email, plan, plan_expires_at, is_blocked, created_at, last_login_at '
-                            'FROM users ORDER BY id DESC LIMIT 200'
+                    users_list = []
+                    for r in rows:
+                        dto = user_dto(r[:7], respect_free_mode=False)
+                        dto['createdAt'] = r[7]
+                        dto['lastLoginAt'] = r[8]
+                        users_list.append(dto)
+                    pay_list = [
+                        {
+                            'id': x[0], 'username': x[1] or '?', 'plan': x[2], 'days': x[3],
+                            'amount': x[4], 'currency': x[5], 'provider': x[6], 'status': x[7],
+                            'note': x[8], 'createdAt': x[9]
+                        } for x in pays
+                    ]
+                    return self.send_j(200, {'users': users_list, 'stats': {'total': tot, 'pro': pro_cnt, 'blocked': blk_cnt}, 'payments': pay_list})
+                if p == '/api/admin/yookassa':
+                    cfg = yookassa_cfg()
+                    host = self.headers.get('Host') or 'rizzafit.ru'
+                    proto = 'https' if not host.startswith('localhost') else 'http'
+                    webhook_url = f'{proto}://{host}/api/payment/yookassa/webhook'
+                    return self.send_j(200, {
+                        'enabled': bool(cfg.get('enabled')),
+                        'shopId': str(cfg.get('shop_id', '')),
+                        'hasKey': bool(cfg.get('secret_key')),
+                        'keyHint': ('…' + cfg['secret_key'][-4:]) if cfg.get('secret_key') else '',
+                        'sbpOnly': bool(cfg.get('sbp_only', True)),
+                        'webhookUrl': webhook_url,
+                        'plans': list(PLANS.values())
+                    })
+                if p == '/api/admin/telegram':
+                    cfg = telegram_cfg()
+                    return self.send_j(200, {
+                        'ok': True,
+                        'botUsername': cfg.get('bot_username', ''),
+                        'enabled': cfg.get('enabled', True),
+                        'hasToken': bool(cfg.get('bot_token'))
+                    })
+                if p == '/api/admin/reports':
+                    qs = parse_qs(urlparse(self.path).query)
+                    status_filter = qs.get('status', ['all'])[0].strip().lower()
+                    if status_filter not in ('all', 'new', 'reviewed', 'closed'):
+                        status_filter = 'all'
+                    with db_lock, sqlite3.connect(DB_FILE) as conn:
+                        conn.row_factory = sqlite3.Row
+                        cnt_rows = conn.execute(
+                            'SELECT status, COUNT(*) AS cnt FROM user_reports GROUP BY status'
                         ).fetchall()
-                    tot = conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]
-                    pro_cnt = conn.execute(
-                        'SELECT COUNT(*) FROM users WHERE plan = "pro" AND is_blocked = 0 AND (plan_expires_at = 0 OR plan_expires_at > ?)',
-                        (now,)
-                    ).fetchone()[0]
-                    blk_cnt = conn.execute('SELECT COUNT(*) FROM users WHERE is_blocked = 1').fetchone()[0]
-                    pays = conn.execute(
-                        'SELECT p.id, u.username, p.plan, p.days, p.amount, p.currency, p.provider, p.status, p.note, p.created_at '
-                        'FROM payments p LEFT JOIN users u ON u.id = p.user_id ORDER BY p.id DESC LIMIT 40'
-                    ).fetchall()
-                users_list = []
-                for r in rows:
-                    dto = user_dto(r[:7], respect_free_mode=False)
-                    dto['createdAt'] = r[7]
-                    dto['lastLoginAt'] = r[8]
-                    users_list.append(dto)
-                pay_list = [
-                    {
-                        'id': x[0], 'username': x[1] or '?', 'plan': x[2], 'days': x[3],
-                        'amount': x[4], 'currency': x[5], 'provider': x[6], 'status': x[7],
-                        'note': x[8], 'createdAt': x[9]
-                    } for x in pays
-                ]
-                return self.send_j(200, {'users': users_list, 'stats': {'total': tot, 'pro': pro_cnt, 'blocked': blk_cnt}, 'payments': pay_list})
+                        counts = {'all': 0, 'new': 0, 'reviewed': 0, 'closed': 0}
+                        for cr in cnt_rows:
+                            st_k = str(cr['status'] or 'new').lower()
+                            c_val = int(cr['cnt'] or 0)
+                            counts['all'] += c_val
+                            if st_k in counts:
+                                counts[st_k] = c_val
+                        where_sql = ''
+                        params = []
+                        if status_filter != 'all':
+                            where_sql = 'WHERE r.status = ?'
+                            params.append(status_filter)
+                        r_rows = conn.execute(
+                            'SELECT r.id, r.reporter_id, r.target_user_id, r.message_id, r.reason, r.status, r.reviewed_at, r.admin_note, r.created_at, '
+                            'rep.username AS reporter_username, rep.display_name AS reporter_display_name, '
+                            'tgt.username AS target_username, tgt.display_name AS target_display_name, tgt.is_blocked AS target_is_blocked, '
+                            'm.body AS message_body '
+                            'FROM user_reports r '
+                            'LEFT JOIN users rep ON rep.id = r.reporter_id '
+                            'LEFT JOIN users tgt ON tgt.id = r.target_user_id '
+                            'LEFT JOIN messages m ON m.id = r.message_id AND r.message_id > 0 '
+                            f'{where_sql} '
+                            'ORDER BY r.created_at DESC, r.id DESC LIMIT 200',
+                            tuple(params)
+                        ).fetchall()
+                        reports = []
+                        for rr in r_rows:
+                            reports.append({
+                                'id': int(rr['id']),
+                                'status': str(rr['status'] or 'new'),
+                                'reason': str(rr['reason'] or ''),
+                                'adminNote': str(rr['admin_note'] or ''),
+                                'messageId': int(rr['message_id'] or 0),
+                                'messageText': str(rr['message_body'] or ''),
+                                'createdAt': int(rr['created_at'] or 0),
+                                'reviewedAt': int(rr['reviewed_at'] or 0),
+                                'reporter': {
+                                    'id': int(rr['reporter_id']),
+                                    'username': str(rr['reporter_username'] or f"user_{rr['reporter_id']}"),
+                                    'displayName': str(rr['reporter_display_name'] or rr['reporter_username'] or f"user_{rr['reporter_id']}")
+                                },
+                                'target': {
+                                    'id': int(rr['target_user_id']),
+                                    'username': str(rr['target_username'] or f"user_{rr['target_user_id']}"),
+                                    'displayName': str(rr['target_display_name'] or rr['target_username'] or f"user_{rr['target_user_id']}"),
+                                    'isBlocked': bool(rr['target_is_blocked'])
+                                }
+                            })
+                    return self.send_j(200, {'ok': True, 'reports': reports, 'counts': counts})
+                return self.send_j(404, {'error': 'not found'})
             if p == '/api/user/me':
                 tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
                 usr = get_user_by_token(tok)
@@ -1531,20 +1875,6 @@ class H(SimpleHTTPRequestHandler):
                     'isPro': True if (st == 'paid' or FREE_ACCESS_MODE) else False,
                     'freeAccessMode': bool(FREE_ACCESS_MODE)
                 })
-            if p == '/api/admin/yookassa' and self.authed():
-                cfg = yookassa_cfg()
-                host = self.headers.get('Host') or 'rizzafit.ru'
-                proto = 'https' if not host.startswith('localhost') else 'http'
-                webhook_url = f'{proto}://{host}/api/payment/yookassa/webhook'
-                return self.send_j(200, {
-                    'enabled': bool(cfg.get('enabled')),
-                    'shopId': str(cfg.get('shop_id', '')),
-                    'hasKey': bool(cfg.get('secret_key')),
-                    'keyHint': ('…' + cfg['secret_key'][-4:]) if cfg.get('secret_key') else '',
-                    'sbpOnly': bool(cfg.get('sbp_only', True)),
-                    'webhookUrl': webhook_url,
-                    'plans': list(PLANS.values())
-                })
             if p == '/api/auth/telegram/poll':
                 q_token = parse_qs(urlparse(self.path).query).get('token', [''])[0].strip()
                 if not q_token:
@@ -1575,21 +1905,13 @@ class H(SimpleHTTPRequestHandler):
                             'updatedAt': rec.get('updatedAt', 0)
                         })
                 return self.send_j(200, {'ok': True, 'confirmed': False})
-            if p == '/api/admin/telegram' and self.authed():
-                cfg = telegram_cfg()
-                return self.send_j(200, {
-                    'ok': True,
-                    'botUsername': cfg.get('bot_username', ''),
-                    'enabled': cfg.get('enabled', True),
-                    'hasToken': bool(cfg.get('bot_token'))
-                })
             return self.send_j(404, {'error': 'not found'})
         return super().do_GET()
 
     def do_POST(self):
         u = urlparse(self.path); p = u.path
         if p == '/api/coach':
-            ip = self.client_address[0]
+            ip = get_client_ip(self)
             now = time.time()
             hits = [t for t in coach_hits.get(ip, []) if now - t < 300]
             if len(hits) >= 20:
@@ -1624,9 +1946,9 @@ class H(SimpleHTTPRequestHandler):
             except Exception:
                 return self.send_j(400, {'error': 'Некорректный запрос'})
         if p == '/api/user/register':
-            ip = self.headers.get('X-Real-IP') or self.client_address[0]
-            c, last = fails.get('reg:' + ip, (0, 0))
-            if c >= 10 and time.time() - last < 300:
+            ip = get_client_ip(self)
+            allowed, _, _ = check_fail_limit('reg:' + ip, 10, 300)
+            if not allowed:
                 return self.send_j(429, {'error': 'Слишком много регистраций, подождите 5 минут'})
             try:
                 raw_b = self.body(2 * 1024 * 1024)
@@ -1665,15 +1987,13 @@ class H(SimpleHTTPRequestHandler):
                 if state:
                     conn.execute('INSERT INTO user_state (user_id, data_json, updated_at) VALUES (?, ?, ?)', (uid, json.dumps(state, ensure_ascii=False), now))
                 conn.commit()
-            if len(fails) > 400:
-                fails.clear()
-            fails['reg:' + ip] = (c + 1, time.time())
-            usr = user_dto((uid, uname, dname, email, 'free', 0, 0))
+            record_fail('reg:' + ip, ttl=600)
+            usr = user_dto((uid, uname, dname, email, 'free', 0, 0), has_password=True)
             return self.send_j(200, {'token': tok, 'user': usr, 'state': state, 'updatedAt': now if state else 0})
         if p == '/api/user/login':
-            ip = self.headers.get('X-Real-IP') or self.client_address[0]
-            c, last = fails.get(ip, (0, 0))
-            if c >= 8 and time.time() - last < 60:
+            ip = get_client_ip(self)
+            allowed, _, _ = check_fail_limit(ip, 8, 60)
+            if not allowed:
                 return self.send_j(429, {'error': 'Слишком много попыток, подождите минуту'})
             try:
                 j = json.loads(self.body(4096) or b'{}')
@@ -1693,15 +2013,13 @@ class H(SimpleHTTPRequestHandler):
                         'SELECT id, username, display_name, email, plan, plan_expires_at, is_blocked, pw_salt, pw_hash '
                         'FROM users WHERE username = ?', (uname,)
                     ).fetchone()
-                if not row or not hmac.compare_digest(hash_pw(pw, row[7]), row[8]):
-                    if len(fails) > 400:
-                        fails.clear()
-                    fails[ip] = (c + 1, time.time())
+                if not row or not row[7] or not row[8] or not hmac.compare_digest(hash_pw(pw, row[7]), row[8]):
+                    record_fail(ip, ttl=300)
                     time.sleep(0.5)
                     return self.send_j(401, {'error': 'Неверный логин/email или пароль'})
                 if row[6]:
                     return self.send_j(403, {'error': 'Аккаунт заблокирован администратором'})
-                fails.pop(ip, None)
+                reset_fail(ip)
                 now = int(time.time())
                 tok = secrets.token_urlsafe(32)
                 conn.execute('UPDATE users SET last_login_at = ? WHERE id = ?', (now, row[0]))
@@ -1710,7 +2028,7 @@ class H(SimpleHTTPRequestHandler):
                 conn.commit()
             state = json.loads(st_row[0]) if st_row else {}
             updated_at = st_row[1] if st_row else 0
-            return self.send_j(200, {'token': tok, 'user': user_dto(row[:7]), 'state': state, 'updatedAt': updated_at})
+            return self.send_j(200, {'token': tok, 'user': user_dto(row[:7], has_password=True), 'state': state, 'updatedAt': updated_at})
         if p == '/api/auth/telegram/start':
             auth_token = secrets.token_urlsafe(16)
             now_ts = time.time()
@@ -1731,9 +2049,9 @@ class H(SimpleHTTPRequestHandler):
                 'configured': configured
             })
         if p == '/api/user/social-login':
-            ip = self.headers.get('X-Real-IP') or self.client_address[0]
-            c, last = fails.get('soc:' + ip, (0, 0))
-            if c >= 20 and time.time() - last < 60:
+            ip = get_client_ip(self)
+            allowed, _, _ = check_fail_limit('soc:' + ip, 20, 60)
+            if not allowed:
                 return self.send_j(429, {'error': 'Слишком много попыток, подождите минуту'})
             try:
                 raw_b = self.body(2 * 1024 * 1024)
@@ -1751,9 +2069,7 @@ class H(SimpleHTTPRequestHandler):
 
             init_data = str(j.get('initData') or '').strip()
             if not init_data:
-                if len(fails) > 400:
-                    fails.clear()
-                fails['soc:' + ip] = (c + 1, time.time())
+                record_fail('soc:' + ip, ttl=300)
                 return self.send_j(401, {'error': 'Требуется подтверждённая подпись Telegram WebApp (initData)'})
 
             cfg = telegram_cfg()
@@ -1763,9 +2079,7 @@ class H(SimpleHTTPRequestHandler):
 
             tg_user = verify_telegram_webapp_init_data(init_data, bot_token)
             if not tg_user:
-                if len(fails) > 400:
-                    fails.clear()
-                fails['soc:' + ip] = (c + 1, time.time())
+                record_fail('soc:' + ip, ttl=300)
                 return self.send_j(401, {'error': 'Недействительная или устаревшая подпись Telegram'})
 
             social_id = str(tg_user.get('id') or '').strip()
@@ -1798,7 +2112,7 @@ class H(SimpleHTTPRequestHandler):
                     conn.execute('INSERT INTO user_sessions (token, user_id, expires_at) VALUES (?, ?, ?)', (tok, uid, now + 30 * 86400))
                     st_row = conn.execute('SELECT data_json, updated_at FROM user_state WHERE user_id = ?', (uid,)).fetchone()
                     conn.commit()
-                    fails.pop('soc:' + ip, None)
+                    reset_fail('soc:' + ip)
                     user_data = user_dto((row[0], row[1], row[2], row[3], row[4], row[5], row[6], avatar or row[7]))
                     user_st = json.loads(st_row[0]) if st_row else {}
                     up_at = st_row[1] if st_row else 0
@@ -1826,9 +2140,64 @@ class H(SimpleHTTPRequestHandler):
                     conn.execute('INSERT INTO user_state (user_id, data_json, updated_at) VALUES (?, ?, ?)', (uid, json.dumps(state, ensure_ascii=False), now))
                 conn.commit()
 
-            fails.pop('soc:' + ip, None)
-            new_user = user_dto((uid, uname, display_name, email, 'free', 0, 0, avatar))
+            reset_fail('soc:' + ip)
+            new_user = user_dto((uid, uname, display_name, email, 'free', 0, 0, avatar), has_password=False)
             return self.send_j(200, {'ok': True, 'token': tok, 'user': new_user, 'state': state, 'updatedAt': now if state else 0})
+        if p == '/api/user/username':
+            tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
+            usr = get_user_by_token(tok)
+            if not usr:
+                return self.send_j(401, {'error': 'unauthorized'})
+            try:
+                j = json.loads(self.body(4096) or b'{}')
+            except Exception:
+                return self.send_j(400, {'error': 'bad json'})
+            if 'userId' in j and j.get('userId') is not None:
+                try:
+                    if int(j.get('userId')) != int(usr['id']):
+                        return self.send_j(403, {'error': 'Нельзя изменять username другого пользователя'})
+                except Exception:
+                    return self.send_j(403, {'error': 'Нельзя изменять username другого пользователя'})
+            new_uname, err = validate_new_username(j.get('username'))
+            if err:
+                return self.send_j(400, {'error': err})
+            cur_uname = str(usr.get('username') or '').lower()
+            now = int(time.time())
+            with db_lock, sqlite3.connect(DB_FILE) as conn:
+                if new_uname != cur_uname:
+                    exists = conn.execute(
+                        'SELECT id FROM users WHERE lower(username) = ? AND id != ?',
+                        (new_uname, usr['id'])
+                    ).fetchone()
+                    if exists:
+                        return self.send_j(409, {'error': 'Этот @username уже занят'})
+                    conn.execute('UPDATE users SET username = ? WHERE id = ?', (new_uname, usr['id']))
+                    st_row = conn.execute('SELECT data_json FROM user_state WHERE user_id = ?', (usr['id'],)).fetchone()
+                    if st_row and st_row[0]:
+                        try:
+                            st_obj = json.loads(st_row[0])
+                            if isinstance(st_obj, dict) and 'athleteProfile' in st_obj:
+                                ap_raw = st_obj['athleteProfile']
+                                ap_dict = json.loads(ap_raw) if isinstance(ap_raw, str) else (ap_raw if isinstance(ap_raw, dict) else None)
+                                if isinstance(ap_dict, dict):
+                                    ap_dict['handle'] = '@' + new_uname
+                                    st_obj['athleteProfile'] = json.dumps(ap_dict, ensure_ascii=False)
+                                    conn.execute(
+                                        'UPDATE user_state SET data_json = ?, updated_at = ? WHERE user_id = ?',
+                                        (json.dumps(st_obj, ensure_ascii=False), now, usr['id'])
+                                    )
+                        except Exception:
+                            pass
+                row = conn.execute(
+                    'SELECT id, username, display_name, email, plan, plan_expires_at, is_blocked, avatar, pw_salt, pw_hash '
+                    'FROM users WHERE id = ?', (usr['id'],)
+                ).fetchone()
+                conn.commit()
+            return self.send_j(200, {
+                'ok': True,
+                'unchanged': (new_uname == cur_uname),
+                'user': user_dto(row[:8], has_password=bool(row[8] and row[9]))
+            })
         if p == '/api/user/profile':
             tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
             usr = get_user_by_token(tok)
@@ -1838,32 +2207,45 @@ class H(SimpleHTTPRequestHandler):
                 j = json.loads(self.body(4096) or b'{}')
             except Exception:
                 return self.send_j(400, {'error': 'bad json'})
+            if 'userId' in j and j.get('userId') is not None:
+                try:
+                    if int(j.get('userId')) != int(usr['id']):
+                        return self.send_j(403, {'error': 'Нельзя изменять настройки чужого аккаунта'})
+                except Exception:
+                    return self.send_j(403, {'error': 'Нельзя изменять настройки чужого аккаунта'})
             with db_lock, sqlite3.connect(DB_FILE) as conn:
                 if 'email' in j:
                     em = str(j.get('email') or '').strip().lower()
-                    if not EMAIL_RE.match(em):
-                        return self.send_j(400, {'error': 'Укажите корректный Email'})
-                    exists = conn.execute('SELECT id FROM users WHERE email = ? AND id != ?', (em, usr['id'])).fetchone()
-                    if exists:
-                        return self.send_j(409, {'error': 'Этот Email уже используется'})
-                    conn.execute('UPDATE users SET email = ? WHERE id = ?', (em, usr['id']))
+                    if em or not j.get('newPassword'):
+                        if not EMAIL_RE.match(em):
+                            return self.send_j(400, {'error': 'Укажите корректный Email'})
+                        exists = conn.execute('SELECT id FROM users WHERE email = ? AND id != ?', (em, usr['id'])).fetchone()
+                        if exists:
+                            return self.send_j(409, {'error': 'Этот Email уже используется'})
+                        conn.execute('UPDATE users SET email = ? WHERE id = ?', (em, usr['id']))
                 if j.get('newPassword'):
                     old_pw = str(j.get('oldPassword') or '')
                     new_pw = str(j.get('newPassword') or '')
-                    if len(new_pw) < 6:
-                        return self.send_j(400, {'error': 'Новый пароль: минимум 6 символов'})
+                    if len(new_pw) < 6 or len(new_pw) > 128 or not new_pw.strip():
+                        return self.send_j(400, {'error': 'Новый пароль: от 6 до 128 символов'})
                     pw_row = conn.execute('SELECT pw_salt, pw_hash FROM users WHERE id = ?', (usr['id'],)).fetchone()
-                    if not pw_row or not hmac.compare_digest(hash_pw(old_pw, pw_row[0]), pw_row[1]):
-                        return self.send_j(400, {'error': 'Старый пароль указан неверно'})
+                    has_existing_pw = bool(pw_row and pw_row[0] and pw_row[1])
+                    if has_existing_pw:
+                        if not hmac.compare_digest(hash_pw(old_pw, pw_row[0]), pw_row[1]):
+                            return self.send_j(400, {'error': 'Старый пароль указан неверно'})
                     nsalt = secrets.token_hex(16)
                     conn.execute('UPDATE users SET pw_salt = ?, pw_hash = ? WHERE id = ?', (nsalt, hash_pw(new_pw, nsalt), usr['id']))
-                row = conn.execute('SELECT id, username, display_name, email, plan, plan_expires_at, is_blocked FROM users WHERE id = ?', (usr['id'],)).fetchone()
+                    conn.execute('DELETE FROM user_sessions WHERE user_id = ? AND token != ?', (usr['id'], tok))
+                row = conn.execute(
+                    'SELECT id, username, display_name, email, plan, plan_expires_at, is_blocked, avatar, pw_salt, pw_hash '
+                    'FROM users WHERE id = ?', (usr['id'],)
+                ).fetchone()
                 conn.commit()
-            return self.send_j(200, {'ok': True, 'user': user_dto(row)})
+            return self.send_j(200, {'ok': True, 'user': user_dto(row[:8], has_password=bool(row[8] and row[9]))})
         if p == '/api/user/reset/confirm':
-            ip = self.headers.get('X-Real-IP') or self.client_address[0]
-            c, last = fails.get('rst:' + ip, (0, 0))
-            if c >= 8 and time.time() - last < 300:
+            ip = get_client_ip(self)
+            allowed, _, _ = check_fail_limit('rst:' + ip, 8, 300)
+            if not allowed:
                 return self.send_j(429, {'error': 'Слишком много попыток, подождите 5 минут'})
             try:
                 j = json.loads(self.body(4096) or b'{}')
@@ -1877,14 +2259,14 @@ class H(SimpleHTTPRequestHandler):
             with db_lock, sqlite3.connect(DB_FILE) as conn:
                 r = conn.execute('SELECT user_id, expires_at, used FROM password_resets WHERE code = ?', (code,)).fetchone()
                 if not r or r[2] or r[1] < now:
-                    fails['rst:' + ip] = (c + 1, time.time())
+                    record_fail('rst:' + ip, ttl=600)
                     return self.send_j(400, {'error': 'Неверный или просроченный код сброса'})
                 nsalt = secrets.token_hex(16)
                 conn.execute('UPDATE users SET pw_salt = ?, pw_hash = ? WHERE id = ?', (nsalt, hash_pw(new_pw, nsalt), r[0]))
                 conn.execute('UPDATE password_resets SET used = 1 WHERE code = ?', (code,))
                 conn.execute('DELETE FROM user_sessions WHERE user_id = ?', (r[0],))
                 conn.commit()
-            fails.pop('rst:' + ip, None)
+            reset_fail('rst:' + ip)
             return self.send_j(200, {'ok': True})
         if p == '/api/user/logout':
             tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
@@ -1918,8 +2300,14 @@ class H(SimpleHTTPRequestHandler):
                         ap_obj = json.loads(state['athleteProfile'])
                         if isinstance(ap_obj, dict):
                             ap_name = str(ap_obj.get('name') or '').strip()[:40]
-                            if ap_name and ap_name not in ('Mr.Bobrovsky', 'Атлет', 'Athlete'):
+                            if ap_name == '' or ap_name.lower() == str(usr.get('username') or '').lower() or ap_name in ('Mr.Bobrovsky', 'Атлет', 'Athlete'):
+                                conn.execute('UPDATE users SET display_name = "" WHERE id = ?', (usr['id'],))
+                            else:
                                 conn.execute('UPDATE users SET display_name = ? WHERE id = ?', (ap_name, usr['id']))
+                            if 'avatar' in ap_obj:
+                                ap_av = str(ap_obj.get('avatar') or '').strip()
+                                if ap_av == '' or ap_av.startswith(('http://', 'https://', 'content/uploads/', 'img/', 'data:image/')):
+                                    conn.execute('UPDATE users SET avatar = ? WHERE id = ?', (ap_av[:200000], usr['id']))
                     except Exception:
                         pass
                 conn.commit()
@@ -2461,25 +2849,30 @@ class H(SimpleHTTPRequestHandler):
                 return self.send_j(200, {'ok': True, 'status': res['status'], 'verified': res['verified']})
             return self.send_j(200, {'ok': True, 'ignored': True})
         if p == '/api/login':
-            ip = self.client_address[0]
-            c, last = fails.get(ip, (0, 0))
-            if c >= 5 and time.time() - last < 60:
+            ip = get_client_ip(self)
+            allowed, _, _ = check_fail_limit('adm:' + ip, 5, 60)
+            if not allowed:
                 return self.send_j(429, {'error': 'Слишком много попыток, подождите минуту'})
             try:
                 pw = json.loads(self.body(4096) or b'{}').get('password', '')
             except Exception:
                 pw = ''
             if check_pw(pw):
-                fails.pop(ip, None)
+                reset_fail('adm:' + ip)
                 t = secrets.token_urlsafe(32)
                 with lock:
                     tokens[t] = time.time() + 12 * 3600
                 return self.send_j(200, {'token': t})
-            if len(fails) > 200:
-                fails.clear()
-            fails[ip] = (c + 1, time.time())
+            record_fail('adm:' + ip, ttl=300)
             time.sleep(1)
             return self.send_j(401, {'error': 'Неверный пароль'})
+        if p in ('/api/admin/logout', '/api/logout'):
+            auth = self.headers.get('Authorization', '').strip()
+            t = auth[7:].strip() if auth.lower().startswith('bearer ') else auth
+            if t:
+                with lock:
+                    tokens.pop(t, None)
+            return self.send_j(200, {'ok': True})
         if not self.authed():
             return self.send_j(401, {'error': 'unauthorized'})
         if p == '/api/ai/settings':
@@ -2521,10 +2914,13 @@ class H(SimpleHTTPRequestHandler):
             name = re.sub(r'[^a-zA-Z0-9_-]', '', parse_qs(u.query).get('name', ['file'])[0])[:40] or 'file'
             ext = os.path.splitext(self.headers.get('X-Filename', ''))[1].lower()
             if ext not in EXT:
-                return self.send_j(400, {'error': 'Разрешены: png, jpg, webp, gif, svg, mp4, webm'})
+                return self.send_j(400, {'error': 'Разрешены: png, jpg, webp, gif, mp4, webm'})
             raw = self.body()
             if raw is None or not raw:
                 return self.send_j(400, {'error': 'Файл пустой или больше 64 МБ'})
+            valid, err = validate_upload_content(ext, raw)
+            if not valid:
+                return self.send_j(400, {'error': err})
             for old in os.listdir(UPLOADS):
                 if os.path.splitext(old)[0] == name:
                     os.remove(os.path.join(UPLOADS, old))
@@ -2634,9 +3030,40 @@ class H(SimpleHTTPRequestHandler):
                 res = yookassa_test_connection(shop_id, secret_key)
                 return self.send_j(200, {'ok': True, 'account': res})
             except RuntimeError as e:
-                return self.send_j(400, {'error': str(e)})
+                err_msg = str(e).replace(secret_key, '***')
+                return self.send_j(400, {'error': err_msg})
             except Exception as e:
-                return self.send_j(500, {'error': f'Ошибка соединения: {e}'})
+                err_msg = str(e).replace(secret_key, '***')
+                return self.send_j(500, {'error': f'Ошибка соединения: {err_msg}'})
+        if p == '/api/admin/reports/status':
+            try:
+                j = json.loads(self.body(4096) or b'{}')
+                rid = int(j.get('reportId') or 0)
+            except Exception:
+                return self.send_j(400, {'error': 'bad json'})
+            new_status = str(j.get('status') or '').strip().lower()
+            if rid <= 0 or new_status not in ('new', 'reviewed', 'closed'):
+                return self.send_j(400, {'error': 'Укажите корректный reportId и статус (new, reviewed, closed)'})
+            note_provided = 'note' in j
+            note_val = str(j.get('note') or '').strip()[:500] if note_provided else None
+            now = int(time.time())
+            with db_lock, sqlite3.connect(DB_FILE) as conn:
+                exists = conn.execute('SELECT id FROM user_reports WHERE id = ?', (rid,)).fetchone()
+                if not exists:
+                    return self.send_j(404, {'error': 'Жалоба не найдена'})
+                rev_ts = now if new_status in ('reviewed', 'closed') else 0
+                if note_provided:
+                    conn.execute(
+                        'UPDATE user_reports SET status = ?, reviewed_at = ?, admin_note = ? WHERE id = ?',
+                        (new_status, rev_ts, note_val, rid)
+                    )
+                else:
+                    conn.execute(
+                        'UPDATE user_reports SET status = ?, reviewed_at = ? WHERE id = ?',
+                        (new_status, rev_ts, rid)
+                    )
+                conn.commit()
+            return self.send_j(200, {'ok': True, 'reportId': rid, 'status': new_status, 'reviewedAt': rev_ts})
         if p == '/api/admin/telegram':
             if not self.authed():
                 return self.send_j(401, {'error': 'unauthorized'})
@@ -2669,7 +3096,8 @@ class H(SimpleHTTPRequestHandler):
                         return self.send_j(200, {'ok': True, 'bot': b_info})
                     return self.send_j(400, {'error': data.get('description', 'Ошибка Telegram API')})
             except Exception as e:
-                return self.send_j(400, {'error': f'Не удалось соединиться с Telegram: {e}'})
+                err_msg = str(e).replace(tok, '***')
+                return self.send_j(400, {'error': f'Не удалось соединиться с Telegram: {err_msg}'})
         self.send_j(404, {'error': 'not found'})
 
 if __name__ == '__main__':
@@ -2678,5 +3106,5 @@ if __name__ == '__main__':
     threading.Thread(target=telegram_bot_worker, daemon=True).start()
     print('Flexa: http://localhost:%d   Admin: http://localhost:%d/admin.html' % (PORT, PORT))
     ThreadingHTTPServer.allow_reuse_address = True
-    httpd = ThreadingHTTPServer(('0.0.0.0', PORT), H)
+    httpd = ThreadingHTTPServer(('127.0.0.1', PORT), H)
     httpd.serve_forever()
