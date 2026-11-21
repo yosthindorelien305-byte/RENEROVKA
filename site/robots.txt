@@ -1,0 +1,12 @@
+User-agent: *
+Allow: /
+Allow: /style.css
+Allow: /*.js$
+Allow: /*.css$
+Allow: /img/
+Allow: /content/uploads/
+Disallow: /admin.html
+Disallow: /api/
+Disallow: /server_data/
+
+Sitemap: https://rizzafit.ru/sitemap.xml
