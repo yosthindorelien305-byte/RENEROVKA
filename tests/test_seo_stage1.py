@@ -12,7 +12,7 @@ SITE = os.path.join(ROOT, "site")
 ROBOTS_FILE = os.path.join(SITE, "robots.txt")
 SITEMAP_FILE = os.path.join(SITE, "sitemap.xml")
 INDEX_FILE = os.path.join(SITE, "index.html")
-LOGO_FILE = os.path.join(SITE, "content", "uploads", "logo.jpg")
+LOGO_FILE = os.path.join(SITE, "content", "uploads", "logo.png")
 
 
 class TestSeoStage1Files(unittest.TestCase):
@@ -90,7 +90,7 @@ class TestSeoStage1Files(unittest.TestCase):
         self.assertIn('<meta property="og:url" content="https://rizzafit.ru/">', html)
         self.assertIn('<meta property="og:title"', html)
         self.assertIn('<meta property="og:description"', html)
-        self.assertIn('<meta property="og:image" content="https://rizzafit.ru/content/uploads/logo.jpg">', html)
+        self.assertIn('<meta property="og:image" content="https://rizzafit.ru/content/uploads/logo.png">', html)
         self.assertIn('<meta property="og:site_name" content="RizzaFit">', html)
         self.assertIn('<meta property="og:locale" content="ru_RU">', html)
 
@@ -98,7 +98,7 @@ class TestSeoStage1Files(unittest.TestCase):
         self.assertIn('<meta name="twitter:card" content="summary_large_image">', html)
         self.assertIn('<meta name="twitter:title"', html)
         self.assertIn('<meta name="twitter:description"', html)
-        self.assertIn('<meta name="twitter:image" content="https://rizzafit.ru/content/uploads/logo.jpg">', html)
+        self.assertIn('<meta name="twitter:image" content="https://rizzafit.ru/content/uploads/logo.png">', html)
 
     def test_schema_org_json_ld_validity(self):
         """index.html must contain valid Schema.org JSON-LD structured data with WebSite and WebApplication."""
@@ -127,8 +127,8 @@ class TestSeoStage1Files(unittest.TestCase):
 
     def test_logo_image_asset_exists(self):
         """The image referenced by OpenGraph and Twitter card must physically exist on disk."""
-        self.assertTrue(os.path.isfile(LOGO_FILE), "site/content/uploads/logo.jpg must exist on disk")
-        self.assertGreater(os.path.getsize(LOGO_FILE), 1000, "logo.jpg must be a valid non-empty image file")
+        self.assertTrue(os.path.isfile(LOGO_FILE), "site/content/uploads/logo.png must exist on disk")
+        self.assertGreater(os.path.getsize(LOGO_FILE), 1000, "logo.png must be a valid non-empty image file")
 
 
 if __name__ == "__main__":
