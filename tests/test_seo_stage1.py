@@ -53,8 +53,8 @@ class TestSeoStage1Files(unittest.TestCase):
         ns = {"ns": "http://www.sitemaps.org/schemas/sitemap/0.9"}
         urls = root_el.findall("ns:url", ns)
 
-        # Only real, existing canonical URL (https://rizzafit.ru/) should be listed
-        self.assertEqual(len(urls), 1, "sitemap.xml must contain only the real indexable canonical URL")
+        # Only real, existing canonical URLs should be listed (root and public fitify pages in Stage 2)
+        self.assertEqual(len(urls), 3, "sitemap.xml must contain only real indexable canonical URLs")
 
         loc_el = urls[0].find("ns:loc", ns)
         self.assertIsNotNone(loc_el, "<loc> element missing in sitemap URL entry")
