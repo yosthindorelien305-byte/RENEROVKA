@@ -1218,6 +1218,9 @@
       clearInterval(window._chatPollTimer);
       window._chatPollTimer = null;
     }
+    if (typeof window._cancelCoachRequest === 'function') {
+      try { window._cancelCoachRequest(); } catch (_) {}
+    }
     const tok = localStorage.userToken;
     if (tok && isLocalToken(tok)) await pushCloudSync();
     else if (tok) fetch('api/user/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + tok } }).catch(() => {});
@@ -4101,8 +4104,58 @@
     }, exerciseCard);
     if (name == 'coach' && COACH.enabled) {
       const box = document.getElementById('msgs'), inp = document.getElementById('cin');
-      let hist2 = [];
-      try { hist2 = JSON.parse(localStorage.coach || '[]'); if (!Array.isArray(hist2)) hist2 = []; } catch (e) { hist2 = []; }
+      const getCoachStorageKey = () => {
+        const uTok = (typeof localStorage !== 'undefined' && (localStorage.userToken || (localStorage.getItem && localStorage.getItem('userToken')))) || '';
+        const uName = (typeof localStorage !== 'undefined' && (localStorage.userName || (localStorage.getItem && localStorage.getItem('userName')))) || '';
+        const cleanName = String(uName).trim().toLowerCase();
+        if (uTok && typeof isLocalToken === 'function' && isLocalToken(uTok)) {
+          return 'coach_local_' + (cleanName || 'user');
+        }
+        if (uTok && cleanName) {
+          return 'coach_u_' + cleanName;
+        }
+        return 'coach_guest';
+      };
+
+      const loadCoachHist = () => {
+        const k = getCoachStorageKey();
+        let h = [];
+        try {
+          const raw = (typeof localStorage !== 'undefined' && (localStorage[k] || (localStorage.getItem && localStorage.getItem(k)))) || '';
+          if (raw) {
+            h = JSON.parse(raw);
+          } else if (k === 'coach_guest') {
+            const leg = (typeof localStorage !== 'undefined' && (localStorage.coach || (localStorage.getItem && localStorage.getItem('coach')))) || '';
+            if (leg) h = JSON.parse(leg);
+          }
+          if (!Array.isArray(h)) h = [];
+        } catch (_) { h = []; }
+        return h;
+      };
+
+      const saveCoachHist = h => {
+        try {
+          const k = getCoachStorageKey();
+          const str = JSON.stringify(h.slice(-30));
+          if (typeof localStorage !== 'undefined') {
+            localStorage[k] = str;
+            if (typeof localStorage.setItem === 'function') localStorage.setItem(k, str);
+          }
+        } catch (_) {}
+      };
+
+      let hist2 = loadCoachHist();
+      let busy = false;
+      let coachReqSeq = 0;
+      let coachAbort = null;
+      let activeClearPromise = null;
+
+      window._cancelCoachRequest = () => {
+        coachReqSeq++;
+        busy = false;
+        if (coachAbort) { try { coachAbort.abort(); } catch (_) {} coachAbort = null; }
+      };
+
       const md = x => esc(x)
         .replace(/\[\[(program|workout|exercise):(\d+)\|([^\]]+)\]\]/g, (m, k, id, nm) => `<a class="ref" href="#/${k}/${id}">${nm}</a>`)
         .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
@@ -4112,18 +4165,80 @@
       const draw = () => { box.innerHTML = bubble('model', t('coachHi')) + hist2.map(m => bubble(m.role, m.text)).join(''); window.scrollTo(0, document.body.scrollHeight); };
       const send = async q => {
         q = (q || '').trim(); if (!q || busy) return; busy = true; inp.value = '';
+        if (activeClearPromise) {
+          try { await activeClearPromise; } catch (_) {}
+        }
+        const mySeq = ++coachReqSeq;
+        const myStorageKey = getCoachStorageKey();
+        if (coachAbort) { try { coachAbort.abort(); } catch (_) {} }
+        coachAbort = typeof AbortController !== 'undefined' ? new AbortController() : null;
+
+        const clientReqId = 'cr_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
         hist2.push({ role: 'user', text: q }); draw();
         box.insertAdjacentHTML('beforeend', `<div class="m model" id="typ"><div class="mb typing"><i></i><i></i><i></i></div></div>`); window.scrollTo(0, document.body.scrollHeight);
         try {
-          const r = await fetch('/api/coach', { method: 'POST', body: JSON.stringify({ messages: hist2.slice(-12) }) });
+          const uTok = localStorage.userToken || '';
+          const headers = { 'Content-Type': 'application/json' };
+          if (uTok && typeof isLocalToken === 'function' && !isLocalToken(uTok)) {
+            headers['Authorization'] = 'Bearer ' + uTok;
+          }
+          const fetchOpts = {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ message: q, reqId: clientReqId, messages: hist2.slice(-12) })
+          };
+          if (coachAbort) fetchOpts.signal = coachAbort.signal;
+          const r = await fetch('/api/coach', fetchOpts);
           const j = await r.json();
+          if (mySeq !== coachReqSeq || myStorageKey !== getCoachStorageKey()) return;
           hist2.push({ role: 'model', text: r.ok ? j.reply : '⚠️ ' + (j.error || 'Error') });
-        } catch (e) { hist2.push({ role: 'model', text: '⚠️ ' + (L == 'ru' ? 'Нет связи с сервером' : 'Connection error') }); }
-        hist2 = hist2.slice(-30); localStorage.coach = JSON.stringify(hist2); busy = false; draw();
+        } catch (e) {
+          if (mySeq !== coachReqSeq || myStorageKey !== getCoachStorageKey() || (e && e.name === 'AbortError')) return;
+          hist2.push({ role: 'model', text: '⚠️ ' + (L == 'ru' ? 'Нет связи с сервером' : 'Connection error') });
+        }
+        if (mySeq !== coachReqSeq || myStorageKey !== getCoachStorageKey()) return;
+        hist2 = hist2.slice(-30);
+        saveCoachHist(hist2);
+        busy = false;
+        draw();
       };
       document.getElementById('cform').onsubmit = e => { e.preventDefault(); send(inp.value); };
       document.querySelectorAll('.chip2').forEach(b => b.onclick = () => send(b.dataset.q));
-      document.getElementById('cclr').onclick = () => { hist2 = []; localStorage.coach = '[]'; draw(); };
+      document.getElementById('cclr').onclick = async () => {
+        coachReqSeq++;
+        busy = false;
+        if (coachAbort) { try { coachAbort.abort(); } catch (_) {} coachAbort = null; }
+        const prevHist = hist2;
+        hist2 = [];
+        const currentKey = getCoachStorageKey();
+        try { localStorage[currentKey] = '[]'; } catch (_) {}
+        draw();
+        const uTok = localStorage.userToken || '';
+        const headers = {};
+        if (uTok && typeof isLocalToken === 'function' && !isLocalToken(uTok)) {
+          headers['Authorization'] = 'Bearer ' + uTok;
+        }
+        activeClearPromise = fetch('/api/coach/clear', { method: 'POST', headers })
+          .then(async r => {
+            if (!r.ok) {
+              const errJson = await r.json().catch(() => ({}));
+              throw new Error(errJson.error || 'Ошибка очистки на сервере');
+            }
+            return r;
+          })
+          .catch(err => {
+            // Если запрос очистки завершился ошибкой и пользователь не успел отправить новый вопрос
+            if (hist2.length === 0) {
+              hist2 = prevHist;
+              saveCoachHist(hist2);
+              draw();
+              showAppToast(CFG.brand || 'RizzaFit', '⚠️ ' + (err.message || (L == 'ru' ? 'Не удалось очистить историю' : 'Failed to clear history')));
+            }
+          })
+          .finally(() => {
+            activeClearPromise = null;
+          });
+      };
       draw(); window.scrollTo(0, 0);
     }
     if (name == 'program') {

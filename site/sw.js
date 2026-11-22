@@ -6,6 +6,7 @@ const CORE_ASSETS = [
   './texts.js',
   './muscles.js',
   './athlete_profile.js',
+  './analytics.js',
   './app.js',
   './manifest.json',
   './img/logo.svg',
