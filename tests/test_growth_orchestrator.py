@@ -1412,6 +1412,309 @@ class TestGrowthOrchestrator(unittest.TestCase):
             data2 = json.loads(body2.decode("utf-8"))
             self.assertEqual(data2.get("reply"), "Успешный ответ после восстановления")
 
+    def test_default_ai_provider_is_builtin_and_status_enabled(self):
+        """По умолчанию без ai.json провайдер builtin и /api/coach/status возвращает enabled=True."""
+        self.assertEqual(server.AI_DEFAULT.get("provider"), "builtin")
+        self.assertTrue(server.AI_DEFAULT.get("enabled"))
+        with patch.object(server, "AI_FILE", os.path.join(ROOT, "server_data", "__nonexistent_ai_test__.json")):
+            status, headers, body = invoke_handler("GET", "/api/coach/status")
+            self.assertEqual(status, 200)
+            data = json.loads(body.decode("utf-8"))
+            self.assertTrue(data.get("enabled"))
+            reply = server.ask_ai([{"role": "user", "text": "Как похудеть?"}], "RizzaFit", None)
+            self.assertIn("Дефицит калорий", reply)
+
+    def test_ai_settings_still_supports_external_providers_and_hides_key(self):
+        """Администратор по-прежнему может переключать провайдеров (Gemini/OpenAI/builtin), а API не раскрывает ключ."""
+        with patch.object(server, "ai_cfg", return_value={
+            "provider": "openai",
+            "base_url": "https://api.deepseek.com",
+            "key": "sk-secret-super-1234",
+            "model": "deepseek-v4-flash",
+            "enabled": True,
+            "prompt": ""
+        }), patch.object(server.H, "authed", return_value=True):
+            status, _, body = invoke_handler("GET", "/api/ai/settings")
+            self.assertEqual(status, 200)
+            data = json.loads(body.decode("utf-8"))
+            self.assertEqual(data.get("provider"), "openai")
+            self.assertTrue(data.get("hasKey"))
+            self.assertEqual(data.get("keyHint"), "…1234")
+            self.assertNotIn("sk-secret-super", body.decode("utf-8"))
+
+    def test_coach_history_endpoint_security_and_isolation(self):
+        """GET /api/coach/history:
+        - гость без cookie -> 200 [], не выдает Set-Cookie;
+        - гость с валидным coach_sid -> получает только свою историю без req_id/req_hash;
+        - строгая изоляция между гостями и авторизованными пользователями;
+        - невалидный Authorization: Bearer -> строго 401 (без fallback на гостя);
+        - после POST /api/coach/clear возвращает [].
+        """
+        # 1. Гость без cookie
+        st, hdrs, raw = invoke_handler("GET", "/api/coach/history")
+        self.assertEqual(st, 200)
+        self.assertEqual(json.loads(raw.decode("utf-8")), {"messages": []})
+        self.assertNotIn("set-cookie", hdrs)
+
+        # 2. Невалидный / истекший Bearer -> строго 401 даже если передан валидный cookie гостя
+        st_bad, _, raw_bad = invoke_handler("GET", "/api/coach/history", headers={
+            "Authorization": "Bearer invalid_token_xyz_999",
+            "Cookie": "coach_sid=guest_valid_sid_1234567890"
+        })
+        self.assertEqual(st_bad, 401)
+        self.assertIn("error", json.loads(raw_bad.decode("utf-8")))
+
+        st_empty_b, _, _ = invoke_handler("GET", "/api/coach/history", headers={
+            "Authorization": "Bearer   "
+        })
+        self.assertEqual(st_empty_b, 401)
+
+        # 3. Создаем диалог гостя A и гостя B
+        sid_a = "sid_hist_guest_A_1234567890"
+        sid_b = "sid_hist_guest_B_1234567890"
+        with patch.object(server, "ask_ai", side_effect=["Ответ гостю A", "Ответ гостю B"]):
+            ba = json.dumps({"message": "Вопрос A", "reqId": "req_ha_1"}).encode("utf-8")
+            st_pa, _, _ = invoke_handler("POST", "/api/coach", body=ba, headers={
+                "Content-Length": str(len(ba)), "Content-Type": "application/json", "Cookie": f"coach_sid={sid_a}"
+            })
+            self.assertEqual(st_pa, 200)
+
+            bb = json.dumps({"message": "Вопрос B", "reqId": "req_hb_1"}).encode("utf-8")
+            st_pb, _, _ = invoke_handler("POST", "/api/coach", body=bb, headers={
+                "Content-Length": str(len(bb)), "Content-Type": "application/json", "Cookie": f"coach_sid={sid_b}"
+            })
+            self.assertEqual(st_pb, 200)
+
+        st_ga, _, raw_ga = invoke_handler("GET", "/api/coach/history", headers={"Cookie": f"coach_sid={sid_a}"})
+        self.assertEqual(st_ga, 200)
+        msgs_a = json.loads(raw_ga.decode("utf-8")).get("messages", [])
+        self.assertEqual(msgs_a, [
+            {"role": "user", "text": "Вопрос A"},
+            {"role": "model", "text": "Ответ гостю A"}
+        ])
+        self.assertNotIn("req_id", raw_ga.decode("utf-8"))
+        self.assertNotIn("req_hash", raw_ga.decode("utf-8"))
+
+        st_gb, _, raw_gb = invoke_handler("GET", "/api/coach/history", headers={"Cookie": f"coach_sid={sid_b}"})
+        self.assertEqual(st_gb, 200)
+        self.assertEqual(json.loads(raw_gb.decode("utf-8")).get("messages", []), [
+            {"role": "user", "text": "Вопрос B"},
+            {"role": "model", "text": "Ответ гостю B"}
+        ])
+
+        # 4. Авторизованный пользователь с тем же guest cookie видит только свою историю
+        uid = 99881
+        tok = "tok_hist_user_99881"
+        now_ts = int(server.time.time())
+        try:
+            with server.db_lock, server.sqlite3.connect(server.DB_FILE) as conn:
+                conn.execute(
+                    "INSERT INTO users(id, username, display_name, email, plan, plan_expires_at, is_blocked, avatar, pw_salt, pw_hash, created_at) "
+                    "VALUES (?, 'hist_u1', 'Hist U1', 'hist1@test.com', 'free', 0, 0, '', '', '', ?) "
+                    "ON CONFLICT(id) DO UPDATE SET is_blocked = 0",
+                    (uid, now_ts)
+                )
+                conn.execute(
+                    "INSERT INTO user_sessions(token, user_id, expires_at) VALUES (?, ?, ?) "
+                    "ON CONFLICT(token) DO UPDATE SET expires_at = excluded.expires_at",
+                    (tok, uid, now_ts + 3600)
+                )
+                conn.commit()
+
+            with patch.object(server, "ask_ai", return_value="Секретный ответ пользователю"):
+                bu = json.dumps({"message": "Личный вопрос", "reqId": "req_hu_1"}).encode("utf-8")
+                st_pu, _, _ = invoke_handler("POST", "/api/coach", body=bu, headers={
+                    "Content-Length": str(len(bu)),
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {tok}",
+                    "Cookie": f"coach_sid={sid_a}"
+                })
+                self.assertEqual(st_pu, 200)
+
+            st_hu, _, raw_hu = invoke_handler("GET", "/api/coach/history", headers={
+                "Authorization": f"Bearer {tok}",
+                "Cookie": f"coach_sid={sid_a}"
+            })
+            self.assertEqual(st_hu, 200)
+            self.assertEqual(json.loads(raw_hu.decode("utf-8")).get("messages", []), [
+                {"role": "user", "text": "Личный вопрос"},
+                {"role": "model", "text": "Секретный ответ пользователю"}
+            ])
+
+            # Очистка для гостя A не очищает пользователя и очищает GET /api/coach/history для A
+            st_ca, _, _ = invoke_handler("POST", "/api/coach/clear", headers={"Cookie": f"coach_sid={sid_a}"})
+            self.assertEqual(st_ca, 200)
+            st_ga2, _, raw_ga2 = invoke_handler("GET", "/api/coach/history", headers={"Cookie": f"coach_sid={sid_a}"})
+            self.assertEqual(st_ga2, 200)
+            self.assertEqual(json.loads(raw_ga2.decode("utf-8")).get("messages"), [])
+            st_hu2, _, raw_hu2 = invoke_handler("GET", "/api/coach/history", headers={"Authorization": f"Bearer {tok}"})
+            self.assertEqual(st_hu2, 200)
+            self.assertEqual(len(json.loads(raw_hu2.decode("utf-8")).get("messages", [])), 2)
+        finally:
+            with server.db_lock, server.sqlite3.connect(server.DB_FILE) as conn:
+                conn.execute("DELETE FROM user_sessions WHERE token = ?", (tok,))
+                conn.execute("DELETE FROM users WHERE id = ?", (uid,))
+                conn.execute("DELETE FROM coach_sessions WHERE session_id = ?", (f"user_{uid}",))
+                conn.commit()
+
+    def test_frontend_coach_navigation_ui_and_cache_version(self):
+        """Проверяет наличие кнопки AI Coach в шапке, карточки на главной, отсутствие лишней вкладки в #nav,
+        стили .typing и актуальную версию кэша v61.
+        """
+        with open(os.path.join(SITE, "index.html"), encoding="utf-8") as f:
+            index_html = f.read()
+        with open(os.path.join(SITE, "app.js"), encoding="utf-8") as f:
+            app_js = f.read()
+        with open(os.path.join(SITE, "style.css"), encoding="utf-8") as f:
+            style_css = f.read()
+        with open(SW_FILE, encoding="utf-8") as f:
+            sw_js = f.read()
+
+        self.assertIn('id="top-coach-btn"', index_html)
+        self.assertIn('href="#/coach"', index_html)
+        nav_section = index_html.split('<nav id="nav">')[1].split('</nav>')[0]
+        self.assertNotIn('data-k="coach"', nav_section)
+        self.assertIn("app.js?v=61", index_html)
+        self.assertIn("style.css?v=61", index_html)
+        self.assertIn("flexa-shell-v61", sw_js)
+
+        self.assertIn("fetch('/api/coach/status')", app_js)
+        self.assertIn("fetch('/api/coach/history'", app_js)
+        self.assertIn('id="home-coach-card"', app_js)
+        self.assertIn('id="coach-retry-btn"', app_js)
+
+        self.assertIn(".top-coach-btn", style_css)
+        self.assertIn("@keyframes coachTypingDot", style_css)
+        self.assertIn(".coach-retry-btn", style_css)
+
+    def test_browser_client_coach_error_retry_same_req_id_and_server_history(self):
+        """Проверяет на клиентском коде app.js:
+        1. Подгрузку истории из GET /api/coach/history при открытии #/coach.
+        2. Блокировку инпута/кнопки на время запроса и снятие блокировки после ответа.
+        3. Повтор (Retry) при сбое 502/сети с тем же самым reqId без дублирования сообщения пользователя.
+        """
+        js_retry_script = r"""
+        const fs = require('fs');
+        const code = fs.readFileSync('site/app.js', 'utf8');
+
+        const localStorageData = {};
+        const localStorage = {
+            getItem(k) { return localStorageData[k] || null; },
+            setItem(k, v) { localStorageData[k] = String(v); },
+            removeItem(k) { delete localStorageData[k]; }
+        };
+        const storageProxy = new Proxy(localStorage, {
+            get(t, p) { return p in t ? t[p] : localStorageData[p]; },
+            set(t, p, v) { localStorageData[p] = String(v); return true; }
+        });
+
+        const sendBtn = { disabled: false };
+        const elements = {
+            msgs: { innerHTML: '', insertAdjacentHTML(pos, html) { this.innerHTML += html; } },
+            cin: { value: '', disabled: false },
+            cform: { querySelector(sel) { return sel === '.send' ? sendBtn : null; } },
+            cclr: {},
+            'coach-retry-btn': {}
+        };
+        const document = {
+            body: { scrollHeight: 1000 },
+            getElementById(id) {
+                if (!elements[id]) elements[id] = { innerHTML: '', value: '', insertAdjacentHTML(p, h) { this.innerHTML += h; } };
+                return elements[id];
+            },
+            querySelectorAll(sel) { return []; }
+        };
+        const window = { scrollTo() {}, document };
+
+        const postPayloads = [];
+        let postAttempt = 0;
+
+        global.fetch = function(url, opts) {
+            if (url === '/api/coach/history') {
+                return Promise.resolve({
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ messages: [{ role: 'user', text: 'Старый вопрос' }, { role: 'model', text: 'Старый ответ из БД' }] })
+                });
+            }
+            if (url === '/api/coach') {
+                postPayloads.push(JSON.parse(opts.body));
+                postAttempt++;
+                if (postAttempt === 1) {
+                    return Promise.resolve({ ok: false, status: 502, json: async () => ({ error: 'Временный сбой' }) });
+                }
+                return Promise.resolve({ ok: true, status: 200, json: async () => ({ reply: 'Восстановленный ответ тренера' }) });
+            }
+            return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) });
+        };
+
+        global.localStorage = storageProxy;
+        global.document = document;
+        global.window = window;
+        global.COACH = { enabled: true };
+        global.t = (k) => k;
+        global.esc = (x) => String(x || '');
+        global.L = 'ru';
+        global.CFG = { brand: 'RizzaFit' };
+        global.showAppToast = () => {};
+        global.isLocalToken = () => false;
+
+        const coachBlockMatch = code.match(/if\s*\(name\s*==\s*['"]coach['"]\s*&&\s*COACH\.enabled\)\s*\{([\s\S]*?)\}\s*if\s*\(name\s*==\s*['"]program['"]\)/);
+        if (!coachBlockMatch) throw new Error('Could not extract coach block');
+        const coachFn = new Function('name', coachBlockMatch[1]);
+
+        async function run() {
+            coachFn('coach');
+            await new Promise(r => setTimeout(r, 15));
+
+            if (!elements.msgs.innerHTML.includes('Старый ответ из БД')) {
+                throw new Error('Server history was not hydrated on coach open');
+            }
+
+            elements.cin.value = 'План на ноги';
+            elements.cform.onsubmit({ preventDefault() {} });
+            if (!elements.cin.disabled || !sendBtn.disabled) {
+                throw new Error('Controls should be disabled while generating');
+            }
+            await new Promise(r => setTimeout(r, 15));
+
+            if (elements.cin.disabled || sendBtn.disabled) {
+                throw new Error('Controls should be re-enabled after response');
+            }
+            if (!elements.msgs.innerHTML.includes('coach-retry-btn')) {
+                throw new Error('Retry button should render on 502 failure');
+            }
+            if (localStorageData.coach_guest.includes('Временный сбой')) {
+                throw new Error('Transient error must not be saved to localStorage');
+            }
+
+            // Нажимаем Повторить
+            elements['coach-retry-btn'].onclick();
+            await new Promise(r => setTimeout(r, 15));
+
+            if (postPayloads.length !== 2) {
+                throw new Error('Expected 2 POST calls, got ' + postPayloads.length);
+            }
+            if (postPayloads[0].reqId !== postPayloads[1].reqId) {
+                throw new Error('Retry must reuse identical reqId! ' + postPayloads[0].reqId + ' != ' + postPayloads[1].reqId);
+            }
+            const userCount = (JSON.parse(localStorageData.coach_guest)).filter(m => m.text === 'План на ноги').length;
+            if (userCount !== 1) {
+                throw new Error('User message duplicated on retry: count=' + userCount);
+            }
+            if (!elements.msgs.innerHTML.includes('Восстановленный ответ тренера')) {
+                throw new Error('Retried reply not rendered');
+            }
+            console.log('SUCCESS: Retry reqId, busy controls, and server history verified.');
+        }
+
+        run().catch(e => { console.error(e); process.exit(1); });
+        """
+        import subprocess
+        proc = subprocess.run(["node", "-e", js_retry_script], capture_output=True, text=True, cwd=ROOT)
+        self.assertEqual(proc.returncode, 0, f"Node retry test failed:\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}")
+        self.assertIn("SUCCESS", proc.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
