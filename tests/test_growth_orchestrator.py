@@ -1754,7 +1754,7 @@ class TestGrowthOrchestrator(unittest.TestCase):
                 self.assertEqual(d_get["keyHint"], "…7766")
                 self.assertNotIn("AIzaFakeTestKey99887766", raw_get)
 
-                # 2. Повторное сохранение с пустым и пробельным ключом -> ключ сохраняется
+                # 2. Повторное сохранение с пустым и пробельным ключом -> ключ и выбранная модель сохраняются без принудительной подмены
                 for empty_val in ("", "   "):
                     p2 = json.dumps({
                         "provider": "gemini",
@@ -1770,7 +1770,7 @@ class TestGrowthOrchestrator(unittest.TestCase):
                     self.assertEqual(st2, 200)
                     saved = server.ai_cfg()
                     self.assertEqual(saved["key"], "AIzaFakeTestKey99887766")
-                    self.assertEqual(saved["model"], "gemini-2.5-flash")
+                    self.assertEqual(saved["model"], "gemini-3.8-flash")
                     self.assertEqual(saved["prompt"], "Обновленный промпт")
 
                 # 3. Очистка ключа по clearKey=True
@@ -1817,9 +1817,9 @@ class TestGrowthOrchestrator(unittest.TestCase):
                 })
                 self.assertEqual(st_bi, 200)
 
-    def test_ask_gemini_filters_thought_parts_and_uses_gemini_2_5_flash(self):
-        """ask_gemini() вызывает v1beta/models/gemini-2.5-flash, передает контекст и systemInstruction,
-        отключает thinkingBudget для 2.5-flash, отфильтровывает thought-части и сохраняет fallback на builtin.
+    def test_ask_gemini_filters_thought_parts_and_respects_configured_model(self):
+        """ask_gemini() вызывает выбранную модель (без подмены и без thinkingBudget=0 для 2.5),
+        передает контекст и systemInstruction, отфильтровывает thought-части и сохраняет fallback на builtin.
         """
         captured_reqs = []
 
@@ -1834,49 +1834,51 @@ class TestGrowthOrchestrator(unittest.TestCase):
                     "content": {
                         "parts": [
                             {"text": "Скрытые рассуждения модели", "thought": True},
-                            {"text": "Сделай 3 подхода по 12 повторений "} ,
+                            {"text": "Сделай 3 подхода по 12 повторений "},
                             {"text": "и отдыхай 60 секунд."}
                         ]
                     }
                 }]
             }
 
-        cfg_flash = {
+        cfg_default = {
             "provider": "gemini", "base_url": "", "key": "AIzaMockGeminiKey",
-            "model": "gemini-2.5-flash", "enabled": True, "prompt": "Учитывай инвентарь"
+            "model": "gemini-3.8-flash", "enabled": True, "prompt": "Учитывай инвентарь"
         }
         msgs = [
             {"role": "user", "text": "У меня дома только гантели"},
             {"role": "model", "text": "Отлично, какая цель?"},
             {"role": "user", "text": "Набрать силу спины"}
         ]
-        with patch.object(server, "ai_cfg", return_value=cfg_flash), patch.object(server, "http_json", side_effect=fake_http_json):
+        with patch.object(server, "ai_cfg", return_value=cfg_default), patch.object(server, "http_json", side_effect=fake_http_json):
             reply = server.ask_ai(msgs, "RizzaFit", None)
 
         self.assertEqual(reply, "Сделай 3 подхода по 12 повторений и отдыхай 60 секунд.")
         self.assertNotIn("Скрытые рассуждения", reply)
         self.assertEqual(len(captured_reqs), 1)
         req0 = captured_reqs[0]
-        self.assertEqual(req0["url"], "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")
+        self.assertEqual(req0["url"], "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent")
         self.assertEqual(req0["headers"].get("x-goog-api-key"), "AIzaMockGeminiKey")
         self.assertEqual(len(req0["body"]["contents"]), 3)
         self.assertIn("Учитывай инвентарь", req0["body"]["systemInstruction"]["parts"][0]["text"])
-        self.assertEqual(req0["body"]["generationConfig"].get("thinkingConfig"), {"thinkingBudget": 0})
+        self.assertNotIn("thinkingConfig", req0["body"]["generationConfig"])
 
-        # Для gemini-2.5-pro thinkingBudget=0 НЕ передается
-        cfg_pro = dict(cfg_flash, model="gemini-2.5-pro")
-        with patch.object(server, "ai_cfg", return_value=cfg_pro), patch.object(server, "http_json", side_effect=fake_http_json):
+        # Произвольная модель администратора сохраняется и используется без принудительной нормализации
+        cfg_custom = dict(cfg_default, model="gemini-3.7-flash")
+        with patch.object(server, "ai_cfg", return_value=cfg_custom), patch.object(server, "http_json", side_effect=fake_http_json):
             server.ask_ai(msgs[-1:], "RizzaFit", None)
-        self.assertNotIn("thinkingConfig", captured_reqs[-1]["body"]["generationConfig"])
+        self.assertEqual(captured_reqs[-1]["url"], "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent")
 
-        # Fallback на builtin при AIProviderError
-        with patch.object(server, "ai_cfg", return_value=cfg_flash), patch.object(server, "http_json", side_effect=server.AIProviderError("503 Unavailable")):
+        # Fallback на builtin при недоступности всех моделей Gemini
+        with patch.object(server, "ai_cfg", return_value=cfg_default), \
+             patch.object(server.time, "sleep"), \
+             patch.object(server, "http_json", side_effect=server.AIProviderError("Ошибка AI-провайдера (503): High demand", status_code=503)):
             fallback_reply = server.ask_ai([{"role": "user", "text": "Как похудеть?"}], "RizzaFit", None)
             self.assertIn("Дефицит калорий", fallback_reply)
             self.assertIn("встроенным тренером", fallback_reply)
 
     def test_admin_frontend_gemini_autofill_and_base_url_guards(self):
-        """Проверяет защиту от автозаполнения и условную отправку baseUrl в site/admin.js и кэш v56 в site/admin.html."""
+        """Проверяет защиту от автозаполнения, модель по умолчанию gemini-3.8-flash и кэш v57 в site/admin.html."""
         with open(os.path.join(SITE, "admin.js"), encoding="utf-8") as f:
             admin_js = f.read()
         with open(os.path.join(SITE, "admin.html"), encoding="utf-8") as f:
@@ -1884,11 +1886,163 @@ class TestGrowthOrchestrator(unittest.TestCase):
 
         self.assertIn('autocomplete="new-password"', admin_js)
         self.assertIn('autocomplete="off"', admin_js)
-        self.assertIn("GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash'", admin_js)
-        self.assertNotIn("'gemini-3.8-flash'", server.AI_DEFAULT["model"])
+        self.assertIn("GEMINI_DEFAULT_MODEL = 'gemini-3.8-flash'", admin_js)
+        self.assertEqual(server.AI_DEFAULT["model"], "gemini-3.8-flash")
         self.assertIn("if (prov === 'openai')", admin_js)
-        self.assertIn("admin.js?v=56", admin_html)
-        self.assertIn("style.css?v=56", admin_html)
+        self.assertIn("admin.js?v=57", admin_html)
+        self.assertIn("style.css?v=57", admin_html)
+
+    def test_gemini_model_fallback_404_503_429_context_and_provider_config_preserved(self):
+        """Проверяет последовательный fallback моделей Gemini:
+        - HTTP 404 сразу переключает на gemini-3.1-flash-lite без повторов 404;
+        - HTTP 503 выполняет ограниченный retry (с учетом Retry-After) и переключается дальше при провале;
+        - HTTP 429 не уходит в бесконечный цикл и уважает Retry-After (длинный Retry-After сразу идет на fallback);
+        - при переключении сохраняется полный контекст нескольких сообщений;
+        - если все модели Gemini недоступны, вызывается builtin, но provider='gemini' в ai.json не меняется;
+        - успешная основная модель не дергает резервные модели.
+        """
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_ai = os.path.join(tmpdir, "ai.json")
+            with open(tmp_ai, "w", encoding="utf-8") as f:
+                json.dump({
+                    "provider": "gemini",
+                    "base_url": "",
+                    "key": "AIzaTestKeyForFallback9999",
+                    "model": "gemini-2.5-flash",
+                    "enabled": True,
+                    "prompt": ""
+                }, f)
+
+            msgs = [
+                {"role": "user", "text": "Привет, хочу похудеть"},
+                {"role": "model", "text": "Какой у тебя вес и инвентарь?"},
+                {"role": "user", "text": "85 кг, есть гантели дома"},
+            ]
+
+            # 1. HTTP 404 на gemini-2.5-flash -> немедленный переход на gemini-3.1-flash-lite с сохранением контекста
+            called = []
+            def mock_404_then_ok(req):
+                model_name = req.full_url.split("/models/")[1].split(":")[0]
+                body = json.loads(req.data.decode("utf-8"))
+                called.append((model_name, body["contents"]))
+                if model_name == "gemini-2.5-flash":
+                    raise server.AIProviderError("Ошибка AI-провайдера (404): Model not available", status_code=404, reason="Model not available")
+                return {"candidates": [{"content": {"parts": [{"text": "Персональный ответ от резервной модели"}]}}]}
+
+            with patch.object(server, "AI_FILE", tmp_ai), patch.object(server, "http_json", side_effect=mock_404_then_ok):
+                ans = server.ask_ai(msgs, "RizzaFit", None)
+
+            self.assertEqual(ans, "Персональный ответ от резервной модели")
+            self.assertEqual([c[0] for c in called], ["gemini-2.5-flash", "gemini-3.1-flash-lite"])
+            self.assertEqual([len(c[1]) for c in called], [3, 3])
+            self.assertEqual(called[0][1], called[1][1])
+
+            # 2. HTTP 503 на основной (gemini-3.8-flash): 1 ограниченный retry, затем fallback на gemini-3.1-flash-lite -> gemini-3-flash-preview
+            with open(tmp_ai, "w", encoding="utf-8") as f:
+                json.dump({
+                    "provider": "gemini", "base_url": "", "key": "AIzaTestKeyForFallback9999",
+                    "model": "gemini-3.8-flash", "enabled": True, "prompt": ""
+                }, f)
+
+            called_503 = []
+            sleeps = []
+            def mock_503_cascade(req):
+                model_name = req.full_url.split("/models/")[1].split(":")[0]
+                called_503.append(model_name)
+                if model_name in ("gemini-3.8-flash", "gemini-3.1-flash-lite"):
+                    raise server.AIProviderError("503", status_code=503, retry_after=0.25, reason="High demand")
+                return {"candidates": [{"content": {"parts": [{"text": "Ответ от gemini-3-flash-preview"}]}}]}
+
+            with patch.object(server, "AI_FILE", tmp_ai), \
+                 patch.object(server.time, "sleep", side_effect=lambda d: sleeps.append(d)), \
+                 patch.object(server, "http_json", side_effect=mock_503_cascade):
+                ans503 = server.ask_ai(msgs, "RizzaFit", None)
+
+            self.assertEqual(ans503, "Ответ от gemini-3-flash-preview")
+            self.assertEqual(called_503, ["gemini-3.8-flash", "gemini-3.8-flash", "gemini-3.1-flash-lite", "gemini-3-flash-preview"])
+            self.assertEqual(sleeps, [0.25])
+
+            # 3. HTTP 429 с длинным Retry-After (30с): не ждет 30с и не зацикливается, сразу переходит на резервную модель
+            called_429 = []
+            sleeps_429 = []
+            def mock_429_long(req):
+                model_name = req.full_url.split("/models/")[1].split(":")[0]
+                called_429.append(model_name)
+                raise server.AIProviderError("429", status_code=429, retry_after=30.0, reason="Quota exceeded")
+
+            with patch.object(server, "AI_FILE", tmp_ai), \
+                 patch.object(server.time, "sleep", side_effect=lambda d: sleeps_429.append(d)), \
+                 patch.object(server, "http_json", side_effect=mock_429_long):
+                ans_bi = server.ask_ai(msgs, "RizzaFit", None)
+                # Конфигурация provider='gemini' не перезаписывается из-за временной ошибки
+                self.assertEqual(server.ai_cfg()["provider"], "gemini")
+
+            self.assertEqual(called_429, ["gemini-3.8-flash", "gemini-3.1-flash-lite", "gemini-3-flash-preview"])
+            self.assertEqual(sleeps_429, [])
+            self.assertIn("встроенным тренером", ans_bi)
+
+    def test_gemini_auth_and_bad_request_do_not_fallback_and_logs_redact_secrets(self):
+        """Ошибки 400/401/403 НЕ маскируются под временную недоступность / builtin fallback и не перебирают резервные модели.
+        Логи содержат provider, model, status, reason, action и НЕ содержат API-ключ и сообщения пользователя.
+        """
+        secret_key = "AIzaVerySecretKeyDoNotLeak12345"
+        secret_msg = "Мой секретный дневник тренировок вес 92"
+        cfg = {
+            "provider": "gemini", "base_url": "", "key": secret_key,
+            "model": "gemini-3.8-flash", "enabled": True, "prompt": ""
+        }
+
+        for code in (401, 403, 400):
+            calls = []
+            stderr_buf = io.StringIO()
+
+            def mock_urlopen(req, timeout=40):
+                calls.append(req.full_url)
+                err_payload = json.dumps({
+                    "error": {"message": f"HTTP {code} failed with key {secret_key} and Bearer tok_abc"}
+                }).encode("utf-8")
+                raise server.urllib.error.HTTPError(
+                    req.full_url, code, "Error", Message(), io.BytesIO(err_payload)
+                )
+
+            with patch.object(server, "ai_cfg", return_value=cfg), \
+                 patch.object(server.urllib.request, "urlopen", side_effect=mock_urlopen), \
+                 patch.object(server.sys, "stderr", stderr_buf):
+                with self.assertRaises(RuntimeError) as ctx:
+                    server.ask_ai([{"role": "user", "text": secret_msg}], "RizzaFit", None)
+
+            # Резервные модели НЕ вызывались
+            self.assertEqual(len(calls), 1)
+            # Исключение не раскрывает ключ
+            self.assertNotIn(secret_key, str(ctx.exception))
+            if code in (401, 403):
+                self.assertIn("авторизации", str(ctx.exception).lower())
+
+            # Лог безопасен и информативен
+            logs = stderr_buf.getvalue()
+            self.assertIn("provider=gemini", logs)
+            self.assertIn("model=gemini-3.8-flash", logs)
+            self.assertIn(f"status={code}", logs)
+            self.assertIn("no_builtin_fallback", logs)
+            self.assertNotIn(secret_key, logs)
+            self.assertNotIn("tok_abc", logs)
+            self.assertNotIn(secret_msg, logs)
+
+        # Проверяем также, что при успешном fallback на builtin логируется причина без ключа и текста
+        stderr_fb = io.StringIO()
+        with patch.object(server, "ai_cfg", return_value=cfg), \
+             patch.object(server.time, "sleep"), \
+             patch.object(server, "http_json", side_effect=server.AIProviderError(f"503 {secret_key}", status_code=503, reason=f"Overloaded ?key={secret_key}")), \
+             patch.object(server.sys, "stderr", stderr_fb):
+            ans = server.ask_ai([{"role": "user", "text": secret_msg}], "RizzaFit", None)
+
+        self.assertIn("встроенным тренером", ans)
+        fb_logs = stderr_fb.getvalue()
+        self.assertIn("event=provider_fallback", fb_logs)
+        self.assertIn("action=fallback_to:builtin", fb_logs)
+        self.assertNotIn(secret_key, fb_logs)
+        self.assertNotIn(secret_msg, fb_logs)
 
 
 if __name__ == "__main__":
