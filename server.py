@@ -734,7 +734,7 @@ def write_json(name, obj):
     os.replace(tmp, os.path.join(CONTENT, name))
 
 AI_FILE = os.path.join(SECRET_DIR, 'ai.json')
-AI_DEFAULT = {'provider': 'gemini', 'base_url': '', 'key': '', 'model': 'gemini-3.8-flash', 'enabled': True, 'prompt': ''}
+AI_DEFAULT = {'provider': 'builtin', 'base_url': '', 'key': '', 'model': 'gemini-3.8-flash', 'enabled': True, 'prompt': ''}
 coach_hits = {}      # ip -> [timestamps]
 coach_sessions_lock = threading.Lock()
 active_coach_sessions = set()  # set of active session_id strings
@@ -763,6 +763,27 @@ def make_coach_cookie(handler, sid):
     if is_https:
         parts.append('Secure')
     return '; '.join(parts)
+
+def resolve_coach_bearer_user(handler):
+    """Validate optional Authorization header for AI Coach routes.
+
+    Returns (user_dict_or_None, error_message_or_None). If Authorization header
+    is present, invalid/expired/blocked tokens fail closed with an error message.
+    """
+    auth_hdr = handler.headers.get('Authorization', '').strip()
+    if not auth_hdr:
+        return None, None
+    tok = auth_hdr[7:].strip() if auth_hdr.lower().startswith('bearer ') else auth_hdr
+    if not tok:
+        return None, 'Недействительный токен авторизации'
+    usr = get_user_by_token(tok)
+    if not usr or not usr.get('id'):
+        return None, 'Сессия недействительна или истекла, пожалуйста, войдите снова'
+    return usr, None
+
+def is_valid_coach_sid(sid):
+    """Check whether a guest coach_sid cookie meets format and length rules."""
+    return bool(sid and 16 <= len(sid) <= 128 and re.match(r'^[A-Za-z0-9_-]+$', sid))
 
 PLANS = {
     '1m': {'id': '1m', 'name': '1 месяц', 'days': 30, 'price': 290, 'badge': 'Базовый', 'desc': '30 дней PRO-доступа'},
@@ -1419,6 +1440,39 @@ class H(SimpleHTTPRequestHandler):
             if p == '/api/coach/status':
                 c = ai_cfg()
                 return self.send_j(200, {'enabled': ai_ready(c)})
+            if p == '/api/coach/history':
+                usr, auth_err = resolve_coach_bearer_user(self)
+                if auth_err:
+                    return self.send_j(401, {'error': auth_err})
+                if usr:
+                    session_key = f"user_{usr['id']}"
+                else:
+                    sid = parse_cookies(self).get('coach_sid', '')
+                    if not is_valid_coach_sid(sid):
+                        return self.send_j(200, {'messages': []})
+                    session_key = f"guest_{sid}"
+
+                history = []
+                with db_lock, sqlite3.connect(DB_FILE) as conn:
+                    row = conn.execute(
+                        'SELECT messages_json FROM coach_sessions WHERE session_id = ?',
+                        (session_key,)
+                    ).fetchone()
+                    if row and row[0]:
+                        try:
+                            parsed = json.loads(row[0])
+                            if isinstance(parsed, list):
+                                history = parsed
+                        except Exception:
+                            history = []
+
+                out_messages = []
+                for m in history:
+                    if isinstance(m, dict) and m.get('role') in ('user', 'model'):
+                        t = str(m.get('text', '')).strip()
+                        if t:
+                            out_messages.append({'role': m['role'], 'text': t})
+                return self.send_j(200, {'messages': out_messages})
             if p == '/api/community/users' or p == '/api/users':
                 tok = self.headers.get('Authorization', '').replace('Bearer ', '').strip()
                 usr = get_user_by_token(tok)
@@ -2031,21 +2085,16 @@ class H(SimpleHTTPRequestHandler):
             except Exception:
                 return self.send_j(400, {'error': 'Некорректный запрос'})
 
-            auth_hdr = self.headers.get('Authorization', '').strip()
-            usr = None
+            usr, auth_err = resolve_coach_bearer_user(self)
+            if auth_err:
+                return self.send_j(401, {'error': auth_err})
             set_cookie_hdr = None
-            if auth_hdr:
-                tok = auth_hdr[7:].strip() if auth_hdr.lower().startswith('bearer ') else auth_hdr
-                if not tok:
-                    return self.send_j(401, {'error': 'Недействительный токен авторизации'})
-                usr = get_user_by_token(tok)
-                if not usr or not usr.get('id'):
-                    return self.send_j(401, {'error': 'Сессия недействительна или истекла, пожалуйста, войдите снова'})
+            if usr:
                 session_key = f"user_{usr['id']}"
             else:
                 cookies = parse_cookies(self)
                 sid = cookies.get('coach_sid', '')
-                if not sid or len(sid) < 16 or len(sid) > 128 or not re.match(r'^[A-Za-z0-9_-]+$', sid):
+                if not is_valid_coach_sid(sid):
                     sid = secrets.token_urlsafe(32)
                     set_cookie_hdr = make_coach_cookie(self, sid)
                 session_key = f"guest_{sid}"
@@ -2173,21 +2222,16 @@ class H(SimpleHTTPRequestHandler):
                 with coach_sessions_lock:
                     active_coach_sessions.discard(session_key)
         if p == '/api/coach/clear':
-            auth_hdr = self.headers.get('Authorization', '').strip()
-            usr = None
+            usr, auth_err = resolve_coach_bearer_user(self)
+            if auth_err:
+                return self.send_j(401, {'error': auth_err})
             set_cookie_hdr = None
-            if auth_hdr:
-                tok = auth_hdr[7:].strip() if auth_hdr.lower().startswith('bearer ') else auth_hdr
-                if not tok:
-                    return self.send_j(401, {'error': 'Недействительный токен авторизации'})
-                usr = get_user_by_token(tok)
-                if not usr or not usr.get('id'):
-                    return self.send_j(401, {'error': 'Сессия недействительна или истекла, пожалуйста, войдите снова'})
+            if usr:
                 session_key = f"user_{usr['id']}"
             else:
                 cookies = parse_cookies(self)
                 sid = cookies.get('coach_sid', '')
-                session_key = f"guest_{sid}" if sid else None
+                session_key = f"guest_{sid}" if is_valid_coach_sid(sid) else None
                 new_sid = secrets.token_urlsafe(32)
                 set_cookie_hdr = make_coach_cookie(self, new_sid)
 

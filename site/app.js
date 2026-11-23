@@ -5,7 +5,7 @@
   const CFG = Object.assign({ brand: 'RizzaFit', accent: '#F0A830', logo: '', heroProgram: 2, goal: 5, hidden: [], sections: {}, t: {}, ptitle: {}, athlete: {} }, CFG0 || {});
   let L = localStorage.lang || 'ru';
   const [COACH, PAY_CFG] = await Promise.all([
-    fetch('api/coach/status').then(r => r.ok ? r.json() : { enabled: false }).catch(() => ({ enabled: false })),
+    fetch('/api/coach/status').then(r => r.ok ? r.json() : { enabled: false }).catch(() => ({ enabled: false })),
     fetch('api/payment/plans').then(r => r.ok ? r.json() : { enabled: false, freeAccessMode: false }).catch(() => ({ enabled: false, freeAccessMode: false }))
   ]);
   const T = window.TEXTS;
@@ -50,6 +50,8 @@
     const bName = document.querySelector('.brand-name') || document.querySelector('.brand span');
     if (bName) bName.innerHTML = nm.length > 1 ? esc0(nm.slice(0, -1)) + '<em>' + esc0(nm.slice(-1)) + '</em>' : esc0(nm);
     if (!COACH.enabled) (CFG.hidden = (CFG.hidden || []).concat('coach'));
+    const topCoachBtn = document.getElementById('top-coach-btn');
+    if (topCoachBtn) topCoachBtn.style.display = (COACH.enabled && !(CFG.hidden || []).includes('coach')) ? '' : 'none';
     (CFG.hidden || []).forEach(k => { const a = document.querySelector(`#nav a[data-k=${k}]`); if (a) a.style.display = 'none'; });
     const ft = document.querySelector('footer');
     if (ft) ft.textContent = '© ' + nm + ' · ' + ((CFG.t[L] || {}).footer || T[L].footer);
@@ -2776,6 +2778,19 @@
         <a class="lw-btn" href="#/workout/${lastW.id}">▶ ${t('startShort')}</a>
       </div>` : ''}
 
+      ${COACH.enabled && !(CFG.hidden || []).includes('coach') ? `
+      <a class="coachcard" href="#/coach" id="home-coach-card">
+        <div class="orb sm"><span>AI</span></div>
+        <div class="coachcard-copy">
+          <div class="coachcard-top">
+            <b>${esc(t('coachBanner'))}</b>
+            <span class="coachcard-badge">AI</span>
+          </div>
+          <small>${esc(t('coachSub'))}</small>
+        </div>
+        <span class="go" aria-hidden="true">›</span>
+      </a>` : ''}
+
       <div class="ss-bento">
         <div class="ss-card ss-viability">
           <div class="ss-card-title"><b>${L == 'ru' ? 'Готовность атлета' : 'Athlete Readiness'}</b><span>Lv.${ath.level}</span></div>
@@ -2936,10 +2951,10 @@
     coach() {
       if (!COACH.enabled) return `<h1 style="display:flex;align-items:center;gap:8px;">${uiSvg('sparkles', 22)} ${esc(t('coachTitle'))}</h1><div class="empty">${esc(t('coachOff'))}</div>`;
       return `<div class="chat"><div class="chat-head"><div class="orb"><span>AI</span></div><h1>${esc(t('coachTitle'))}</h1><p>${esc(t('coachSub'))}</p></div>
-      <div class="chips" id="chips">${['c1', 'c2', 'c3', 'c4'].map(k => `<button class="chip2" data-q="${esc(t(k))}">${esc(t(k))}</button>`).join('')}</div>
+      <div class="chips" id="chips">${['c1', 'c2', 'c3', 'c4'].map(k => `<button type="button" class="chip2" data-q="${esc(t(k))}">${esc(t(k))}</button>`).join('')}</div>
       <div class="msgs" id="msgs"></div>
-      <form class="composer" id="cform"><input id="cin" placeholder="${esc(t('coachPh'))}" autocomplete="off" maxlength="1000"><button class="send" aria-label="send">➤</button></form>
-      <p style="text-align:center"><button class="btn alt" id="cclr" style="padding:6px 14px;font-size:12px">${esc(t('coachClear'))}</button></p></div>`;
+      <form class="composer" id="cform"><input id="cin" placeholder="${esc(t('coachPh'))}" autocomplete="off" maxlength="1000"><button type="submit" class="send" aria-label="send">➤</button></form>
+      <div class="chat-foot"><button type="button" class="btn alt" id="cclr" style="padding:6px 14px;font-size:12px">${esc(t('coachClear'))}</button></div></div>`;
     },
     programs(arg) {
       return routes.workouts('programs');
@@ -4104,6 +4119,9 @@
     }, exerciseCard);
     if (name == 'coach' && COACH.enabled) {
       const box = document.getElementById('msgs'), inp = document.getElementById('cin');
+      const form = document.getElementById('cform');
+      const sendBtn = (form && typeof form.querySelector === 'function') ? form.querySelector('.send') : null;
+      const clrBtn = document.getElementById('cclr');
       const getCoachStorageKey = () => {
         const uTok = (typeof localStorage !== 'undefined' && (localStorage.userToken || (localStorage.getItem && localStorage.getItem('userToken')))) || '';
         const uName = (typeof localStorage !== 'undefined' && (localStorage.userName || (localStorage.getItem && localStorage.getItem('userName')))) || '';
@@ -4130,7 +4148,7 @@
           }
           if (!Array.isArray(h)) h = [];
         } catch (_) { h = []; }
-        return h;
+        return h.filter(m => m && (m.role === 'user' || m.role === 'model') && typeof m.text === 'string' && m.text.trim());
       };
 
       const saveCoachHist = h => {
@@ -4148,12 +4166,25 @@
       let busy = false;
       let coachReqSeq = 0;
       let coachAbort = null;
+      let historyAbort = null;
       let activeClearPromise = null;
+      let lastError = null;
+
+      const setBusy = flag => {
+        busy = !!flag;
+        if (form && form.classList && typeof form.classList.toggle === 'function') form.classList.toggle('is-busy', busy);
+        if (inp) inp.disabled = busy;
+        if (sendBtn) sendBtn.disabled = busy;
+        if (typeof document.querySelectorAll === 'function') {
+          document.querySelectorAll('.chip2').forEach(b => { b.disabled = busy; });
+        }
+      };
 
       window._cancelCoachRequest = () => {
         coachReqSeq++;
-        busy = false;
+        setBusy(false);
         if (coachAbort) { try { coachAbort.abort(); } catch (_) {} coachAbort = null; }
+        if (historyAbort) { try { historyAbort.abort(); } catch (_) {} historyAbort = null; }
       };
 
       const md = x => esc(x)
@@ -4162,9 +4193,61 @@
         .replace(/^\s*[*-] /gm, '• ')
         .replace(/\n/g, '<br>');
       const bubble = (role, text) => `<div class="m ${role}"><div class="mb">${role == 'model' ? md(text) : esc(text).replace(/\n/g, '<br>')}</div></div>`;
-      const draw = () => { box.innerHTML = bubble('model', t('coachHi')) + hist2.map(m => bubble(m.role, m.text)).join(''); window.scrollTo(0, document.body.scrollHeight); };
-      const send = async q => {
-        q = (q || '').trim(); if (!q || busy) return; busy = true; inp.value = '';
+      const draw = (scrollToEnd = false) => {
+        if (!box) return;
+        let html = bubble('model', t('coachHi')) + hist2.map(m => bubble(m.role, m.text)).join('');
+        if (lastError) {
+          html += `<div class="m model error"><div class="mb"><div>${esc(lastError.text)}</div>${lastError.retryable ? `<button type="button" class="coach-retry-btn" id="coach-retry-btn">↻ ${esc(L == 'ru' ? 'Повторить' : 'Retry')}</button>` : ''}</div></div>`;
+        }
+        box.innerHTML = html;
+        if (lastError && lastError.retryable) {
+          const retryBtn = document.getElementById('coach-retry-btn');
+          if (retryBtn) {
+            const retryPayload = { q: lastError.q, reqId: lastError.reqId };
+            retryBtn.onclick = () => send(retryPayload.q, retryPayload.reqId);
+          }
+        }
+        if (scrollToEnd) window.scrollTo(0, document.body.scrollHeight);
+      };
+
+      const syncServerHistory = async () => {
+        const uTok = localStorage.userToken || '';
+        if (uTok && typeof isLocalToken === 'function' && isLocalToken(uTok)) return;
+        const mySeq = coachReqSeq;
+        const myStorageKey = getCoachStorageKey();
+        if (historyAbort) { try { historyAbort.abort(); } catch (_) {} }
+        historyAbort = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        try {
+          const headers = {};
+          if (uTok) headers['Authorization'] = 'Bearer ' + uTok;
+          const opts = { method: 'GET', headers, credentials: 'same-origin' };
+          if (historyAbort) opts.signal = historyAbort.signal;
+          const r = await fetch('/api/coach/history', opts);
+          if (mySeq !== coachReqSeq || myStorageKey !== getCoachStorageKey() || busy || activeClearPromise) return;
+          if (r.status === 401) {
+            showAppToast(CFG.brand || 'RizzaFit', L == 'ru' ? 'Сессия истекла, пожалуйста, войдите снова' : 'Session expired, please sign in again');
+            return;
+          }
+          if (!r.ok) return;
+          const j = await r.json().catch(() => null);
+          if (mySeq !== coachReqSeq || myStorageKey !== getCoachStorageKey() || busy || activeClearPromise) return;
+          if (j && Array.isArray(j.messages)) {
+            const cleanMsgs = j.messages
+              .filter(m => m && (m.role === 'user' || m.role === 'model') && typeof m.text === 'string' && m.text.trim())
+              .map(m => ({ role: m.role, text: m.text.trim() }))
+              .slice(-30);
+            hist2 = cleanMsgs;
+            saveCoachHist(hist2);
+            draw(hist2.length > 0);
+          }
+        } catch (_) {}
+      };
+
+      const send = async (q, retryReqId = null) => {
+        q = (q || '').trim(); if (!q || busy) return;
+        setBusy(true);
+        if (historyAbort) { try { historyAbort.abort(); } catch (_) {} historyAbort = null; }
+        if (!retryReqId && inp) inp.value = '';
         if (activeClearPromise) {
           try { await activeClearPromise; } catch (_) {}
         }
@@ -4173,9 +4256,20 @@
         if (coachAbort) { try { coachAbort.abort(); } catch (_) {} }
         coachAbort = typeof AbortController !== 'undefined' ? new AbortController() : null;
 
-        const clientReqId = 'cr_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
-        hist2.push({ role: 'user', text: q }); draw();
-        box.insertAdjacentHTML('beforeend', `<div class="m model" id="typ"><div class="mb typing"><i></i><i></i><i></i></div></div>`); window.scrollTo(0, document.body.scrollHeight);
+        const clientReqId = retryReqId || ('cr_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8));
+        if (!retryReqId && lastError && hist2.length && hist2[hist2.length - 1].role === 'user' && hist2[hist2.length - 1].text === lastError.q) {
+          hist2.pop();
+        }
+        lastError = null;
+        const lastSaved = hist2.length ? hist2[hist2.length - 1] : null;
+        if (!(retryReqId && lastSaved && lastSaved.role === 'user' && lastSaved.text === q)) {
+          hist2.push({ role: 'user', text: q });
+        }
+        draw(true);
+        if (box) {
+          box.insertAdjacentHTML('beforeend', `<div class="m model" id="typ"><div class="mb typing" aria-label="${esc(t('coachTyping'))}"><i></i><i></i><i></i></div></div>`);
+          window.scrollTo(0, document.body.scrollHeight);
+        }
         try {
           const uTok = localStorage.userToken || '';
           const headers = { 'Content-Type': 'application/json' };
@@ -4185,40 +4279,60 @@
           const fetchOpts = {
             method: 'POST',
             headers,
+            credentials: 'same-origin',
             body: JSON.stringify({ message: q, reqId: clientReqId, messages: hist2.slice(-12) })
           };
           if (coachAbort) fetchOpts.signal = coachAbort.signal;
           const r = await fetch('/api/coach', fetchOpts);
-          const j = await r.json();
+          const j = await r.json().catch(() => ({}));
           if (mySeq !== coachReqSeq || myStorageKey !== getCoachStorageKey()) return;
-          hist2.push({ role: 'model', text: r.ok ? j.reply : '⚠️ ' + (j.error || 'Error') });
+          if (r.ok && j && j.reply) {
+            hist2.push({ role: 'model', text: String(j.reply) });
+            hist2 = hist2.slice(-30);
+            saveCoachHist(hist2);
+          } else {
+            const errMsg = (j && j.error) ? String(j.error) : (L == 'ru' ? `Ошибка сервера (${r.status})` : `Server error (${r.status})`);
+            lastError = {
+              text: '⚠️ ' + errMsg,
+              q,
+              reqId: clientReqId,
+              retryable: (r.status >= 500 || r.status === 429 || r.status === 408)
+            };
+          }
         } catch (e) {
           if (mySeq !== coachReqSeq || myStorageKey !== getCoachStorageKey() || (e && e.name === 'AbortError')) return;
-          hist2.push({ role: 'model', text: '⚠️ ' + (L == 'ru' ? 'Нет связи с сервером' : 'Connection error') });
+          lastError = {
+            text: '⚠️ ' + (L == 'ru' ? 'Нет связи с сервером' : 'Connection error'),
+            q,
+            reqId: clientReqId,
+            retryable: true
+          };
+        } finally {
+          if (mySeq === coachReqSeq && myStorageKey === getCoachStorageKey()) {
+            setBusy(false);
+            draw(true);
+          }
         }
-        if (mySeq !== coachReqSeq || myStorageKey !== getCoachStorageKey()) return;
-        hist2 = hist2.slice(-30);
-        saveCoachHist(hist2);
-        busy = false;
-        draw();
       };
-      document.getElementById('cform').onsubmit = e => { e.preventDefault(); send(inp.value); };
+      if (form) form.onsubmit = e => { e.preventDefault(); send(inp ? inp.value : ''); };
       document.querySelectorAll('.chip2').forEach(b => b.onclick = () => send(b.dataset.q));
-      document.getElementById('cclr').onclick = async () => {
+      if (clrBtn) clrBtn.onclick = async () => {
         coachReqSeq++;
-        busy = false;
+        setBusy(false);
         if (coachAbort) { try { coachAbort.abort(); } catch (_) {} coachAbort = null; }
+        if (historyAbort) { try { historyAbort.abort(); } catch (_) {} historyAbort = null; }
+        lastError = null;
         const prevHist = hist2;
         hist2 = [];
         const currentKey = getCoachStorageKey();
         try { localStorage[currentKey] = '[]'; } catch (_) {}
-        draw();
+        draw(false);
         const uTok = localStorage.userToken || '';
         const headers = {};
         if (uTok && typeof isLocalToken === 'function' && !isLocalToken(uTok)) {
           headers['Authorization'] = 'Bearer ' + uTok;
         }
-        activeClearPromise = fetch('/api/coach/clear', { method: 'POST', headers })
+        activeClearPromise = fetch('/api/coach/clear', { method: 'POST', headers, credentials: 'same-origin' })
           .then(async r => {
             if (!r.ok) {
               const errJson = await r.json().catch(() => ({}));
@@ -4231,7 +4345,7 @@
             if (hist2.length === 0) {
               hist2 = prevHist;
               saveCoachHist(hist2);
-              draw();
+              draw(false);
               showAppToast(CFG.brand || 'RizzaFit', '⚠️ ' + (err.message || (L == 'ru' ? 'Не удалось очистить историю' : 'Failed to clear history')));
             }
           })
@@ -4239,7 +4353,9 @@
             activeClearPromise = null;
           });
       };
-      draw(); window.scrollTo(0, 0);
+      draw(false);
+      syncServerHistory();
+      window.scrollTo(0, 0);
     }
     if (name == 'program') {
       const unlockBtn = document.getElementById('prog-unlock-btn');
@@ -6399,6 +6515,16 @@
   function render() {
     const [, name = 'home', a] = (location.hash || '#/').slice(1).split('/');
     const key = routes[name] ? name : 'home'; arg = a;
+    if (key !== 'coach' && typeof window._cancelCoachRequest === 'function') {
+      try { window._cancelCoachRequest(); } catch (_) {}
+    }
+    const topCoachBtn = document.getElementById('top-coach-btn');
+    if (topCoachBtn) {
+      topCoachBtn.classList.toggle('on', key === 'coach');
+      const lbl = L == 'ru' ? 'AI-тренер' : 'AI Coach';
+      topCoachBtn.title = lbl;
+      topCoachBtn.setAttribute('aria-label', lbl);
+    }
     document.body.classList.toggle('view-messages', key === 'messages');
     document.querySelectorAll('#nav a').forEach(x => {
       const b = x.querySelector('b');
