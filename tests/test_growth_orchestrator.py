@@ -19,6 +19,11 @@ from unittest.mock import patch
 
 import server
 
+if __package__:
+    from .test_isolation import IsolatedServerTestCase
+else:
+    from test_isolation import IsolatedServerTestCase
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SITE = os.path.join(ROOT, "site")
 SW_FILE = os.path.join(SITE, "sw.js")
@@ -63,18 +68,9 @@ def invoke_handler(method, path, body=b"", headers=None):
     return captured["status"], captured["headers"], out
 
 
-class TestGrowthOrchestrator(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        server.init_db()
-
+class TestGrowthOrchestrator(IsolatedServerTestCase):
     def setUp(self):
-        server.coach_hits.clear()
-        with server.coach_sessions_lock:
-            server.active_coach_sessions.clear()
-        with server.db_lock, server.sqlite3.connect(server.DB_FILE) as conn:
-            conn.execute("DELETE FROM coach_sessions")
-            conn.commit()
+        super().setUp()
 
     def test_enhanced_security_headers_present_on_responses(self):
         """Responses must include X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy, and omit deprecated X-XSS-Protection."""
@@ -1416,7 +1412,7 @@ class TestGrowthOrchestrator(unittest.TestCase):
         """По умолчанию без ai.json провайдер builtin и /api/coach/status возвращает enabled=True."""
         self.assertEqual(server.AI_DEFAULT.get("provider"), "builtin")
         self.assertTrue(server.AI_DEFAULT.get("enabled"))
-        with patch.object(server, "AI_FILE", os.path.join(ROOT, "server_data", "__nonexistent_ai_test__.json")):
+        with patch.object(server, "AI_FILE", os.path.join(self.tmp_secret_dir, "__nonexistent_ai_test__.json")):
             status, headers, body = invoke_handler("GET", "/api/coach/status")
             self.assertEqual(status, 200)
             data = json.loads(body.decode("utf-8"))
