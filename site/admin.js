@@ -884,6 +884,8 @@
   async function tabAI(el) {
     let c = {};
     try { c = await api('ai/settings'); } catch (e) { return toast(e.message, 1); }
+    const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash';
+    const curModel = (c.provider == 'gemini' && (!c.model || c.model == 'gemini-3.8-flash')) ? GEMINI_DEFAULT_MODEL : (c.model || '');
     const PRESETS = [
       ['DeepSeek', 'https://api.deepseek.com', 'deepseek-v4-flash'],
       ['OpenRouter', 'https://openrouter.ai/api/v1', 'meta-llama/llama-3.3-70b-instruct:free'],
@@ -898,12 +900,12 @@
         <option value="gemini" ${c.provider == 'gemini' ? 'selected' : ''}>Google Gemini (доступен не во всех регионах)</option>
       </select></label>
       <div id="ai-presets" class="up" style="margin-bottom:12px">${PRESETS.map((p, i) => `<button type="button" class="btn alt" style="padding:6px 12px;font-size:12px" data-p="${i}">${p[0]}</button>`).join('')}</div>
-      <label class="f" id="ai-bu-w">Base URL<input id="ai-bu" value="${esc(c.baseUrl)}" placeholder="https://api.openai.com/v1"></label>
+      <label class="f" id="ai-bu-w">Base URL<input id="ai-bu" name="ai_base_url" autocomplete="off" value="${esc(c.baseUrl)}" placeholder="https://api.openai.com/v1"></label>
       <div id="ai-key-w">
         <p>Статус ключа: <b style="color:${c.hasKey ? 'var(--ac)' : 'var(--mut)'}">${c.hasKey ? 'сохранён (' + esc(c.keyHint) + ')' : 'не задан'}</b></p>
-        <label class="f">API-ключ (пусто = не менять; для локального Ollama ключ не нужен)<input id="ai-key" type="password" autocomplete="off"></label>
+        <label class="f">API-ключ (пусто = не менять; для локального Ollama ключ не нужен)<input id="ai-key" name="ai_api_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="${c.hasKey ? 'Оставьте пустым, чтобы не менять' : 'Вставьте API-ключ'}"></label>
       </div>
-      <label class="f" id="ai-model-w">Модель<input id="ai-model" value="${esc(c.model)}"></label>
+      <label class="f" id="ai-model-w">Модель<input id="ai-model" name="ai_model" autocomplete="off" value="${esc(curModel)}"></label>
       <label class="chk"><input type="checkbox" id="ai-on" ${c.enabled ? 'checked' : ''}> Показывать AI-тренера на сайте</label>
       <label class="f" style="margin-top:12px">Дополнительные инструкции тренеру (тон, ограничения, акценты)<textarea id="ai-prompt" rows="5">${esc(c.prompt)}</textarea></label>
       <p style="color:var(--mut);font-size:12px">Ключ хранится только на сервере и не отправляется в браузер посетителей.</p>
@@ -918,8 +920,8 @@
     };
     $('#ai-prov').onchange = () => {
       sync();
-      if ($('#ai-prov').value == 'gemini' && !/gemini/.test($('#ai-model').value)) {
-        $('#ai-model').value = 'gemini-3.8-flash';
+      if ($('#ai-prov').value == 'gemini' && (!/gemini/.test($('#ai-model').value) || $('#ai-model').value.trim() == 'gemini-3.8-flash')) {
+        $('#ai-model').value = GEMINI_DEFAULT_MODEL;
       }
     };
     $$('[data-p]').forEach(b => b.onclick = () => {
@@ -931,14 +933,18 @@
 
     const save = async extra => {
       try {
-        await post('ai/settings', Object.assign({
-          provider: $('#ai-prov').value,
-          baseUrl: $('#ai-bu').value,
+        const prov = $('#ai-prov').value;
+        const payload = {
+          provider: prov,
           key: $('#ai-key').value,
           model: $('#ai-model').value,
           enabled: $('#ai-on').checked,
           prompt: $('#ai-prompt').value
-        }, extra || {}));
+        };
+        if (prov === 'openai') {
+          payload.baseUrl = $('#ai-bu').value;
+        }
+        await post('ai/settings', Object.assign(payload, extra || {}));
         toast('Сохранено ✓');
         tabAI(el);
       } catch (e) {
