@@ -734,7 +734,7 @@ def write_json(name, obj):
     os.replace(tmp, os.path.join(CONTENT, name))
 
 AI_FILE = os.path.join(SECRET_DIR, 'ai.json')
-AI_DEFAULT = {'provider': 'builtin', 'base_url': '', 'key': '', 'model': 'gemini-3.8-flash', 'enabled': True, 'prompt': ''}
+AI_DEFAULT = {'provider': 'builtin', 'base_url': '', 'key': '', 'model': 'gemini-2.5-flash', 'enabled': True, 'prompt': ''}
 coach_hits = {}      # ip -> [timestamps]
 coach_sessions_lock = threading.Lock()
 active_coach_sessions = set()  # set of active session_id strings
@@ -1155,6 +1155,21 @@ def ai_cfg():
     except Exception:
         return dict(AI_DEFAULT)
 
+def save_ai_cfg(cfg):
+    """Atomically persist AI configuration with restricted 0o600 permissions."""
+    tmp = AI_FILE + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(cfg, f, ensure_ascii=False)
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        pass
+    os.replace(tmp, AI_FILE)
+    try:
+        os.chmod(AI_FILE, 0o600)
+    except OSError:
+        pass
+
 def catalog():
     """Short catalogue so the coach can link to real workouts/programs."""
     try:
@@ -1224,12 +1239,17 @@ def http_json(req, timeout=40):
 
 def ask_gemini(messages, brand, extra):
     cfg = ai_cfg()
+    model = re.sub(r'[^a-zA-Z0-9._-]', '', cfg.get('model') or 'gemini-2.5-flash')
+    if not model or model == 'gemini-3.8-flash':
+        model = 'gemini-2.5-flash'
+    gen_cfg = {'temperature': 0.7, 'maxOutputTokens': 1200}
+    if model.startswith('gemini-2.5-flash'):
+        gen_cfg['thinkingConfig'] = {'thinkingBudget': 0}
     body = {
         'systemInstruction': {'parts': [{'text': build_system(brand)}]},
         'contents': [{'role': m['role'], 'parts': [{'text': m['text']}]} for m in messages],
-        'generationConfig': {'temperature': 0.7, 'maxOutputTokens': 900},
+        'generationConfig': gen_cfg,
     }
-    model = re.sub(r'[^a-zA-Z0-9._-]', '', cfg.get('model') or 'gemini-3.8-flash')
     req = urllib.request.Request(
         'https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent' % model,
         data=json.dumps(body).encode(),
@@ -1250,7 +1270,7 @@ def ask_gemini(messages, brand, extra):
         parts = content.get('parts')
         if not isinstance(parts, list):
             raise AIProviderError('Некорректная структура parts кандидата Gemini')
-        ans = ''.join(pt.get('text', '') for pt in parts if isinstance(pt, dict)).strip()
+        ans = ''.join(pt.get('text', '') for pt in parts if isinstance(pt, dict) and not pt.get('thought')).strip()
         if not ans:
             raise AIProviderError('Пустой ответ модели Gemini (возможно, сработал фильтр безопасности)')
         return ans
@@ -3184,21 +3204,25 @@ class H(SimpleHTTPRequestHandler):
             except Exception:
                 return self.send_j(400, {'error': 'bad json'})
             c = ai_cfg()
-            if j.get('key'):
-                c['key'] = str(j['key']).strip()
+            raw_key = str(j.get('key') or '').strip()
+            if raw_key:
+                c['key'] = raw_key
             if j.get('clearKey'):
                 c['key'] = ''
             prov = j.get('provider')
             c['provider'] = prov if prov in ('openai', 'gemini', 'builtin') else 'builtin'
-            bu = str(j.get('baseUrl', '')).strip()
-            if bu and not re.match(r'^https?://', bu):
-                return self.send_j(400, {'error': 'Base URL должен начинаться с http:// или https://'})
-            c['base_url'] = bu
-            c['model'] = re.sub(r'[^a-zA-Z0-9._:/-]', '', str(j.get('model') or c['model'])) or AI_DEFAULT['model']
+            if c['provider'] == 'openai':
+                bu = str(j.get('baseUrl', '')).strip()
+                if bu and not re.match(r'^https?://', bu):
+                    return self.send_j(400, {'error': 'Base URL должен начинаться с http:// или https://'})
+                c['base_url'] = bu
+            model_val = re.sub(r'[^a-zA-Z0-9._:/-]', '', str(j.get('model') or c['model'])) or AI_DEFAULT['model']
+            if c['provider'] == 'gemini' and model_val == 'gemini-3.8-flash':
+                model_val = 'gemini-2.5-flash'
+            c['model'] = model_val
             c['enabled'] = bool(j.get('enabled', True))
             c['prompt'] = str(j.get('prompt', ''))[:2000]
-            with open(AI_FILE, 'w', encoding='utf-8') as f:
-                json.dump(c, f, ensure_ascii=False)
+            save_ai_cfg(c)
             return self.send_j(200, {'ok': True})
         if p == '/api/save':          # ?file=config|overrides  body: JSON
             f = parse_qs(u.query).get('file', [''])[0]

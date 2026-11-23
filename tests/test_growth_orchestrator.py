@@ -1715,6 +1715,181 @@ class TestGrowthOrchestrator(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, f"Node retry test failed:\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}")
         self.assertIn("SUCCESS", proc.stdout)
 
+    def test_admin_ai_settings_gemini_ignores_invalid_base_url_and_preserves_key(self):
+        """POST /api/ai/settings для Gemini:
+        - игнорирует посторонний/autofill baseUrl вместо ошибки 400;
+        - атомарно сохраняет ключ и не раскрывает его в GET /api/ai/settings;
+        - сохраняет прежний ключ при пустом или пробельном поле key;
+        - удаляет ключ при clearKey=True.
+        """
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_ai = os.path.join(tmpdir, "ai.json")
+            with patch.object(server, "AI_FILE", tmp_ai), patch.object(server.H, "authed", return_value=True):
+                # 1. Сохранение Gemini с мусорным baseUrl (имитация browser autofill)
+                p1 = json.dumps({
+                    "provider": "gemini",
+                    "baseUrl": "autofilled_admin_login",
+                    "key": "  AIzaFakeTestKey99887766  ",
+                    "model": "gemini-2.5-flash",
+                    "enabled": True,
+                    "prompt": "Будь кратким"
+                }).encode("utf-8")
+                st1, _, b1 = invoke_handler("POST", "/api/ai/settings", body=p1, headers={
+                    "Content-Length": str(len(p1)),
+                    "Content-Type": "application/json"
+                })
+                self.assertEqual(st1, 200, b1.decode("utf-8"))
+                self.assertEqual(json.loads(b1.decode("utf-8")), {"ok": True})
+                self.assertFalse(os.path.exists(tmp_ai + ".tmp"))
+
+                # Проверяем GET /api/ai/settings (ключ не утекает, hasKey=True)
+                st_get, _, b_get = invoke_handler("GET", "/api/ai/settings")
+                self.assertEqual(st_get, 200)
+                raw_get = b_get.decode("utf-8")
+                d_get = json.loads(raw_get)
+                self.assertEqual(d_get["provider"], "gemini")
+                self.assertEqual(d_get["model"], "gemini-2.5-flash")
+                self.assertTrue(d_get["hasKey"])
+                self.assertEqual(d_get["keyHint"], "…7766")
+                self.assertNotIn("AIzaFakeTestKey99887766", raw_get)
+
+                # 2. Повторное сохранение с пустым и пробельным ключом -> ключ сохраняется
+                for empty_val in ("", "   "):
+                    p2 = json.dumps({
+                        "provider": "gemini",
+                        "key": empty_val,
+                        "model": "gemini-3.8-flash",
+                        "enabled": True,
+                        "prompt": "Обновленный промпт"
+                    }).encode("utf-8")
+                    st2, _, _ = invoke_handler("POST", "/api/ai/settings", body=p2, headers={
+                        "Content-Length": str(len(p2)),
+                        "Content-Type": "application/json"
+                    })
+                    self.assertEqual(st2, 200)
+                    saved = server.ai_cfg()
+                    self.assertEqual(saved["key"], "AIzaFakeTestKey99887766")
+                    self.assertEqual(saved["model"], "gemini-2.5-flash")
+                    self.assertEqual(saved["prompt"], "Обновленный промпт")
+
+                # 3. Очистка ключа по clearKey=True
+                p3 = json.dumps({"provider": "gemini", "clearKey": True, "key": "", "enabled": True}).encode("utf-8")
+                st3, _, _ = invoke_handler("POST", "/api/ai/settings", body=p3, headers={
+                    "Content-Length": str(len(p3)),
+                    "Content-Type": "application/json"
+                })
+                self.assertEqual(st3, 200)
+                st_get2, _, b_get2 = invoke_handler("GET", "/api/ai/settings")
+                self.assertEqual(st_get2, 200)
+                self.assertFalse(json.loads(b_get2.decode("utf-8"))["hasKey"])
+
+    def test_admin_ai_settings_openai_validates_base_url_and_builtin_does_not(self):
+        """Для OpenAI-совместимого провайдера Base URL валидируется (включая Ollama http://), а для builtin — игнорируется."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_ai = os.path.join(tmpdir, "ai.json")
+            with patch.object(server, "AI_FILE", tmp_ai), patch.object(server.H, "authed", return_value=True):
+                # 1. OpenAI с невалидным Base URL -> 400
+                bad = json.dumps({"provider": "openai", "baseUrl": "not-a-url", "model": "gpt-4o-mini"}).encode("utf-8")
+                st_bad, _, body_bad = invoke_handler("POST", "/api/ai/settings", body=bad, headers={
+                    "Content-Length": str(len(bad)),
+                    "Content-Type": "application/json"
+                })
+                self.assertEqual(st_bad, 400)
+                self.assertIn("http://", json.loads(body_bad.decode("utf-8")).get("error", ""))
+
+                # 2. Ollama (http://localhost:11434/v1) и DeepSeek (https://) -> 200
+                for bu, mdl in [("http://localhost:11434/v1", "llama3.2"), ("https://api.deepseek.com", "deepseek-v4-flash")]:
+                    ok_p = json.dumps({"provider": "openai", "baseUrl": bu, "model": mdl, "enabled": True}).encode("utf-8")
+                    st_ok, _, _ = invoke_handler("POST", "/api/ai/settings", body=ok_p, headers={
+                        "Content-Length": str(len(ok_p)),
+                        "Content-Type": "application/json"
+                    })
+                    self.assertEqual(st_ok, 200)
+                    self.assertEqual(server.ai_cfg()["base_url"], bu)
+
+                # 3. Builtin с мусорным baseUrl -> 200 без ошибки
+                bi = json.dumps({"provider": "builtin", "baseUrl": "garbage-autofill", "enabled": True}).encode("utf-8")
+                st_bi, _, _ = invoke_handler("POST", "/api/ai/settings", body=bi, headers={
+                    "Content-Length": str(len(bi)),
+                    "Content-Type": "application/json"
+                })
+                self.assertEqual(st_bi, 200)
+
+    def test_ask_gemini_filters_thought_parts_and_uses_gemini_2_5_flash(self):
+        """ask_gemini() вызывает v1beta/models/gemini-2.5-flash, передает контекст и systemInstruction,
+        отключает thinkingBudget для 2.5-flash, отфильтровывает thought-части и сохраняет fallback на builtin.
+        """
+        captured_reqs = []
+
+        def fake_http_json(req):
+            captured_reqs.append({
+                "url": req.full_url,
+                "headers": {k.lower(): v for k, v in req.header_items()},
+                "body": json.loads(req.data.decode("utf-8"))
+            })
+            return {
+                "candidates": [{
+                    "content": {
+                        "parts": [
+                            {"text": "Скрытые рассуждения модели", "thought": True},
+                            {"text": "Сделай 3 подхода по 12 повторений "} ,
+                            {"text": "и отдыхай 60 секунд."}
+                        ]
+                    }
+                }]
+            }
+
+        cfg_flash = {
+            "provider": "gemini", "base_url": "", "key": "AIzaMockGeminiKey",
+            "model": "gemini-2.5-flash", "enabled": True, "prompt": "Учитывай инвентарь"
+        }
+        msgs = [
+            {"role": "user", "text": "У меня дома только гантели"},
+            {"role": "model", "text": "Отлично, какая цель?"},
+            {"role": "user", "text": "Набрать силу спины"}
+        ]
+        with patch.object(server, "ai_cfg", return_value=cfg_flash), patch.object(server, "http_json", side_effect=fake_http_json):
+            reply = server.ask_ai(msgs, "RizzaFit", None)
+
+        self.assertEqual(reply, "Сделай 3 подхода по 12 повторений и отдыхай 60 секунд.")
+        self.assertNotIn("Скрытые рассуждения", reply)
+        self.assertEqual(len(captured_reqs), 1)
+        req0 = captured_reqs[0]
+        self.assertEqual(req0["url"], "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")
+        self.assertEqual(req0["headers"].get("x-goog-api-key"), "AIzaMockGeminiKey")
+        self.assertEqual(len(req0["body"]["contents"]), 3)
+        self.assertIn("Учитывай инвентарь", req0["body"]["systemInstruction"]["parts"][0]["text"])
+        self.assertEqual(req0["body"]["generationConfig"].get("thinkingConfig"), {"thinkingBudget": 0})
+
+        # Для gemini-2.5-pro thinkingBudget=0 НЕ передается
+        cfg_pro = dict(cfg_flash, model="gemini-2.5-pro")
+        with patch.object(server, "ai_cfg", return_value=cfg_pro), patch.object(server, "http_json", side_effect=fake_http_json):
+            server.ask_ai(msgs[-1:], "RizzaFit", None)
+        self.assertNotIn("thinkingConfig", captured_reqs[-1]["body"]["generationConfig"])
+
+        # Fallback на builtin при AIProviderError
+        with patch.object(server, "ai_cfg", return_value=cfg_flash), patch.object(server, "http_json", side_effect=server.AIProviderError("503 Unavailable")):
+            fallback_reply = server.ask_ai([{"role": "user", "text": "Как похудеть?"}], "RizzaFit", None)
+            self.assertIn("Дефицит калорий", fallback_reply)
+            self.assertIn("встроенным тренером", fallback_reply)
+
+    def test_admin_frontend_gemini_autofill_and_base_url_guards(self):
+        """Проверяет защиту от автозаполнения и условную отправку baseUrl в site/admin.js и кэш v56 в site/admin.html."""
+        with open(os.path.join(SITE, "admin.js"), encoding="utf-8") as f:
+            admin_js = f.read()
+        with open(os.path.join(SITE, "admin.html"), encoding="utf-8") as f:
+            admin_html = f.read()
+
+        self.assertIn('autocomplete="new-password"', admin_js)
+        self.assertIn('autocomplete="off"', admin_js)
+        self.assertIn("GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash'", admin_js)
+        self.assertNotIn("'gemini-3.8-flash'", server.AI_DEFAULT["model"])
+        self.assertIn("if (prov === 'openai')", admin_js)
+        self.assertIn("admin.js?v=56", admin_html)
+        self.assertIn("style.css?v=56", admin_html)
+
 
 if __name__ == "__main__":
     unittest.main()
