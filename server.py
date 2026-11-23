@@ -734,7 +734,12 @@ def write_json(name, obj):
     os.replace(tmp, os.path.join(CONTENT, name))
 
 AI_FILE = os.path.join(SECRET_DIR, 'ai.json')
-AI_DEFAULT = {'provider': 'builtin', 'base_url': '', 'key': '', 'model': 'gemini-2.5-flash', 'enabled': True, 'prompt': ''}
+GEMINI_DEFAULT_MODEL = 'gemini-3.8-flash'
+GEMINI_FALLBACK_MODELS = ('gemini-3.1-flash-lite', 'gemini-3-flash-preview')
+GEMINI_RETRYABLE_STATUSES = (429, 503)
+GEMINI_MODEL_FALLBACK_STATUSES = (404, 429, 500, 502, 503, 504)
+GEMINI_NON_FALLBACK_STATUSES = (400, 401, 403)
+AI_DEFAULT = {'provider': 'builtin', 'base_url': '', 'key': '', 'model': GEMINI_DEFAULT_MODEL, 'enabled': True, 'prompt': ''}
 coach_hits = {}      # ip -> [timestamps]
 coach_sessions_lock = threading.Lock()
 active_coach_sessions = set()  # set of active session_id strings
@@ -1212,9 +1217,39 @@ def build_system(brand):
         system += '\n\nДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ВЛАДЕЛЬЦА САЙТА:\n' + cfg['prompt'][:2000]
     return system
 
+def scrub_ai_secret(text, secret=''):
+    """Remove API keys, auth headers, and query secrets from log/error text."""
+    s = str(text or '')
+    if secret:
+        s = s.replace(str(secret), '[REDACTED]')
+    s = re.sub(r'AIza[0-9A-Za-z_-]{8,}', '[REDACTED]', s)
+    s = re.sub(r'sk-[A-Za-z0-9_-]{8,}', '[REDACTED]', s)
+    s = re.sub(r'(?i)(bearer\s+)\S+', r'\1[REDACTED]', s)
+    s = re.sub(r'(?i)(x-goog-api-key\s*[:=]\s*)\S+', r'\1[REDACTED]', s)
+    s = re.sub(r'(?i)([?&](?:key|api_key|token)=)[^&\s]+', r'\1[REDACTED]', s)
+    return re.sub(r'[\r\n]+', ' ', s).strip()
+
+def log_ai_event(event, provider, model, status_code=None, reason='', action='', secret=''):
+    """Emit structured, secret-free diagnostic line to stderr for journald."""
+    safe_reason = scrub_ai_secret(reason, secret=secret)[:180]
+    safe_model = re.sub(r'[^a-zA-Z0-9._:/-]', '', str(model or '')) or '-'
+    safe_prov = re.sub(r'[^a-zA-Z0-9_-]', '', str(provider or '')) or '-'
+    status_str = str(status_code) if status_code is not None else 'none'
+    line = f"[AI_COACH] event={event} provider={safe_prov} model={safe_model} status={status_str} action={action or '-'} reason={safe_reason}\n"
+    try:
+        sys.stderr.write(line)
+        sys.stderr.flush()
+    except Exception:
+        pass
+
 class AIProviderError(RuntimeError):
     """Ошибки внешнего AI-провайдера (сеть, HTTP-ошибки, таймауты, пустые или некорректные ответы API)."""
-    pass
+    def __init__(self, message, status_code=None, retry_after=None, reason='', fallback_allowed=True):
+        super().__init__(message)
+        self.status_code = status_code
+        self.retry_after = retry_after
+        self.reason = reason or str(message)
+        self.fallback_allowed = fallback_allowed
 
 def http_json(req, timeout=40):
     try:
@@ -1222,7 +1257,7 @@ def http_json(req, timeout=40):
             try:
                 return json.load(r)
             except (json.JSONDecodeError, UnicodeDecodeError) as e:
-                raise AIProviderError('Некорректный JSON в ответе AI-провайдера: %s' % e)
+                raise AIProviderError('Некорректный JSON в ответе AI-провайдера: %s' % scrub_ai_secret(e))
     except urllib.error.HTTPError as e:
         detail = ''
         try:
@@ -1231,51 +1266,107 @@ def http_json(req, timeout=40):
             detail = err.get('message', '') if isinstance(err, dict) else str(err)
         except (json.JSONDecodeError, UnicodeDecodeError, AttributeError, TypeError):
             pass
-        raise AIProviderError('Ошибка AI-провайдера (%s): %s' % (e.code, detail[:200]))
+        retry_after = None
+        try:
+            ra_raw = e.headers.get('Retry-After') if getattr(e, 'headers', None) else None
+            if ra_raw is not None:
+                ra_val = float(str(ra_raw).strip())
+                if ra_val >= 0:
+                    retry_after = ra_val
+        except (TypeError, ValueError):
+            retry_after = None
+        safe_detail = scrub_ai_secret(detail)[:200]
+        raise AIProviderError(
+            'Ошибка AI-провайдера (%s): %s' % (e.code, safe_detail),
+            status_code=e.code,
+            retry_after=retry_after,
+            reason=safe_detail[:160],
+            fallback_allowed=(e.code not in GEMINI_NON_FALLBACK_STATUSES)
+        )
     except urllib.error.URLError as e:
-        raise AIProviderError('Не удалось подключиться к AI-провайдеру: %s' % e.reason)
+        safe_reason = scrub_ai_secret(e.reason)[:160]
+        raise AIProviderError('Не удалось подключиться к AI-провайдеру: %s' % safe_reason, reason=safe_reason)
     except (TimeoutError, socket.timeout) as e:
-        raise AIProviderError('Таймаут подключения к AI-провайдеру: %s' % e)
+        safe_reason = scrub_ai_secret(e)[:160]
+        raise AIProviderError('Таймаут подключения к AI-провайдеру: %s' % safe_reason, reason=safe_reason)
 
-def ask_gemini(messages, brand, extra):
-    cfg = ai_cfg()
-    model = re.sub(r'[^a-zA-Z0-9._-]', '', cfg.get('model') or 'gemini-2.5-flash')
-    if not model or model == 'gemini-3.8-flash':
-        model = 'gemini-2.5-flash'
-    gen_cfg = {'temperature': 0.7, 'maxOutputTokens': 1200}
-    if model.startswith('gemini-2.5-flash'):
-        gen_cfg['thinkingConfig'] = {'thinkingBudget': 0}
+def _call_gemini_model(model, messages, brand, key):
     body = {
         'systemInstruction': {'parts': [{'text': build_system(brand)}]},
         'contents': [{'role': m['role'], 'parts': [{'text': m['text']}]} for m in messages],
-        'generationConfig': gen_cfg,
+        'generationConfig': {'temperature': 0.7, 'maxOutputTokens': 1200},
     }
     req = urllib.request.Request(
         'https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent' % model,
         data=json.dumps(body).encode(),
-        headers={'Content-Type': 'application/json', 'x-goog-api-key': cfg['key']})
+        headers={'Content-Type': 'application/json', 'x-goog-api-key': key})
     j = http_json(req)
     if not isinstance(j, dict):
-        raise AIProviderError('Некорректная структура ответа Gemini')
+        raise AIProviderError('Некорректная структура ответа Gemini', reason='invalid_json_root')
     try:
         candidates = j.get('candidates')
         if not isinstance(candidates, list) or not candidates:
-            raise AIProviderError('Пустой список кандидатов в ответе Gemini')
+            raise AIProviderError('Пустой список кандидатов в ответе Gemini', reason='empty_candidates')
         first_cand = candidates[0]
         if not isinstance(first_cand, dict):
-            raise AIProviderError('Некорректная структура кандидата Gemini')
+            raise AIProviderError('Некорректная структура кандидата Gemini', reason='invalid_candidate')
         content = first_cand.get('content')
         if not isinstance(content, dict):
-            raise AIProviderError('Отсутствует или некорректен content кандидата Gemini')
+            raise AIProviderError('Отсутствует или некорректен content кандидата Gemini', reason='invalid_content')
         parts = content.get('parts')
         if not isinstance(parts, list):
-            raise AIProviderError('Некорректная структура parts кандидата Gemini')
+            raise AIProviderError('Некорректная структура parts кандидата Gemini', reason='invalid_parts')
         ans = ''.join(pt.get('text', '') for pt in parts if isinstance(pt, dict) and not pt.get('thought')).strip()
         if not ans:
-            raise AIProviderError('Пустой ответ модели Gemini (возможно, сработал фильтр безопасности)')
+            raise AIProviderError('Пустой ответ модели Gemini (возможно, сработал фильтр безопасности)', reason='empty_reply')
         return ans
     except (KeyError, IndexError, TypeError, AttributeError) as e:
-        raise AIProviderError('Некорректная или пустая структура ответа Gemini: %s' % e)
+        safe_reason = scrub_ai_secret(e)[:160]
+        raise AIProviderError('Некорректная или пустая структура ответа Gemini: %s' % safe_reason, reason=safe_reason)
+
+def ask_gemini(messages, brand, extra):
+    cfg = ai_cfg()
+    key = str(cfg.get('key') or '')
+    primary_model = re.sub(r'[^a-zA-Z0-9._-]', '', str(cfg.get('model') or GEMINI_DEFAULT_MODEL)) or GEMINI_DEFAULT_MODEL
+    candidates = [primary_model] + [m for m in GEMINI_FALLBACK_MODELS if m != primary_model]
+    last_err = None
+
+    for idx, model in enumerate(candidates):
+        try:
+            ans = _call_gemini_model(model, messages, brand, key)
+            if idx > 0:
+                log_ai_event('model_fallback_ok', 'gemini', model, status_code=200, action=f'served_by:{model}', secret=key)
+            return ans
+        except AIProviderError as e:
+            if e.status_code in GEMINI_NON_FALLBACK_STATUSES or not getattr(e, 'fallback_allowed', True):
+                log_ai_event('provider_error', 'gemini', model, status_code=e.status_code, reason=e.reason, action='abort_no_fallback', secret=key)
+                raise
+
+            if idx == 0 and e.status_code in GEMINI_RETRYABLE_STATUSES:
+                if e.retry_after is None or e.retry_after <= 2.0:
+                    delay = min(max(0.0, e.retry_after), 2.0) if e.retry_after is not None else 0.4
+                    log_ai_event('model_retry', 'gemini', model, status_code=e.status_code, reason=e.reason, action=f'retry_after_{delay:.2f}s', secret=key)
+                    if delay > 0:
+                        time.sleep(delay)
+                    try:
+                        return _call_gemini_model(model, messages, brand, key)
+                    except AIProviderError as e2:
+                        e = e2
+                        if e.status_code in GEMINI_NON_FALLBACK_STATUSES or not getattr(e, 'fallback_allowed', True):
+                            log_ai_event('provider_error', 'gemini', model, status_code=e.status_code, reason=e.reason, action='abort_no_fallback', secret=key)
+                            raise
+
+            last_err = e
+            can_try_next = (idx + 1 < len(candidates)) and (
+                e.status_code is None or e.status_code in GEMINI_MODEL_FALLBACK_STATUSES
+            )
+            if can_try_next:
+                next_model = candidates[idx + 1]
+                log_ai_event('model_fallback', 'gemini', model, status_code=e.status_code, reason=e.reason, action=f'fallback_to:{next_model}', secret=key)
+                continue
+            break
+
+    raise last_err
 
 def ask_openai(messages, brand, extra):
     """Any OpenAI-compatible /chat/completions endpoint (OpenAI, OpenRouter, Groq, DeepSeek, Ollama, LM Studio...)."""
@@ -1388,6 +1479,17 @@ def ask_ai(messages, brand, extra):
             return ask_openai(messages, brand, extra)
         return ask_gemini(messages, brand, extra)
     except AIProviderError as e:
+        prov = c.get('provider') or 'unknown'
+        mdl = c.get('model') or ''
+        secret = str(c.get('key') or '')
+        status_code = getattr(e, 'status_code', None)
+        reason = getattr(e, 'reason', str(e))
+        if status_code in GEMINI_NON_FALLBACK_STATUSES or not getattr(e, 'fallback_allowed', True):
+            log_ai_event('provider_error', prov, mdl, status_code=status_code, reason=reason, action='no_builtin_fallback', secret=secret)
+            if status_code in (401, 403):
+                raise RuntimeError('Ошибка авторизации внешнего AI-провайдера. Проверьте API-ключ и права доступа.')
+            raise RuntimeError('Некорректный запрос к внешнему AI-провайдеру.')
+        log_ai_event('provider_fallback', prov, mdl, status_code=status_code, reason=reason, action='fallback_to:builtin', secret=secret)
         # Fallback gracefully to built-in trainer so the user still gets a helpful answer
         ans = ask_builtin(messages, brand)
         return ans + "\n\n*(💡 Внешний AI-провайдер временно недоступен, ответ подготовлен встроенным тренером)*"
@@ -3217,8 +3319,6 @@ class H(SimpleHTTPRequestHandler):
                     return self.send_j(400, {'error': 'Base URL должен начинаться с http:// или https://'})
                 c['base_url'] = bu
             model_val = re.sub(r'[^a-zA-Z0-9._:/-]', '', str(j.get('model') or c['model'])) or AI_DEFAULT['model']
-            if c['provider'] == 'gemini' and model_val == 'gemini-3.8-flash':
-                model_val = 'gemini-2.5-flash'
             c['model'] = model_val
             c['enabled'] = bool(j.get('enabled', True))
             c['prompt'] = str(j.get('prompt', ''))[:2000]

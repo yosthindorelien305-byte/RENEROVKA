@@ -884,8 +884,8 @@
   async function tabAI(el) {
     let c = {};
     try { c = await api('ai/settings'); } catch (e) { return toast(e.message, 1); }
-    const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash';
-    const curModel = (c.provider == 'gemini' && (!c.model || c.model == 'gemini-3.8-flash')) ? GEMINI_DEFAULT_MODEL : (c.model || '');
+    const GEMINI_DEFAULT_MODEL = 'gemini-3.8-flash';
+    const curModel = (c.model || '').trim() || (c.provider == 'gemini' ? GEMINI_DEFAULT_MODEL : '');
     const PRESETS = [
       ['DeepSeek', 'https://api.deepseek.com', 'deepseek-v4-flash'],
       ['OpenRouter', 'https://openrouter.ai/api/v1', 'meta-llama/llama-3.3-70b-instruct:free'],
@@ -920,7 +920,7 @@
     };
     $('#ai-prov').onchange = () => {
       sync();
-      if ($('#ai-prov').value == 'gemini' && (!/gemini/.test($('#ai-model').value) || $('#ai-model').value.trim() == 'gemini-3.8-flash')) {
+      if ($('#ai-prov').value == 'gemini' && !/gemini/.test($('#ai-model').value)) {
         $('#ai-model').value = GEMINI_DEFAULT_MODEL;
       }
     };
