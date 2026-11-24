@@ -59,7 +59,7 @@ def assert_isolated_server_paths(tmp_root):
 
 
 def _clear_server_memory_state():
-    """Reset in-memory rate limits, coach locks, tokens, and failure counters between tests."""
+    """Reset in-memory rate limits, coach locks, tokens, failure counters, and AI Coach caches."""
     server.coach_hits.clear()
     with server.coach_sessions_lock:
         server.active_coach_sessions.clear()
@@ -67,6 +67,8 @@ def _clear_server_memory_state():
         server.tokens.clear()
     with server.fails_lock:
         server.fails.clear()
+    server.reset_gemini_cooldown()
+    server.reset_catalog_cache()
 
 
 class IsolatedServerTestCase(unittest.TestCase):

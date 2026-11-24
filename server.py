@@ -740,10 +740,58 @@ GEMINI_FALLBACK_MODELS = ('gemini-3.1-flash-lite', 'gemini-3-flash-preview')
 GEMINI_RETRYABLE_STATUSES = (429, 503)
 GEMINI_MODEL_FALLBACK_STATUSES = (404, 429, 500, 502, 503, 504)
 GEMINI_NON_FALLBACK_STATUSES = (400, 401, 403)
+GEMINI_TOTAL_BUDGET_SEC = 42.0
+GEMINI_PRIMARY_TIMEOUT_SEC = 15.0
+GEMINI_FALLBACK_TIMEOUT_SEC = 15.0
+GEMINI_MIN_REMAINING_SEC = 2.0
+GEMINI_COOLDOWN_SEC = 90.0
+GEMINI_COOLDOWN_STATUSES = (429, 503)
 AI_DEFAULT = {'provider': 'builtin', 'base_url': '', 'key': '', 'model': GEMINI_DEFAULT_MODEL, 'enabled': True, 'prompt': ''}
 coach_hits = {}      # ip -> [timestamps]
 coach_sessions_lock = threading.Lock()
 active_coach_sessions = set()  # set of active session_id strings
+
+_catalog_cache_lock = threading.Lock()
+_catalog_cache_key = None
+_catalog_cache_val = ''
+
+_gemini_cooldown_lock = threading.Lock()
+_gemini_model_cooldowns = {}  # model -> monotonic deadline
+
+def reset_catalog_cache():
+    """Clear the cached site/data.json prompt catalog."""
+    global _catalog_cache_key, _catalog_cache_val
+    with _catalog_cache_lock:
+        _catalog_cache_key = None
+        _catalog_cache_val = ''
+
+def reset_gemini_cooldown():
+    """Clear in-memory Gemini primary model cooldown deadlines."""
+    with _gemini_cooldown_lock:
+        _gemini_model_cooldowns.clear()
+
+def _is_gemini_model_in_cooldown(model, now=None):
+    """Return True if model has an active cooldown deadline."""
+    cur = time.monotonic() if now is None else now
+    with _gemini_cooldown_lock:
+        until = _gemini_model_cooldowns.get(model)
+        if until is None:
+            return False
+        if cur < until:
+            return True
+        _gemini_model_cooldowns.pop(model, None)
+        return False
+
+def _set_gemini_model_cooldown(model, duration=None):
+    """Put model into cooldown for duration seconds (defaults to GEMINI_COOLDOWN_SEC)."""
+    dur = GEMINI_COOLDOWN_SEC if duration is None else duration
+    if dur <= 0:
+        return
+    until = time.monotonic() + dur
+    with _gemini_cooldown_lock:
+        prev = _gemini_model_cooldowns.get(model, 0.0)
+        if until > prev:
+            _gemini_model_cooldowns[model] = until
 
 def parse_cookies(handler):
     cookie_str = handler.headers.get('Cookie', '') if hasattr(handler, 'headers') and handler.headers else ''
@@ -1177,25 +1225,42 @@ def save_ai_cfg(cfg):
         pass
 
 def catalog():
-    """Short catalogue so the coach can link to real workouts/programs."""
+    """Short catalogue so the coach can link to real workouts/programs (mtime-cached)."""
+    global _catalog_cache_key, _catalog_cache_val
+    data_path = os.path.abspath(os.path.join(SITE, 'data.json'))
     try:
-        with open(os.path.join(SITE, 'data.json'), encoding='utf-8') as f:
+        st = os.stat(data_path)
+    except OSError:
+        reset_catalog_cache()
+        return ''
+    key = (data_path, st.st_mtime_ns, st.st_size)
+    with _catalog_cache_lock:
+        if _catalog_cache_key == key:
+            return _catalog_cache_val
+    try:
+        with open(data_path, encoding='utf-8') as f:
             D = json.load(f)
     except Exception:
         return ''
+    if not isinstance(D, dict):
+        return ''
     lines = ['PROGRAMS:']
-    for p in D['programs']:
+    for p in D.get('programs', []):
         lines.append('[[program:%s|%s]]' % (p['id'], p['t'].get('ru') or p['t'].get('en')))
     lines.append('WORKOUTS:')
-    for w in D['workouts']:
+    for w in D.get('workouts', []):
         n = w['t'].get('ru') or w['t'].get('en')
         if n:
             lines.append('[[workout:%s|%s]]' % (w['id'], n))
     lines.append('EXERCISES:')
-    for e in D['exercises']:
+    for e in D.get('exercises', []):
         if e.get('img') and e['n'].get('ru'):
             lines.append('[[exercise:%s|%s]]' % (e['id'], e['n']['ru']))
-    return '\n'.join(lines)
+    val = '\n'.join(lines)
+    with _catalog_cache_lock:
+        _catalog_cache_key = key
+        _catalog_cache_val = val
+    return val
 
 SYSTEM = (
     "Ты — дружелюбный AI-тренер фитнес-сайта {brand}. Помогаешь с тренировками, техникой упражнений, "
@@ -1245,12 +1310,13 @@ def log_ai_event(event, provider, model, status_code=None, reason='', action='',
 
 class AIProviderError(RuntimeError):
     """Ошибки внешнего AI-провайдера (сеть, HTTP-ошибки, таймауты, пустые или некорректные ответы API)."""
-    def __init__(self, message, status_code=None, retry_after=None, reason='', fallback_allowed=True):
+    def __init__(self, message, status_code=None, retry_after=None, reason='', fallback_allowed=True, error_kind=''):
         super().__init__(message)
         self.status_code = status_code
         self.retry_after = retry_after
         self.reason = reason or str(message)
         self.fallback_allowed = fallback_allowed
+        self.error_kind = error_kind
 
 def http_json(req, timeout=40):
     try:
@@ -1258,7 +1324,7 @@ def http_json(req, timeout=40):
             try:
                 return json.load(r)
             except (json.JSONDecodeError, UnicodeDecodeError) as e:
-                raise AIProviderError('Некорректный JSON в ответе AI-провайдера: %s' % scrub_ai_secret(e))
+                raise AIProviderError('Некорректный JSON в ответе AI-провайдера: %s' % scrub_ai_secret(e), error_kind='json_error')
     except urllib.error.HTTPError as e:
         detail = ''
         try:
@@ -1282,16 +1348,17 @@ def http_json(req, timeout=40):
             status_code=e.code,
             retry_after=retry_after,
             reason=safe_detail[:160],
-            fallback_allowed=(e.code not in GEMINI_NON_FALLBACK_STATUSES)
+            fallback_allowed=(e.code not in GEMINI_NON_FALLBACK_STATUSES),
+            error_kind='http_error',
         )
     except urllib.error.URLError as e:
         safe_reason = scrub_ai_secret(e.reason)[:160]
-        raise AIProviderError('Не удалось подключиться к AI-провайдеру: %s' % safe_reason, reason=safe_reason)
+        raise AIProviderError('Не удалось подключиться к AI-провайдеру: %s' % safe_reason, reason=safe_reason, error_kind='url_error')
     except (TimeoutError, socket.timeout) as e:
         safe_reason = scrub_ai_secret(e)[:160]
-        raise AIProviderError('Таймаут подключения к AI-провайдеру: %s' % safe_reason, reason=safe_reason)
+        raise AIProviderError('Таймаут подключения к AI-провайдеру: %s' % safe_reason, reason=safe_reason, error_kind='timeout')
 
-def _call_gemini_model(model, messages, brand, key):
+def _call_gemini_model(model, messages, brand, key, timeout=GEMINI_PRIMARY_TIMEOUT_SEC):
     body = {
         'systemInstruction': {'parts': [{'text': build_system(brand)}]},
         'contents': [{'role': m['role'], 'parts': [{'text': m['text']}]} for m in messages],
@@ -1301,7 +1368,7 @@ def _call_gemini_model(model, messages, brand, key):
         'https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent' % model,
         data=json.dumps(body).encode(),
         headers={'Content-Type': 'application/json', 'x-goog-api-key': key})
-    j = http_json(req)
+    j = http_json(req, timeout=timeout)
     if not isinstance(j, dict):
         raise AIProviderError('Некорректная структура ответа Gemini', reason='invalid_json_root')
     try:
@@ -1329,13 +1396,33 @@ def ask_gemini(messages, brand, extra):
     cfg = ai_cfg()
     key = str(cfg.get('key') or '')
     primary_model = re.sub(r'[^a-zA-Z0-9._-]', '', str(cfg.get('model') or GEMINI_DEFAULT_MODEL)) or GEMINI_DEFAULT_MODEL
-    candidates = [primary_model] + [m for m in GEMINI_FALLBACK_MODELS if m != primary_model]
+    fallback_models = [m for m in GEMINI_FALLBACK_MODELS if m != primary_model]
+    deadline = time.monotonic() + GEMINI_TOTAL_BUDGET_SEC
     last_err = None
 
+    if fallback_models and _is_gemini_model_in_cooldown(primary_model):
+        log_ai_event('model_cooldown_skip', 'gemini', primary_model, status_code=None, reason='primary_in_cooldown', action=f'skip_to:{fallback_models[0]}', secret=key)
+        candidates = fallback_models
+        skipped_primary = True
+    else:
+        candidates = [primary_model] + fallback_models
+        skipped_primary = False
+
     for idx, model in enumerate(candidates):
+        remaining = deadline - time.monotonic()
+        if remaining < GEMINI_MIN_REMAINING_SEC:
+            log_ai_event('deadline_exceeded', 'gemini', model, status_code=None, reason=f'remaining_{max(0.0, remaining):.2f}s', action='abort_to_builtin', secret=key)
+            if last_err is None:
+                last_err = AIProviderError('Превышен общий лимит времени ожидания Gemini', reason='deadline_exceeded', error_kind='timeout')
+            break
+
+        is_primary = (not skipped_primary and idx == 0)
+        base_timeout = GEMINI_PRIMARY_TIMEOUT_SEC if is_primary else GEMINI_FALLBACK_TIMEOUT_SEC
+        attempt_timeout = min(base_timeout, remaining)
+
         try:
-            ans = _call_gemini_model(model, messages, brand, key)
-            if idx > 0:
+            ans = _call_gemini_model(model, messages, brand, key, timeout=attempt_timeout)
+            if skipped_primary or idx > 0:
                 log_ai_event('model_fallback_ok', 'gemini', model, status_code=200, action=f'served_by:{model}', secret=key)
             return ans
         except AIProviderError as e:
@@ -1343,25 +1430,37 @@ def ask_gemini(messages, brand, extra):
                 log_ai_event('provider_error', 'gemini', model, status_code=e.status_code, reason=e.reason, action='abort_no_fallback', secret=key)
                 raise
 
-            if idx == 0 and e.status_code in GEMINI_RETRYABLE_STATUSES:
+            if is_primary and e.status_code in GEMINI_RETRYABLE_STATUSES:
                 if e.retry_after is None or e.retry_after <= 2.0:
                     delay = min(max(0.0, e.retry_after), 2.0) if e.retry_after is not None else 0.4
-                    log_ai_event('model_retry', 'gemini', model, status_code=e.status_code, reason=e.reason, action=f'retry_after_{delay:.2f}s', secret=key)
-                    if delay > 0:
-                        time.sleep(delay)
-                    try:
-                        return _call_gemini_model(model, messages, brand, key)
-                    except AIProviderError as e2:
-                        e = e2
-                        if e.status_code in GEMINI_NON_FALLBACK_STATUSES or not getattr(e, 'fallback_allowed', True):
-                            log_ai_event('provider_error', 'gemini', model, status_code=e.status_code, reason=e.reason, action='abort_no_fallback', secret=key)
-                            raise
+                    rem_now = deadline - time.monotonic()
+                    if rem_now - delay >= GEMINI_MIN_REMAINING_SEC:
+                        log_ai_event('model_retry', 'gemini', model, status_code=e.status_code, reason=e.reason, action=f'retry_after_{delay:.2f}s', secret=key)
+                        if delay > 0:
+                            time.sleep(delay)
+                        rem_after = deadline - time.monotonic()
+                        if rem_after >= GEMINI_MIN_REMAINING_SEC:
+                            try:
+                                return _call_gemini_model(model, messages, brand, key, timeout=min(GEMINI_PRIMARY_TIMEOUT_SEC, rem_after))
+                            except AIProviderError as e2:
+                                e = e2
+                                if e.status_code in GEMINI_NON_FALLBACK_STATUSES or not getattr(e, 'fallback_allowed', True):
+                                    log_ai_event('provider_error', 'gemini', model, status_code=e.status_code, reason=e.reason, action='abort_no_fallback', secret=key)
+                                    raise
 
             last_err = e
+            is_cooldown_err = (e.status_code in GEMINI_COOLDOWN_STATUSES) or (getattr(e, 'error_kind', '') in ('timeout', 'url_error'))
+            if is_primary and is_cooldown_err:
+                _set_gemini_model_cooldown(primary_model)
+
             can_try_next = (idx + 1 < len(candidates)) and (
                 e.status_code is None or e.status_code in GEMINI_MODEL_FALLBACK_STATUSES
             )
             if can_try_next:
+                rem_next = deadline - time.monotonic()
+                if rem_next < GEMINI_MIN_REMAINING_SEC:
+                    log_ai_event('deadline_exceeded', 'gemini', model, status_code=e.status_code, reason=f'remaining_{max(0.0, rem_next):.2f}s', action='abort_to_builtin', secret=key)
+                    break
                 next_model = candidates[idx + 1]
                 log_ai_event('model_fallback', 'gemini', model, status_code=e.status_code, reason=e.reason, action=f'fallback_to:{next_model}', secret=key)
                 continue

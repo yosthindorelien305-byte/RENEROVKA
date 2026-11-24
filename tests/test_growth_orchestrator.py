@@ -1819,7 +1819,7 @@ class TestGrowthOrchestrator(IsolatedServerTestCase):
         """
         captured_reqs = []
 
-        def fake_http_json(req):
+        def fake_http_json(req, timeout=40):
             captured_reqs.append({
                 "url": req.full_url,
                 "headers": {k.lower(): v for k, v in req.header_items()},
@@ -1918,7 +1918,7 @@ class TestGrowthOrchestrator(IsolatedServerTestCase):
 
             # 1. HTTP 404 на gemini-2.5-flash -> немедленный переход на gemini-3.1-flash-lite с сохранением контекста
             called = []
-            def mock_404_then_ok(req):
+            def mock_404_then_ok(req, timeout=40):
                 model_name = req.full_url.split("/models/")[1].split(":")[0]
                 body = json.loads(req.data.decode("utf-8"))
                 called.append((model_name, body["contents"]))
@@ -1943,7 +1943,7 @@ class TestGrowthOrchestrator(IsolatedServerTestCase):
 
             called_503 = []
             sleeps = []
-            def mock_503_cascade(req):
+            def mock_503_cascade(req, timeout=40):
                 model_name = req.full_url.split("/models/")[1].split(":")[0]
                 called_503.append(model_name)
                 if model_name in ("gemini-3.8-flash", "gemini-3.1-flash-lite"):
@@ -1960,9 +1960,10 @@ class TestGrowthOrchestrator(IsolatedServerTestCase):
             self.assertEqual(sleeps, [0.25])
 
             # 3. HTTP 429 с длинным Retry-After (30с): не ждет 30с и не зацикливается, сразу переходит на резервную модель
+            server.reset_gemini_cooldown()
             called_429 = []
             sleeps_429 = []
-            def mock_429_long(req):
+            def mock_429_long(req, timeout=40):
                 model_name = req.full_url.split("/models/")[1].split(":")[0]
                 called_429.append(model_name)
                 raise server.AIProviderError("429", status_code=429, retry_after=30.0, reason="Quota exceeded")
