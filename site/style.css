@@ -6857,3 +6857,235 @@ main#app.fx-enter {
   }
 }
 
+/* ===================================================
+   EXTENDED FITNESS PROFILE & ACTIVE PROGRAM CARDS
+   =================================================== */
+.prof-fitness,
+.prof-program {
+  margin-bottom: 14px;
+}
+.fp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.fp-head-r {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.fp-pill {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--ac-l);
+  background: rgba(var(--acr), 0.14);
+  border: 1px solid rgba(var(--acr), 0.28);
+  padding: 3px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.fp-pill.done {
+  color: var(--green);
+  background: rgba(var(--green-r), 0.14);
+  border-color: rgba(var(--green-r), 0.32);
+}
+.fp-bar {
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+.fp-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--green) 0%, var(--ac) 100%);
+  transition: width 0.25s ease;
+}
+.fp-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.fp-item {
+  background: var(--card-inset);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 9px 11px;
+  min-width: 0;
+}
+.fp-item.wide {
+  grid-column: 1 / -1;
+}
+.fp-lbl {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--mut);
+  margin-bottom: 3px;
+}
+.fp-val {
+  font-size: 13.5px;
+  font-weight: 800;
+  color: var(--tx);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fp-val.muted {
+  color: var(--mut);
+  font-weight: 600;
+}
+.fp-inj {
+  margin-top: 8px;
+  padding: 9px 11px;
+  border-radius: 12px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.24);
+  font-size: 12.5px;
+  color: var(--tx-soft);
+  line-height: 1.4;
+  word-break: break-word;
+}
+.fp-empty-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--mut);
+  line-height: 1.4;
+}
+.fp-privacy-note {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--card-inset);
+  border: 1px solid var(--line);
+  font-size: 11.5px;
+  color: var(--mut);
+  line-height: 1.4;
+}
+.fp-prog-title {
+  font-size: 15.5px;
+  font-weight: 800;
+  color: var(--tx);
+  margin-bottom: 6px;
+  line-height: 1.3;
+}
+.fp-prog-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--mut);
+  margin-bottom: 8px;
+}
+.fp-prog-meta b {
+  color: var(--ac-l);
+  font-weight: 800;
+}
+.fp-prog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.fp-prog-actions .btn {
+  flex: 1 1 auto;
+  min-width: 108px;
+  text-align: center;
+  justify-content: center;
+  padding: 9px 12px;
+  font-size: 12.5px;
+}
+.fp-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.ap-modal select,
+.ap-modal textarea {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 5px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--card-inset);
+  color: var(--tx);
+  font: inherit;
+  font-size: 14px;
+}
+.ap-modal textarea {
+  resize: vertical;
+  min-height: 64px;
+}
+.fp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.fp-chip {
+  border: 1px solid var(--line);
+  background: var(--card-inset);
+  color: var(--tx-soft);
+  border-radius: 999px;
+  padding: 6px 11px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.fp-chip.on {
+  background: rgba(var(--acr), 0.18);
+  border-color: rgba(var(--acr), 0.45);
+  color: var(--ac-l);
+}
+.fp-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 55vh;
+  overflow-y: auto;
+  margin: 10px 0 4px;
+}
+.fp-picker-item {
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--card-inset);
+  color: var(--tx);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.fp-picker-item.on {
+  border-color: rgba(var(--acr), 0.55);
+  background: rgba(var(--acr), 0.12);
+}
+.fp-picker-item strong {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 800;
+}
+.fp-picker-item small {
+  display: block;
+  font-size: 11.5px;
+  color: var(--mut);
+  margin-top: 2px;
+}
+@media (max-width: 480px) {
+  .fp-modal-grid {
+    grid-template-columns: 1fr;
+  }
+  .fp-prog-actions .btn {
+    min-width: 0;
+  }
+}
+

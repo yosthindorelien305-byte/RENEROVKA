@@ -1555,7 +1555,7 @@ class TestGrowthOrchestrator(IsolatedServerTestCase):
 
     def test_frontend_coach_navigation_ui_and_cache_version(self):
         """Проверяет наличие кнопки AI Coach в шапке, карточки на главной, отсутствие лишней вкладки в #nav,
-        стили .typing и актуальную версию кэша v61.
+        стили .typing и актуальную версию кэша v62.
         """
         with open(os.path.join(SITE, "index.html"), encoding="utf-8") as f:
             index_html = f.read()
@@ -1570,9 +1570,9 @@ class TestGrowthOrchestrator(IsolatedServerTestCase):
         self.assertIn('href="#/coach"', index_html)
         nav_section = index_html.split('<nav id="nav">')[1].split('</nav>')[0]
         self.assertNotIn('data-k="coach"', nav_section)
-        self.assertIn("app.js?v=61", index_html)
-        self.assertIn("style.css?v=61", index_html)
-        self.assertIn("flexa-shell-v61", sw_js)
+        self.assertIn("app.js?v=62", index_html)
+        self.assertIn("style.css?v=62", index_html)
+        self.assertIn("flexa-shell-v62", sw_js)
 
         self.assertIn("fetch('/api/coach/status')", app_js)
         self.assertIn("fetch('/api/coach/history'", app_js)
