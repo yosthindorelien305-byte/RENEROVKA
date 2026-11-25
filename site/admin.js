@@ -129,8 +129,7 @@
   }
 
   function shell() {
-    root.innerHTML = `<header class="ah"><img src="img/logo.svg" width="30" style="border-radius:8px"><b>Админка · ${esc(CFG.brand)}</b><a class="btn alt" style="padding:8px 14px" href="/#/profile" target="_blank">Профиль на сайте</a><a class="btn alt" style="padding:8px 14px" href="/" target="_blank">Открыть сайт</a><button class="btn alt" style="padding:8px 14px" id="lo">Выйти</button></header>
-    <div class="wrap"><div class="tabs">${[
+    const siteNav = [
       ['athlete', '👤 Профиль спортсмена'],
       ['ui', '🎨 Интерфейс'],
       ['programs', '📋 Программы'],
@@ -142,16 +141,82 @@
       ['payments', '💳 ЮKassa & СБП'],
       ['ai', '🤖 AI-тренер'],
       ['settings', '⚙️ Настройки']
-    ].map(([k, n]) => `<button data-t="${k}" class="${tab == k ? 'on' : ''}">${n}</button>`).join('')}</div><div id="tabc"></div></div>`;
+    ];
+    root.innerHTML = `<header class="ah">
+      <button type="button" class="btn alt adm-menu-btn" id="adm-menu-btn" aria-label="Меню">☰</button>
+      <img src="img/logo.svg" width="30" style="border-radius:8px">
+      <b>Админка · ${esc(CFG.brand)}</b>
+      <div class="ah-actions">
+        <a class="btn alt" href="/#/profile" target="_blank">Профиль</a>
+        <a class="btn alt" href="/" target="_blank">Открыть сайт</a>
+        <button class="btn alt" id="lo">Выйти</button>
+      </div>
+    </header>
+    <div class="adm-shell" id="adm-shell">
+      <div class="adm-drawer-backdrop" id="adm-drawer-bg"></div>
+      <aside class="adm-sidebar" id="adm-sidebar">
+        <div class="adm-nav-group">
+          <div class="adm-nav-title">Управление сайтом</div>
+          <div class="tabs adm-nav-list">${siteNav.map(([k, n]) => `<button data-t="${k}" class="${tab == k ? 'on' : ''}">${n}</button>`).join('')}</div>
+        </div>
+        <div class="adm-nav-group adm-nav-growth">
+          <div class="adm-nav-title">Развитие платформы</div>
+          <div class="tabs adm-nav-list"><button data-t="growth" class="is-growth ${tab == 'growth' ? 'on' : ''}">📈 AI Growth</button></div>
+        </div>
+      </aside>
+      <main class="wrap adm-main"><div id="tabc"></div></main>
+    </div>`;
 
     $('#lo').onclick = () => {
       if (token) fetch('/api/admin/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + token } }).catch(() => {});
       token = ''; sessionStorage.removeItem('atok'); showLogin();
     };
-    $$('.tabs button').forEach(b => b.onclick = () => { tab = b.dataset.t; sub = null; shell(); });
+    const admShell = $('#adm-shell');
+    const menuBtn = $('#adm-menu-btn');
+    const drawerBg = $('#adm-drawer-bg');
+    if (menuBtn && admShell) menuBtn.onclick = () => admShell.classList.toggle('drawer-open');
+    if (drawerBg && admShell) drawerBg.onclick = () => admShell.classList.remove('drawer-open');
 
-    const tabs = { athlete: tabAthlete, ui: tabUI, programs: tabPrograms, workouts: tabWorkouts, exercises: tabExercises, users: tabUsers, reports: tabReports, telegram: tabTelegram, payments: tabPayments, ai: tabAI, settings: tabSettings };
+    $$('.tabs button').forEach(b => b.onclick = () => {
+      tab = b.dataset.t;
+      sub = null;
+      if (admShell) admShell.classList.remove('drawer-open');
+      shell();
+    });
+
+    const tabs = { athlete: tabAthlete, ui: tabUI, programs: tabPrograms, workouts: tabWorkouts, exercises: tabExercises, users: tabUsers, reports: tabReports, telegram: tabTelegram, payments: tabPayments, ai: tabAI, growth: tabGrowth, settings: tabSettings };
     if (tabs[tab]) tabs[tab]($('#tabc'));
+  }
+
+  function tabGrowth(el) {
+    const ui = window.RizzaUI;
+    const modules = [
+      { id: 'dashboard', title: '📊 Dashboard', desc: 'Сводка KPI, очередь одобрения и последние события' },
+      { id: 'seo', title: '🔎 SEO AI', desc: 'Аудит метаданных, sitemap.xml и рекомендации с diff-превью' },
+      { id: 'content', title: '✍️ Content AI', desc: 'Генерация статей и публикация в /articles/ после одобрения' },
+      { id: 'social', title: '📣 Social AI', desc: 'Посты для Telegram и соцсетей через отдельного бота' },
+      { id: 'analytics', title: '📈 Analytics AI', desc: 'Метрики сайта с указанием источника и времени обновления' },
+      { id: 'tasks', title: '✅ Task Manager', desc: 'Задачи развития платформы и приоритеты' },
+      { id: 'reports', title: '📑 Reports AI', desc: 'Сводные отчёты и журнал действий' }
+    ];
+    el.innerHTML = `<div class="rf-card" style="margin-bottom:14px">
+      <div class="growth-hub-banner">
+        <div>
+          <h2 style="margin:0;font-size:18px">RizzaFit AI Growth</h2>
+          <p style="margin:4px 0 0;color:var(--mut);font-size:13px">Встроенный контур развития сайта внутри админ-панели. Полностью изолирован от AI Coach атлетов.</p>
+        </div>
+        ${ui ? ui.renderStatusBadge('pending_approval', 'Этап 2: каркас готов') : ''}
+      </div>
+      <div class="rf-card-inset" style="font-size:12.5px;color:var(--tx-sub);line-height:1.5">
+        <b>Правила безопасности:</b> все публикации, SEO-правки и изменения контента выполняются только после явного подтверждения администратора и автоматического резервного копирования. Настройки, история и ключи AI Coach (<code style="color:var(--ac)">server_data/ai.json</code>) не затрагиваются.
+      </div>
+    </div>
+    <div class="rf-grid-2">
+      ${modules.map(m => `<div class="rf-card">
+        <div style="font-weight:800;font-size:14.5px;margin-bottom:4px">${esc(m.title)}</div>
+        <div style="color:var(--mut);font-size:12.5px;line-height:1.45">${esc(m.desc)}</div>
+      </div>`).join('')}
+    </div>`;
   }
 
   const imgPicker = (id, src, cls) => `<div class="up"><img ${cls ? `class="${cls}"` : ''} id="${id}-prev" src="${esc(src || 'img/logo.svg')}" onerror="this.style.opacity=.2"><div><input type="file" id="${id}" accept="image/*"><br><button class="btn alt" style="padding:8px 14px;margin-top:6px" id="${id}-clr" type="button">Убрать / вернуть оригинал</button></div></div>`;
