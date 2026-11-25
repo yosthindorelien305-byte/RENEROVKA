@@ -238,12 +238,12 @@
     </div>
     ${ui && typeof ui.renderAuditLogList === 'function' ? ui.renderAuditLogList([
       {
-        action: 'Этап 2: каркас RizzaFit AI Growth и защитный журнал инициализированы',
+        action: 'Этап 2: подготовлен UI-каркас RizzaFit AI Growth',
         actor: 'admin-shell',
         timestamp: '25.11.2026',
         status: 'approved',
-        statusLabel: 'Активно',
-        details: 'Журнал работает в режиме append-only: записи доступны только для просмотра и защищены от редактирования и удаления.'
+        statusLabel: 'UI готов',
+        details: 'UI-макет журнала (только просмотр в интерфейсе). Серверная запись, хранение и защита от изменений будут реализованы и проверены на Этапе 3.'
       }
     ], { title: 'Журнал действий AI Growth' }) : ''}`;
   }

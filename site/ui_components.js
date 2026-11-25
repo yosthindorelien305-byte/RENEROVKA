@@ -156,7 +156,7 @@
     return '<div class="rf-card rf-audit-log" data-readonly="true">' +
       '<div class="rf-audit-head">' +
         '<h3>' + esc(title) + '</h3>' +
-        '<span class="rf-pill rf-audit-lock">🔒 Только чтение · защищён от редактирования</span>' +
+        '<span class="rf-pill rf-audit-lock">👁 Только просмотр (UI)</span>' +
       '</div>' +
       rowsHtml +
     '</div>';
