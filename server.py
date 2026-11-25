@@ -1283,18 +1283,34 @@ def _get_catalog_titles():
         return dict(_catalog_programs), dict(_catalog_workouts)
 
 def _sanitize_profile_text(val, max_len=USER_PROFILE_FIELD_MAX_LEN):
-    """Strip control chars, angle brackets, and data URIs from user-controlled profile text."""
+    """Strip control/invisible chars, angle brackets, and data URIs from user-controlled profile text."""
     if val is None or isinstance(val, (bool, dict, list)):
         return ''
     s = str(val)
     if 'data:image/' in s.lower():
         return ''
-    s = re.sub(r'[\x00-\x1f\x7f]+', ' ', s)
-    s = re.sub(r'[<>]+', '', s)
+    s = re.sub(r'[\x00-\x1f\x7f-\x9f\u2028\u2029]+', ' ', s)
+    s = re.sub(r'[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff<>\uff1c\uff1e]+', '', s)
     s = ' '.join(s.split()).strip()
     if max_len > 0 and len(s) > max_len:
         s = s[:max_len].rstrip()
     return s
+
+def _sanitize_profile_id(val, max_len=32):
+    """Accept only strict scalar IDs (non-negative int or ^[A-Za-z0-9_-]+$ str), skipping dict/list/bool."""
+    if val is None or isinstance(val, (bool, dict, list, float)):
+        return ''
+    if isinstance(val, int):
+        if val < 0:
+            return ''
+        s = str(val)
+        return '' if (max_len > 0 and len(s) > max_len) else s
+    if isinstance(val, str):
+        s = val.strip()
+        if not s or (max_len > 0 and len(s) > max_len):
+            return ''
+        return s if re.fullmatch(r'[A-Za-z0-9_-]+', s) else ''
+    return ''
 
 def _parse_state_value(state_dict, key):
     """Parse a value from user_state.data_json whether stored as JSON string or native object."""
@@ -1392,28 +1408,24 @@ def build_user_profile_context(display_name, state_json_raw):
     progs_map, wos_map = ({}, {})
     ps = _parse_state_value(state, 'progState')
     hist = _parse_state_value(state, 'hist')
-    has_prog = isinstance(ps, dict) and ps.get('activeId') not in (None, '', False)
+    pid_txt = _sanitize_profile_id(ps.get('activeId'), max_len=32) if isinstance(ps, dict) else ''
+    has_prog = bool(pid_txt)
     has_hist = isinstance(hist, list) and any(isinstance(x, dict) for x in hist)
     if has_prog or has_hist:
         progs_map, wos_map = _get_catalog_titles()
 
     if has_prog:
-        raw_pid = ps.get('activeId')
-        if not isinstance(raw_pid, bool):
-            pid_txt = _sanitize_profile_text(str(raw_pid), max_len=32)
-            if pid_txt:
-                p_title = _sanitize_profile_text(progs_map.get(pid_txt, ''))
-                if p_title:
-                    parts.append(f'Активная программа: {p_title} (ID {pid_txt})')
-                else:
-                    parts.append(f'Активная программа: ID {pid_txt}')
+        p_title = _sanitize_profile_text(progs_map.get(pid_txt, ''))
+        if p_title:
+            parts.append(f'Активная программа: {p_title} (ID {pid_txt})')
+        else:
+            parts.append(f'Активная программа: ID {pid_txt}')
 
     if has_hist:
         recent_items = []
         dict_entries = [x for x in hist if isinstance(x, dict)][-USER_PROFILE_HIST_LIMIT:]
         for item in dict_entries:
-            wid = item.get('id')
-            wid_txt = _sanitize_profile_text(str(wid), max_len=24) if (wid is not None and not isinstance(wid, bool)) else ''
+            wid_txt = _sanitize_profile_id(item.get('id'), max_len=24)
             w_name = _sanitize_profile_text(wos_map.get(wid_txt, ''), max_len=48) if wid_txt else ''
             if not w_name:
                 w_name = _sanitize_profile_text(item.get('name') or item.get('title'), max_len=48)
