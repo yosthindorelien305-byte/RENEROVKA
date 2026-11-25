@@ -138,7 +138,7 @@ class TestAICoachPerfAndResilience(IsolatedServerTestCase):
 
         self.assertIn("встроенным тренером", ans_a)
         self.assertLessEqual(clock_a.now - 1000.0, server.GEMINI_TOTAL_BUDGET_SEC)
-        self.assertEqual([m for m, _ in attempts_a], ["gemini-3.8-flash", "gemini-3.8-flash", "gemini-3.1-flash-lite"])
+        self.assertEqual([m for m, _ in attempts_a], ["gemini-3.8-flash", "gemini-3.8-flash", "gemini-flash-lite-latest"])
         self.assertEqual(attempts_a[0][1], 15.0)
         self.assertEqual(attempts_a[1][1], 15.0)
         self.assertAlmostEqual(attempts_a[2][1], 11.6, places=2)
@@ -165,7 +165,7 @@ class TestAICoachPerfAndResilience(IsolatedServerTestCase):
             ans_b = server.ask_ai(msgs, "RizzaFit", None)
 
         self.assertEqual(ans_b, "Ответ резервной модели в пределах бюджета")
-        self.assertEqual(attempts_b, [("gemini-3.8-flash", 15.0), ("gemini-3.1-flash-lite", 8.0)])
+        self.assertEqual(attempts_b, [("gemini-3.8-flash", 15.0), ("gemini-flash-lite-latest", 8.0)])
 
     def test_primary_cooldown_activates_on_503_skips_next_call_and_recovers_after_expiry(self):
         """503 on primary places it on 90s cooldown, skips primary on next call, and restores after expiry."""
@@ -193,15 +193,15 @@ class TestAICoachPerfAndResilience(IsolatedServerTestCase):
              patch.object(server.sys, "stderr", stderr_buf):
             # Call 1 at t=1000: primary 503 (+retry 503) -> fallback -> primary put on cooldown until ~1090.4
             ans1 = server.ask_ai(msgs, "RizzaFit", None)
-            self.assertEqual(ans1, "Ответ от gemini-3.1-flash-lite")
-            self.assertEqual([m for _, m in called], ["gemini-3.8-flash", "gemini-3.8-flash", "gemini-3.1-flash-lite"])
+            self.assertEqual(ans1, "Ответ от gemini-flash-lite-latest")
+            self.assertEqual([m for _, m in called], ["gemini-3.8-flash", "gemini-3.8-flash", "gemini-flash-lite-latest"])
 
             # Call 2 at t=1010 (within 90s): primary skipped immediately
             called.clear()
             clock.advance(10.0)
             ans2 = server.ask_ai(msgs, "RizzaFit", None)
-            self.assertEqual(ans2, "Ответ от gemini-3.1-flash-lite")
-            self.assertEqual([m for _, m in called], ["gemini-3.1-flash-lite"])
+            self.assertEqual(ans2, "Ответ от gemini-flash-lite-latest")
+            self.assertEqual([m for _, m in called], ["gemini-flash-lite-latest"])
 
             # Call 3 at t=1095 (after 90s cooldown expired): primary tried first again
             called.clear()
@@ -212,7 +212,7 @@ class TestAICoachPerfAndResilience(IsolatedServerTestCase):
 
         logs = stderr_buf.getvalue()
         self.assertIn("event=model_cooldown_skip", logs)
-        self.assertIn("action=skip_to:gemini-3.1-flash-lite", logs)
+        self.assertIn("action=skip_to:gemini-flash-lite-latest", logs)
         self.assertNotIn(secret_key, logs)
 
     def test_primary_cooldown_activates_on_timeout_and_url_error_and_429(self):
@@ -252,13 +252,13 @@ class TestAICoachPerfAndResilience(IsolatedServerTestCase):
                      patch.object(server.urllib.request, "urlopen", side_effect=mock_urlopen):
                     ans1 = server.ask_ai(msgs, "RizzaFit", None)
                     self.assertEqual(ans1, f"OK fallback after {label}")
-                    self.assertEqual(calls, ["gemini-3.8-flash", "gemini-3.1-flash-lite"])
+                    self.assertEqual(calls, ["gemini-3.8-flash", "gemini-flash-lite-latest"])
                     self.assertTrue(server._is_gemini_model_in_cooldown("gemini-3.8-flash"))
 
                     calls.clear()
                     ans2 = server.ask_ai(msgs, "RizzaFit", None)
                     self.assertEqual(ans2, f"OK fallback after {label}")
-                    self.assertEqual(calls, ["gemini-3.1-flash-lite"])
+                    self.assertEqual(calls, ["gemini-flash-lite-latest"])
 
         # HTTP 429 also triggers cooldown
         server.reset_gemini_cooldown()
@@ -274,10 +274,10 @@ class TestAICoachPerfAndResilience(IsolatedServerTestCase):
         with patch.object(server, "ai_cfg", return_value=cfg), \
              patch.object(server, "http_json", side_effect=mock_429):
             self.assertEqual(server.ask_ai(msgs, "RizzaFit", None), "OK fallback after 429")
-            self.assertEqual(calls_429, ["gemini-3.8-flash", "gemini-3.1-flash-lite"])
+            self.assertEqual(calls_429, ["gemini-3.8-flash", "gemini-flash-lite-latest"])
             calls_429.clear()
             self.assertEqual(server.ask_ai(msgs, "RizzaFit", None), "OK fallback after 429")
-            self.assertEqual(calls_429, ["gemini-3.1-flash-lite"])
+            self.assertEqual(calls_429, ["gemini-flash-lite-latest"])
 
     def test_http_400_401_403_no_fallback_and_no_cooldown(self):
         """HTTP 400/401/403 must fail fast without fallback and must NOT place primary on cooldown."""

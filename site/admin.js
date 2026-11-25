@@ -884,7 +884,7 @@
   async function tabAI(el) {
     let c = {};
     try { c = await api('ai/settings'); } catch (e) { return toast(e.message, 1); }
-    const GEMINI_DEFAULT_MODEL = 'gemini-3.8-flash';
+    const GEMINI_DEFAULT_MODEL = 'gemini-flash-lite-latest';
     const curModel = (c.model || '').trim() || (c.provider == 'gemini' ? GEMINI_DEFAULT_MODEL : '');
     const PRESETS = [
       ['DeepSeek', 'https://api.deepseek.com', 'deepseek-v4-flash'],

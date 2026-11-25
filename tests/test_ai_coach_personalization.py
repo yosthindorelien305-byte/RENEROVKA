@@ -574,7 +574,7 @@ class TestAICoachPersonalization(IsolatedServerTestCase):
         self.assertNotIn("Подмена", sys_txt)
 
     def test_gemini_retry_and_fallback_preserve_profile_context(self):
-        """On 503 retry and fallback to gemini-3.1-flash-lite, <user_profile_data> stays intact on all attempts."""
+        """On 503 retry and fallback to gemini-flash-lite-latest, <user_profile_data> stays intact on all attempts."""
         server.reset_gemini_cooldown()
         self.addCleanup(server.reset_gemini_cooldown)
 
@@ -617,7 +617,7 @@ class TestAICoachPersonalization(IsolatedServerTestCase):
         self.assertEqual(len(attempts), 3)
         self.assertIn("gemini-3.8-flash", attempts[0]["url"])
         self.assertIn("gemini-3.8-flash", attempts[1]["url"])
-        self.assertIn("gemini-3.1-flash-lite", attempts[2]["url"])
+        self.assertIn("gemini-flash-lite-latest", attempts[2]["url"])
         for att in attempts:
             self.assertIn("<user_profile_data>", att["sys"])
             self.assertIn("Имя: Алексей Фолбек", att["sys"])

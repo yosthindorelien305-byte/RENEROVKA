@@ -747,8 +747,12 @@ def write_json(name, obj):
     os.replace(tmp, os.path.join(CONTENT, name))
 
 AI_FILE = os.path.join(SECRET_DIR, 'ai.json')
-GEMINI_DEFAULT_MODEL = 'gemini-3.8-flash'
-GEMINI_FALLBACK_MODELS = ('gemini-3.1-flash-lite', 'gemini-3-flash-preview')
+GEMINI_DEFAULT_MODEL = 'gemini-flash-lite-latest'
+GEMINI_FALLBACK_MODELS = (
+    'gemini-flash-lite-latest',
+    'gemini-3.5-flash-lite',
+    'gemini-3.1-flash-lite-preview',
+)
 GEMINI_RETRYABLE_STATUSES = (429, 503)
 GEMINI_MODEL_FALLBACK_STATUSES = (404, 429, 500, 502, 503, 504)
 GEMINI_NON_FALLBACK_STATUSES = (400, 401, 403)
@@ -813,7 +817,7 @@ def reset_catalog_cache():
         _catalog_exercises = {}
 
 def reset_gemini_cooldown():
-    """Clear in-memory Gemini primary model cooldown deadlines."""
+    """Clear in-memory Gemini per-model cooldown deadlines."""
     with _gemini_cooldown_lock:
         _gemini_model_cooldowns.clear()
 
@@ -1828,13 +1832,14 @@ def log_ai_event(event, provider, model, status_code=None, reason='', action='',
 
 class AIProviderError(RuntimeError):
     """Ошибки внешнего AI-провайдера (сеть, HTTP-ошибки, таймауты, пустые или некорректные ответы API)."""
-    def __init__(self, message, status_code=None, retry_after=None, reason='', fallback_allowed=True, error_kind=''):
+    def __init__(self, message, status_code=None, retry_after=None, reason='', fallback_allowed=True, error_kind='', model=''):
         super().__init__(message)
         self.status_code = status_code
         self.retry_after = retry_after
         self.reason = reason or str(message)
         self.fallback_allowed = fallback_allowed
         self.error_kind = error_kind
+        self.model = str(model or '')
 
 def http_json(req, timeout=40):
     try:
@@ -1914,36 +1919,52 @@ def ask_gemini(messages, brand, extra):
     cfg = ai_cfg()
     key = str(cfg.get('key') or '')
     primary_model = re.sub(r'[^a-zA-Z0-9._-]', '', str(cfg.get('model') or GEMINI_DEFAULT_MODEL)) or GEMINI_DEFAULT_MODEL
-    fallback_models = [m for m in GEMINI_FALLBACK_MODELS if m != primary_model]
+    all_models = [primary_model] + [m for m in GEMINI_FALLBACK_MODELS if m != primary_model]
     deadline = time.monotonic() + GEMINI_TOTAL_BUDGET_SEC
     last_err = None
 
-    if fallback_models and _is_gemini_model_in_cooldown(primary_model):
-        log_ai_event('model_cooldown_skip', 'gemini', primary_model, status_code=None, reason='primary_in_cooldown', action=f'skip_to:{fallback_models[0]}', secret=key)
-        candidates = fallback_models
-        skipped_primary = True
-    else:
-        candidates = [primary_model] + fallback_models
-        skipped_primary = False
+    candidates = []
+    skipped_models = []
+    for m in all_models:
+        if _is_gemini_model_in_cooldown(m):
+            skipped_models.append(m)
+        else:
+            candidates.append(m)
+
+    for sm in skipped_models:
+        skip_reason = 'primary_in_cooldown' if sm == primary_model else 'model_in_cooldown'
+        skip_action = f'skip_to:{candidates[0]}' if candidates else 'all_models_in_cooldown'
+        log_ai_event('model_cooldown_skip', 'gemini', sm, status_code=None, reason=skip_reason, action=skip_action, secret=key)
+
+    if not candidates:
+        raise AIProviderError(
+            'Все модели Gemini временно на паузе (cooldown)',
+            status_code=None,
+            reason='all_models_in_cooldown',
+            fallback_allowed=True,
+            error_kind='cooldown',
+            model=all_models[-1],
+        )
 
     for idx, model in enumerate(candidates):
         remaining = deadline - time.monotonic()
         if remaining < GEMINI_MIN_REMAINING_SEC:
             log_ai_event('deadline_exceeded', 'gemini', model, status_code=None, reason=f'remaining_{max(0.0, remaining):.2f}s', action='abort_to_builtin', secret=key)
             if last_err is None:
-                last_err = AIProviderError('Превышен общий лимит времени ожидания Gemini', reason='deadline_exceeded', error_kind='timeout')
+                last_err = AIProviderError('Превышен общий лимит времени ожидания Gemini', reason='deadline_exceeded', error_kind='timeout', model=model)
             break
 
-        is_primary = (not skipped_primary and idx == 0)
+        is_primary = (model == primary_model)
         base_timeout = GEMINI_PRIMARY_TIMEOUT_SEC if is_primary else GEMINI_FALLBACK_TIMEOUT_SEC
         attempt_timeout = min(base_timeout, remaining)
 
         try:
             ans = _call_gemini_model(model, messages, brand, key, timeout=attempt_timeout, extra=extra)
-            if skipped_primary or idx > 0:
+            if model != primary_model:
                 log_ai_event('model_fallback_ok', 'gemini', model, status_code=200, action=f'served_by:{model}', secret=key)
             return ans
         except AIProviderError as e:
+            e.model = model
             if e.status_code in GEMINI_NON_FALLBACK_STATUSES or not getattr(e, 'fallback_allowed', True):
                 log_ai_event('provider_error', 'gemini', model, status_code=e.status_code, reason=e.reason, action='abort_no_fallback', secret=key)
                 raise
@@ -1961,6 +1982,7 @@ def ask_gemini(messages, brand, extra):
                             try:
                                 return _call_gemini_model(model, messages, brand, key, timeout=min(GEMINI_PRIMARY_TIMEOUT_SEC, rem_after), extra=extra)
                             except AIProviderError as e2:
+                                e2.model = model
                                 e = e2
                                 if e.status_code in GEMINI_NON_FALLBACK_STATUSES or not getattr(e, 'fallback_allowed', True):
                                     log_ai_event('provider_error', 'gemini', model, status_code=e.status_code, reason=e.reason, action='abort_no_fallback', secret=key)
@@ -1968,8 +1990,8 @@ def ask_gemini(messages, brand, extra):
 
             last_err = e
             is_cooldown_err = (e.status_code in GEMINI_COOLDOWN_STATUSES) or (getattr(e, 'error_kind', '') in ('timeout', 'url_error'))
-            if is_primary and is_cooldown_err:
-                _set_gemini_model_cooldown(primary_model)
+            if is_cooldown_err:
+                _set_gemini_model_cooldown(model)
 
             can_try_next = (idx + 1 < len(candidates)) and (
                 e.status_code is None or e.status_code in GEMINI_MODEL_FALLBACK_STATUSES
@@ -2098,7 +2120,7 @@ def ask_ai(messages, brand, extra):
         return ask_gemini(messages, brand, extra)
     except AIProviderError as e:
         prov = c.get('provider') or 'unknown'
-        mdl = c.get('model') or ''
+        mdl = getattr(e, 'model', '') or c.get('model') or ''
         secret = str(c.get('key') or '')
         status_code = getattr(e, 'status_code', None)
         reason = getattr(e, 'reason', str(e))
