@@ -1874,7 +1874,7 @@ class TestGrowthOrchestrator(IsolatedServerTestCase):
             self.assertIn("встроенным тренером", fallback_reply)
 
     def test_admin_frontend_gemini_autofill_and_base_url_guards(self):
-        """Проверяет защиту от автозаполнения, модель по умолчанию gemini-3.8-flash и кэш v57 в site/admin.html."""
+        """Проверяет защиту от автозаполнения, модель по умолчанию gemini-flash-lite-latest и кэш v58 в site/admin.html."""
         with open(os.path.join(SITE, "admin.js"), encoding="utf-8") as f:
             admin_js = f.read()
         with open(os.path.join(SITE, "admin.html"), encoding="utf-8") as f:
@@ -1882,15 +1882,15 @@ class TestGrowthOrchestrator(IsolatedServerTestCase):
 
         self.assertIn('autocomplete="new-password"', admin_js)
         self.assertIn('autocomplete="off"', admin_js)
-        self.assertIn("GEMINI_DEFAULT_MODEL = 'gemini-3.8-flash'", admin_js)
-        self.assertEqual(server.AI_DEFAULT["model"], "gemini-3.8-flash")
+        self.assertIn("GEMINI_DEFAULT_MODEL = 'gemini-flash-lite-latest'", admin_js)
+        self.assertEqual(server.AI_DEFAULT["model"], "gemini-flash-lite-latest")
         self.assertIn("if (prov === 'openai')", admin_js)
-        self.assertIn("admin.js?v=57", admin_html)
+        self.assertIn("admin.js?v=58", admin_html)
         self.assertIn("style.css?v=57", admin_html)
 
     def test_gemini_model_fallback_404_503_429_context_and_provider_config_preserved(self):
         """Проверяет последовательный fallback моделей Gemini:
-        - HTTP 404 сразу переключает на gemini-3.1-flash-lite без повторов 404;
+        - HTTP 404 сразу переключает на gemini-flash-lite-latest без повторов 404;
         - HTTP 503 выполняет ограниченный retry (с учетом Retry-After) и переключается дальше при провале;
         - HTTP 429 не уходит в бесконечный цикл и уважает Retry-After (длинный Retry-After сразу идет на fallback);
         - при переключении сохраняется полный контекст нескольких сообщений;
@@ -1916,7 +1916,7 @@ class TestGrowthOrchestrator(IsolatedServerTestCase):
                 {"role": "user", "text": "85 кг, есть гантели дома"},
             ]
 
-            # 1. HTTP 404 на gemini-2.5-flash -> немедленный переход на gemini-3.1-flash-lite с сохранением контекста
+            # 1. HTTP 404 на gemini-2.5-flash -> немедленный переход на gemini-flash-lite-latest с сохранением контекста
             called = []
             def mock_404_then_ok(req, timeout=40):
                 model_name = req.full_url.split("/models/")[1].split(":")[0]
@@ -1930,11 +1930,11 @@ class TestGrowthOrchestrator(IsolatedServerTestCase):
                 ans = server.ask_ai(msgs, "RizzaFit", None)
 
             self.assertEqual(ans, "Персональный ответ от резервной модели")
-            self.assertEqual([c[0] for c in called], ["gemini-2.5-flash", "gemini-3.1-flash-lite"])
+            self.assertEqual([c[0] for c in called], ["gemini-2.5-flash", "gemini-flash-lite-latest"])
             self.assertEqual([len(c[1]) for c in called], [3, 3])
             self.assertEqual(called[0][1], called[1][1])
 
-            # 2. HTTP 503 на основной (gemini-3.8-flash): 1 ограниченный retry, затем fallback на gemini-3.1-flash-lite -> gemini-3-flash-preview
+            # 2. HTTP 503 на основной (gemini-3.8-flash): 1 ограниченный retry, затем fallback на gemini-flash-lite-latest -> gemini-3.5-flash-lite
             with open(tmp_ai, "w", encoding="utf-8") as f:
                 json.dump({
                     "provider": "gemini", "base_url": "", "key": "AIzaTestKeyForFallback9999",
@@ -1946,20 +1946,20 @@ class TestGrowthOrchestrator(IsolatedServerTestCase):
             def mock_503_cascade(req, timeout=40):
                 model_name = req.full_url.split("/models/")[1].split(":")[0]
                 called_503.append(model_name)
-                if model_name in ("gemini-3.8-flash", "gemini-3.1-flash-lite"):
+                if model_name in ("gemini-3.8-flash", "gemini-flash-lite-latest"):
                     raise server.AIProviderError("503", status_code=503, retry_after=0.25, reason="High demand")
-                return {"candidates": [{"content": {"parts": [{"text": "Ответ от gemini-3-flash-preview"}]}}]}
+                return {"candidates": [{"content": {"parts": [{"text": "Ответ от gemini-3.5-flash-lite"}]}}]}
 
             with patch.object(server, "AI_FILE", tmp_ai), \
                  patch.object(server.time, "sleep", side_effect=lambda d: sleeps.append(d)), \
                  patch.object(server, "http_json", side_effect=mock_503_cascade):
                 ans503 = server.ask_ai(msgs, "RizzaFit", None)
 
-            self.assertEqual(ans503, "Ответ от gemini-3-flash-preview")
-            self.assertEqual(called_503, ["gemini-3.8-flash", "gemini-3.8-flash", "gemini-3.1-flash-lite", "gemini-3-flash-preview"])
+            self.assertEqual(ans503, "Ответ от gemini-3.5-flash-lite")
+            self.assertEqual(called_503, ["gemini-3.8-flash", "gemini-3.8-flash", "gemini-flash-lite-latest", "gemini-3.5-flash-lite"])
             self.assertEqual(sleeps, [0.25])
 
-            # 3. HTTP 429 с длинным Retry-After (30с): не ждет 30с и не зацикливается, сразу переходит на резервную модель
+            # 3. HTTP 429 с длинным Retry-After (30с): не ждет 30с и не зацикливается, сразу переходит по всей цепочке к builtin
             server.reset_gemini_cooldown()
             called_429 = []
             sleeps_429 = []
@@ -1975,7 +1975,10 @@ class TestGrowthOrchestrator(IsolatedServerTestCase):
                 # Конфигурация provider='gemini' не перезаписывается из-за временной ошибки
                 self.assertEqual(server.ai_cfg()["provider"], "gemini")
 
-            self.assertEqual(called_429, ["gemini-3.8-flash", "gemini-3.1-flash-lite", "gemini-3-flash-preview"])
+            self.assertEqual(
+                called_429,
+                ["gemini-3.8-flash", "gemini-flash-lite-latest", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite-preview"],
+            )
             self.assertEqual(sleeps_429, [])
             self.assertIn("встроенным тренером", ans_bi)
 
