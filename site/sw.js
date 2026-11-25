@@ -1,12 +1,15 @@
-const CACHE_NAME = 'flexa-shell-v62';
+const CACHE_NAME = 'flexa-shell-v63';
 const CORE_ASSETS = [
   './',
   './index.html',
+  './tokens.css',
+  './ui-kit.css',
   './style.css',
   './texts.js',
   './muscles.js',
   './athlete_profile.js',
   './analytics.js',
+  './ui_components.js',
   './app.js',
   './manifest.json',
   './img/logo.svg',

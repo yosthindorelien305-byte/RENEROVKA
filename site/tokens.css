@@ -1,0 +1,71 @@
+/* ===================================================================
+   RIZZAFIT UNIFIED DESIGN SYSTEM — TOKENS (Obsidian Athletic 2.0)
+   Single source of truth for Main Site, Admin Panel & AI Growth
+   =================================================================== */
+:root {
+  /* Core brand & status accents */
+  --ac: #F0A830;
+  --acr: 240, 168, 48;
+  --ac-l: #F8C96C;
+  --ac-d: #C4821A;
+  --green: #2DD4BF;
+  --green-r: 45, 212, 191;
+  --green-deep: #0D9488;
+  --green-deep-r: 13, 148, 136;
+  --rf-info: #38BDF8;
+  --rf-warn: #F0A830;
+  --rf-danger: #F87171;
+  --rf-success: #2DD4BF;
+
+  /* Obsidian surfaces */
+  --bg: #0F1218;
+  --bg-deep: #090B0F;
+  --bg-mid: #141923;
+  --bg-top: #1B2230;
+  --shell: #0F1218;
+  --rail: #141923;
+  --card: #161B24;
+  --card2: #1D2430;
+  --card-inset: #0E1117;
+  --card-glass: rgba(22, 27, 36, 0.85);
+  --card-glass-hover: #1D2430;
+  --card-sub: #1A202B;
+  --card-border: rgba(255, 255, 255, 0.08);
+  --line: rgba(255, 255, 255, 0.08);
+
+  /* Typography & ink */
+  --tx: #F3F5F8;
+  --mut: #8E97A4;
+  --tx-dark: #F3F5F8;
+  --tx-muted: #8E97A4;
+  --tx-light: #F3F5F8;
+  --tx-sub: #A9B1BD;
+  --tx-soft: #B9C2CF;
+  --font-disp: 'Plus Jakarta Sans', system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+
+  /* Navigation & legacy aliases preserved */
+  --dock-bg: rgba(15, 18, 24, 0.88);
+  --dock-item: #141923;
+  --dock-inactive-tx: #7C8594;
+  --dock-active: var(--ac);
+  --dock-active-tx: #0D1015;
+  --orange: var(--ac);
+  --orange-light: rgba(var(--acr), 0.14);
+  --emerald: var(--green);
+  --teal-btn: var(--ac);
+
+  /* Radii, elevation & responsive layout dimensions */
+  --r-card: 18px;
+  --r-md: 12px;
+  --r-sm: 10px;
+  --r-pill: 999px;
+  --sh-card: 0 8px 24px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --sh-inset: inset 0 1px 4px rgba(0, 0, 0, 0.45);
+  --rf-sidebar-w: 236px;
+  --rf-rail-w: 76px;
+  --rf-adm-sidebar-w: 256px;
+  --rf-content-max: 1240px;
+
+  --noise-svg: none;
+  --concrete-svg: none;
+}
