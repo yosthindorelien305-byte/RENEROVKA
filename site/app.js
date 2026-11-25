@@ -197,6 +197,7 @@
       snowflake: '<path d="M12 2v20M2 12h20M4.93 4.93l14.14 14.14M19.07 4.93L4.93 19.07"/>',
       bell: '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>',
       users: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+      user: '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
       video: '<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>',
       image: '<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>'
     };
@@ -280,6 +281,7 @@
     AUD = Object.assign({}, AUD, next || {});
     localStorage.audioCfg = JSON.stringify(AUD);
     localStorage.audioMuted = String(!!AUD.muted || (!AUD.sfx && !AUD.voice));
+    if (typeof scheduleCloudSync === 'function') scheduleCloudSync();
     if (AUD.muted || !AUD.voice) stopSpeech();
     syncSndBtn();
   }
@@ -529,6 +531,7 @@
     const f = getFavs();
     if (f.has(id)) f.delete(id); else f.add(id);
     localStorage.favs = JSON.stringify([...f]);
+    if (typeof scheduleCloudSync === 'function') scheduleCloudSync();
     vib(35);
     return f.has(id);
   };
@@ -783,6 +786,58 @@
     if (typeof scheduleCloudSync === 'function') scheduleCloudSync();
   }
 
+  const FITNESS_GOALS = [
+    { id: 'fat_loss', ru: 'Похудение', en: 'Fat loss' },
+    { id: 'muscle_gain', ru: 'Набор мышечной массы', en: 'Muscle gain' },
+    { id: 'recomp', ru: 'Рельеф', en: 'Tone & recomp' },
+    { id: 'strength', ru: 'Сила', en: 'Strength' },
+    { id: 'endurance', ru: 'Выносливость', en: 'Endurance' },
+    { id: 'health', ru: 'Здоровье', en: 'General health' }
+  ];
+  const FITNESS_LEVELS = [
+    { id: 'beginner', ru: 'Новичок', en: 'Beginner' },
+    { id: 'intermediate', ru: 'Средний', en: 'Intermediate' },
+    { id: 'advanced', ru: 'Продвинутый', en: 'Advanced' }
+  ];
+  const FITNESS_SEX_OPTS = [
+    { id: 'unspecified', ru: 'Не указывать', en: 'Prefer not to say' },
+    { id: 'male', ru: 'Мужской', en: 'Male' },
+    { id: 'female', ru: 'Женский', en: 'Female' }
+  ];
+  function getFitnessProfile() {
+    let raw = {};
+    try { raw = JSON.parse(localStorage.fitnessProfile || '{}') || {}; } catch (e) {}
+    const out = {};
+    const h = +raw.heightCm;
+    if (!isNaN(h) && h >= 100 && h <= 250) out.heightCm = Math.round(h * 10) / 10;
+    const a = +raw.age;
+    if (Number.isInteger(a) && a >= 12 && a <= 100) out.age = a;
+    if (typeof raw.sex === 'string' && FITNESS_SEX_OPTS.some(x => x.id === raw.sex)) out.sex = raw.sex;
+    if (typeof raw.goal === 'string' && FITNESS_GOALS.some(x => x.id === raw.goal)) out.goal = raw.goal;
+    if (typeof raw.level === 'string' && FITNESS_LEVELS.some(x => x.id === raw.level)) out.level = raw.level;
+    if (typeof raw.injuries === 'string' && raw.injuries.trim()) {
+      out.injuries = raw.injuries.replace(/[<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 160);
+    }
+    return out;
+  }
+  function saveFitnessProfile(fp) {
+    const src = fp && typeof fp === 'object' ? fp : {};
+    const clean = {};
+    const h = +src.heightCm;
+    if (!isNaN(h) && h >= 100 && h <= 250) clean.heightCm = Math.round(h * 10) / 10;
+    const a = +src.age;
+    if (Number.isInteger(a) && a >= 12 && a <= 100) clean.age = a;
+    if (typeof src.sex === 'string' && FITNESS_SEX_OPTS.some(x => x.id === src.sex)) clean.sex = src.sex;
+    if (typeof src.goal === 'string' && FITNESS_GOALS.some(x => x.id === src.goal)) clean.goal = src.goal;
+    if (typeof src.level === 'string' && FITNESS_LEVELS.some(x => x.id === src.level)) clean.level = src.level;
+    if (typeof src.injuries === 'string' && src.injuries.trim()) {
+      clean.injuries = src.injuries.replace(/[<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 160);
+    }
+    localStorage.fitnessProfile = JSON.stringify(clean);
+    if (typeof scheduleCloudSync === 'function') scheduleCloudSync();
+    return clean;
+  }
+
   function renderActivityChartHtml(allH, days = 7) {
     const dayMap = {};
     allH.forEach(x => {
@@ -935,6 +990,105 @@
       </div>`;
   }
 
+  function renderFitnessProfileCard() {
+    const fp = getFitnessProfile();
+    const bm = getBodyMetrics();
+    const ps = getProgState();
+    const latest = bm.logs.length ? bm.logs[bm.logs.length - 1] : null;
+    const goalMeta = FITNESS_GOALS.find(g => g.id === fp.goal);
+    const levelMeta = FITNESS_LEVELS.find(l => l.id === fp.level);
+    const sexMeta = FITNESS_SEX_OPTS.find(s => s.id === fp.sex);
+    const filledChecks = [
+      Boolean(fp.heightCm),
+      Boolean(fp.age),
+      Boolean(latest && latest.w > 0),
+      Boolean(bm.target && bm.target > 0),
+      Boolean(goalMeta),
+      Boolean(levelMeta),
+      Boolean(ps.activeId)
+    ];
+    const filledCnt = filledChecks.filter(Boolean).length;
+    const totChecks = filledChecks.length;
+    const pct = Math.round((filledCnt / totChecks) * 100);
+    const bmi = (fp.heightCm && latest && latest.w > 0)
+      ? (latest.w / Math.pow(fp.heightCm / 100, 2)).toFixed(1)
+      : '';
+    const emptyLbl = '—';
+    const items = [
+      { lbl: L == 'ru' ? 'Рост' : 'Height', val: fp.heightCm ? `${fp.heightCm} ${L == 'ru' ? 'см' : 'cm'}` : emptyLbl, empty: !fp.heightCm },
+      { lbl: L == 'ru' ? 'Возраст' : 'Age', val: fp.age ? `${fp.age}` : emptyLbl, empty: !fp.age },
+      { lbl: L == 'ru' ? 'Текущий вес' : 'Current weight', val: latest ? `${latest.w} ${L == 'ru' ? 'кг' : 'kg'}${bmi ? ` (ИМТ ${bmi})` : ''}` : emptyLbl, empty: !latest },
+      { lbl: L == 'ru' ? 'Целевой вес' : 'Target weight', val: bm.target ? `${bm.target} ${L == 'ru' ? 'кг' : 'kg'}` : emptyLbl, empty: !bm.target },
+      { lbl: L == 'ru' ? 'Цель' : 'Goal', val: goalMeta ? (L == 'ru' ? goalMeta.ru : goalMeta.en) : emptyLbl, empty: !goalMeta },
+      { lbl: L == 'ru' ? 'Уровень' : 'Level', val: levelMeta ? (L == 'ru' ? levelMeta.ru : levelMeta.en) : emptyLbl, empty: !levelMeta }
+    ];
+    if (sexMeta && sexMeta.id !== 'unspecified') {
+      items.push({ lbl: L == 'ru' ? 'Пол' : 'Sex', val: L == 'ru' ? sexMeta.ru : sexMeta.en, empty: false, wide: true });
+    }
+    return `
+      <div class="ss-card prof-fitness">
+        <div class="fp-head">
+          <div class="ss-card-title" style="margin:0">
+            <b>${uiSvg('user', 15)} ${L == 'ru' ? 'Мои параметры и цели' : 'My Parameters & Goals'}</b>
+          </div>
+          <div class="fp-head-r">
+            <span class="fp-pill ${filledCnt === totChecks ? 'done' : ''}">${L == 'ru' ? 'Заполнено' : 'Filled'} ${filledCnt}/${totChecks}</span>
+            <button type="button" class="duel-rules-btn" id="fp-edit-btn">${L == 'ru' ? 'Редактировать' : 'Edit'}</button>
+          </div>
+        </div>
+        <div class="fp-bar"><i style="width:${pct}%"></i></div>
+        <div class="fp-grid">
+          ${items.map(it => `
+            <div class="fp-item ${it.wide ? 'wide' : ''}">
+              <div class="fp-lbl">${esc(it.lbl)}</div>
+              <div class="fp-val ${it.empty ? 'muted' : ''}">${esc(it.val)}</div>
+            </div>`).join('')}
+        </div>
+        ${fp.injuries ? `<div class="fp-inj"><b>${L == 'ru' ? 'Ограничения:' : 'Limitations:'}</b> ${esc(fp.injuries)}</div>` : ''}
+        ${filledCnt < totChecks ? `<div class="fp-empty-hint">${L == 'ru' ? 'Заполненные данные автоматически учитываются AI Coach при подборе нагрузки и советов.' : 'Filled details are used by AI Coach to tailor workouts and nutrition advice.'}</div>` : ''}
+      </div>`;
+  }
+
+  function renderActiveProgramCard() {
+    const ps = getProgState();
+    const activeP = ps.activeId ? D.programs.find(p => String(p.id) === String(ps.activeId)) : null;
+    if (!activeP) {
+      return `
+        <div class="ss-card prof-program">
+          <div class="fp-head">
+            <div class="ss-card-title" style="margin:0">
+              <b>${uiSvg('pin', 15)} ${L == 'ru' ? 'Моя программа' : 'My Program'}</b>
+            </div>
+            <button type="button" class="duel-rules-btn" id="fp-prog-change">${L == 'ru' ? 'Выбрать' : 'Choose'}</button>
+          </div>
+          <div class="fp-empty-hint" style="margin-top:0">${L == 'ru' ? 'Программа ещё не выбрана' : 'No active program selected yet'}</div>
+        </div>`;
+    }
+    const doneDays = Array.isArray(ps.logs[activeP.id]) ? ps.logs[activeP.id].length : 0;
+    const totalDays = Math.max(1, +activeP.days || 30);
+    const pct = Math.min(100, Math.round((doneDays / totalDays) * 100));
+    return `
+      <div class="ss-card prof-program">
+        <div class="fp-head">
+          <div class="ss-card-title" style="margin:0">
+            <b>${uiSvg('pin', 15)} ${L == 'ru' ? 'Моя программа' : 'My Program'}</b>
+          </div>
+          <span class="fp-pill ${pct >= 100 ? 'done' : ''}">${pct}%</span>
+        </div>
+        <div class="fp-prog-title">${esc(pName(activeP))}</div>
+        <div class="fp-prog-meta">
+          <span>${L == 'ru' ? 'Выполнено дней' : 'Completed days'}: <b>${doneDays} / ${totalDays}</b></span>
+          <span>${tempLbl(activeP.temp)}</span>
+        </div>
+        <div class="prog-bar-track"><div class="prog-bar-fill" style="width:${pct}%"></div></div>
+        <div class="fp-prog-actions">
+          <a href="#/program/${activeP.id}" class="btn">${L == 'ru' ? 'Открыть' : 'Open'}</a>
+          <button type="button" class="btn alt" id="fp-prog-change">${L == 'ru' ? 'Сменить' : 'Change'}</button>
+          <button type="button" class="btn alt" id="fp-prog-clear">${L == 'ru' ? 'Снять' : 'Unpin'}</button>
+        </div>
+      </div>`;
+  }
+
   function renderThemeSwatchesHtml() {
     const curHex = (localStorage.accentTheme || CFG.accent || '#F0A830').toLowerCase();
     return ACCENT_THEMES.map(th => {
@@ -999,7 +1153,7 @@
       </div>`;
   }
 
-  const BACKUP_KEYS = ['hist', 'prs', 'exLogs', 'weekPlan', 'accentTheme', 'customWorkouts', 'athletePrograms', 'progState', 'athleteProfile', 'favs', 'freezeState', 'bodyMetrics', 'audioCfg', 'restPreset', 'duels', 'coopQuest', 'notifPrefs'];
+  const BACKUP_KEYS = ['hist', 'prs', 'exLogs', 'weekPlan', 'accentTheme', 'customWorkouts', 'athletePrograms', 'progState', 'athleteProfile', 'fitnessProfile', 'favs', 'freezeState', 'bodyMetrics', 'audioCfg', 'restPreset', 'duels', 'coopQuest', 'notifPrefs'];
   function collectLocalState() {
     const data = {};
     BACKUP_KEYS.forEach(k => {
@@ -1132,8 +1286,9 @@
       const srvTs = +(j.updatedAt || 0);
       const locTs = +(localStorage.cloudSyncTs || 0);
       const hasMissingProfileSync = srvTs > 0 && j.state && (
-        (!j.state.athletePrograms && localStorage.athletePrograms !== undefined)
+        (!j.state.athletePrograms && (localStorage.athletePrograms !== undefined || localStorage.progState !== undefined))
         || (!j.state.bodyMetrics && localStorage.bodyMetrics !== undefined)
+        || (!j.state.fitnessProfile && localStorage.fitnessProfile !== undefined)
       );
       if (srvTs > 0 && (force || srvTs > locTs) && j.state && Object.keys(j.state).length) {
         applyServerState(j.state, srvTs);
@@ -2657,6 +2812,7 @@
   }
   function saveWeekPlan(p) {
     localStorage.weekPlan = JSON.stringify(p || {});
+    if (typeof scheduleCloudSync === 'function') scheduleCloudSync();
   }
   function renderWeekPlanCard() {
     const plan = getWeekPlan();
@@ -3380,6 +3536,8 @@
           ${renderHeatmapHtml(allH)}
           ${renderMuscleBalanceHtml(allH)}
         </div>`;
+      const fitnessCard = renderFitnessProfileCard();
+      const activeProgCard = renderActiveProgramCard();
       const bodyCard = renderBodyMetricsCard();
 
       let prsHtml = '';
@@ -3433,7 +3591,7 @@
         histHtml = `<div class="empty">${t('nohist')}</div>`;
       }
 
-      return `${profileCard}${duelBanner}${kpis}${analyticsCard}${bodyCard}${prsHtml}${histHtml}`;
+      return `${profileCard}${duelBanner}${fitnessCard}${activeProgCard}${bodyCard}${kpis}${analyticsCard}${prsHtml}${histHtml}`;
     },
     friends() {
       if (!isLoggedIn()) return renderAuthGateStub(t('authRequired'), t('authRequiredDesc'));
@@ -4493,6 +4651,7 @@
           if (val && !isNaN(val) && +val > 0) {
             prs[arg] = +val;
             localStorage.prs = JSON.stringify(prs);
+            if (typeof scheduleCloudSync === 'function') scheduleCloudSync();
             if (window.AthleteProfile) window.AthleteProfile.addDuelBonus(60);
             vib(35);
             render();
@@ -4583,6 +4742,7 @@
           localStorage.hist = '[]';
           localStorage.prs = '{}';
           localStorage.exLogs = '{}';
+          if (typeof scheduleCloudSync === 'function') scheduleCloudSync();
           vib(30);
           render();
         }
@@ -4930,6 +5090,170 @@
           bd.remove();
           render();
         };
+      };
+
+      const fpEditBtn = document.getElementById('fp-edit-btn');
+      if (fpEditBtn) fpEditBtn.onclick = () => {
+        vib(20);
+        const fp = getFitnessProfile();
+        const bm = getBodyMetrics();
+        const latest = bm.logs.length ? bm.logs[bm.logs.length - 1] : null;
+        let selSex = fp.sex || 'unspecified';
+        let selGoal = fp.goal || '';
+        let selLevel = fp.level || '';
+        const bd = document.createElement('div');
+        bd.className = 'ap-modal-backdrop';
+        bd.innerHTML = `
+          <div class="ap-modal">
+            <h3>${L == 'ru' ? 'Мои параметры и цели' : 'My Parameters & Goals'}</h3>
+            <div class="fp-modal-grid">
+              <label>${L == 'ru' ? 'Рост (см)' : 'Height (cm)'}<input id="fp-h" type="number" step="0.5" min="100" max="250" value="${fp.heightCm || ''}" placeholder="178"></label>
+              <label>${L == 'ru' ? 'Возраст (лет)' : 'Age'}<input id="fp-age" type="number" step="1" min="12" max="100" value="${fp.age || ''}" placeholder="28"></label>
+              <label>${L == 'ru' ? 'Текущий вес (кг)' : 'Current weight (kg)'}<input id="fp-w" type="number" step="0.1" min="20" max="400" value="${latest ? latest.w : ''}" placeholder="80"></label>
+              <label>${L == 'ru' ? 'Целевой вес (кг)' : 'Target weight (kg)'}<input id="fp-tw" type="number" step="0.1" min="20" max="400" value="${bm.target || ''}" placeholder="75"></label>
+            </div>
+            <div style="margin-top:10px">
+              <div class="fp-lbl">${L == 'ru' ? 'Пол' : 'Sex'}</div>
+              <div class="fp-chips" id="fp-sex-chips">
+                ${FITNESS_SEX_OPTS.map(s => `<button type="button" class="fp-chip ${selSex === s.id ? 'on' : ''}" data-fp-sex="${s.id}">${esc(L == 'ru' ? s.ru : s.en)}</button>`).join('')}
+              </div>
+            </div>
+            <label style="margin-top:10px;display:block">${L == 'ru' ? 'Цель тренировок' : 'Training goal'}
+              <select id="fp-goal">
+                <option value="">${L == 'ru' ? 'Не выбрана' : 'Not selected'}</option>
+                ${FITNESS_GOALS.map(g => `<option value="${g.id}" ${selGoal === g.id ? 'selected' : ''}>${esc(L == 'ru' ? g.ru : g.en)}</option>`).join('')}
+              </select>
+            </label>
+            <div style="margin-top:10px">
+              <div class="fp-lbl">${L == 'ru' ? 'Уровень подготовки' : 'Fitness level'}</div>
+              <div class="fp-chips" id="fp-lvl-chips">
+                ${FITNESS_LEVELS.map(lv => `<button type="button" class="fp-chip ${selLevel === lv.id ? 'on' : ''}" data-fp-lvl="${lv.id}">${esc(L == 'ru' ? lv.ru : lv.en)}</button>`).join('')}
+              </div>
+            </div>
+            <label style="margin-top:10px;display:block">${L == 'ru' ? 'Ограничения и травмы (необязательно)' : 'Injuries & limitations (optional)'}
+              <textarea id="fp-inj" maxlength="160" placeholder="${L == 'ru' ? 'Например: беречь колени, боли в пояснице' : 'e.g. knee discomfort, avoid heavy axial load'}">${esc(fp.injuries || '')}</textarea>
+            </label>
+            <div class="ap-modal-actions">
+              <button type="button" class="btn alt" id="fp-cancel">${L == 'ru' ? 'Отмена' : 'Cancel'}</button>
+              <button type="button" class="btn" id="fp-save">${L == 'ru' ? 'Сохранить' : 'Save'}</button>
+            </div>
+          </div>`;
+        document.body.appendChild(bd);
+        bd.onclick = ev => { if (ev.target === bd) bd.remove(); };
+        bd.querySelector('#fp-cancel').onclick = () => bd.remove();
+        bd.querySelectorAll('[data-fp-sex]').forEach(btn => {
+          btn.onclick = () => {
+            selSex = btn.dataset.fpSex;
+            bd.querySelectorAll('[data-fp-sex]').forEach(b => b.classList.toggle('on', b.dataset.fpSex === selSex));
+          };
+        });
+        bd.querySelectorAll('[data-fp-lvl]').forEach(btn => {
+          btn.onclick = () => {
+            selLevel = selLevel === btn.dataset.fpLvl ? '' : btn.dataset.fpLvl;
+            bd.querySelectorAll('[data-fp-lvl]').forEach(b => b.classList.toggle('on', b.dataset.fpLvl === selLevel));
+          };
+        });
+        bd.querySelector('#fp-save').onclick = () => {
+          const hVal = parseFloat(bd.querySelector('#fp-h').value);
+          const aVal = parseInt(bd.querySelector('#fp-age').value, 10);
+          const wVal = parseFloat(bd.querySelector('#fp-w').value);
+          const twVal = parseFloat(bd.querySelector('#fp-tw').value);
+          const goalVal = bd.querySelector('#fp-goal').value;
+          const injVal = bd.querySelector('#fp-inj').value;
+
+          const nextFp = {};
+          if (!isNaN(hVal) && hVal >= 100 && hVal <= 250) nextFp.heightCm = Math.round(hVal * 10) / 10;
+          if (!isNaN(aVal) && aVal >= 12 && aVal <= 100) nextFp.age = aVal;
+          if (selSex && selSex !== 'unspecified') nextFp.sex = selSex;
+          else nextFp.sex = 'unspecified';
+          if (goalVal) nextFp.goal = goalVal;
+          if (selLevel) nextFp.level = selLevel;
+          if (injVal && injVal.trim()) nextFp.injuries = injVal.trim();
+          saveFitnessProfile(nextFp);
+
+          let bmChanged = false;
+          if (!isNaN(wVal) && wVal >= 20 && wVal <= 400) {
+            const iso = new Date().toISOString().slice(0, 10);
+            const prevWaist = latest && latest.d === iso && latest.waist ? latest.waist : null;
+            const entry = { d: iso, w: +wVal.toFixed(1) };
+            if (prevWaist) entry.waist = prevWaist;
+            const idx = bm.logs.findIndex(x => x.d === iso);
+            if (idx >= 0) bm.logs[idx] = entry;
+            else bm.logs.push(entry);
+            if (bm.logs.length > 60) bm.logs = bm.logs.slice(-60);
+            bmChanged = true;
+          }
+          const nextTarget = (!isNaN(twVal) && twVal >= 20 && twVal <= 400) ? +twVal.toFixed(1) : null;
+          if (nextTarget !== bm.target) {
+            bm.target = nextTarget;
+            bmChanged = true;
+          }
+          if (bmChanged) saveBodyMetrics(bm);
+          if (localStorage.userToken && !isLocalToken(localStorage.userToken)) {
+            pushCloudSync().catch(() => false);
+          }
+          vib(30);
+          bd.remove();
+          render();
+          showAppToast(CFG.brand || 'RizzaFit', L == 'ru' ? 'Параметры профиля сохранены' : 'Profile parameters saved');
+        };
+      };
+
+      const fpProgChange = document.getElementById('fp-prog-change');
+      if (fpProgChange) fpProgChange.onclick = () => {
+        vib(20);
+        const ps = getProgState();
+        const bd = document.createElement('div');
+        bd.className = 'ap-modal-backdrop';
+        bd.innerHTML = `
+          <div class="ap-modal">
+            <h3>${L == 'ru' ? 'Выбор активной программы' : 'Choose Active Program'}</h3>
+            <div class="fp-picker-list">
+              ${D.programs.map(p => {
+                const isAct = String(ps.activeId) === String(p.id);
+                const done = Array.isArray(ps.logs[p.id]) ? ps.logs[p.id].length : 0;
+                return `
+                  <button type="button" class="fp-picker-item ${isAct ? 'on' : ''}" data-pick-pid="${p.id}">
+                    <span>
+                      <strong>${esc(pName(p))}</strong>
+                      <small>${p.days} ${t('days')} · ${tempLbl(p.temp)}${done ? ` · ${L == 'ru' ? 'пройдено' : 'done'} ${done}` : ''}</small>
+                    </span>
+                    <span class="tag ${isAct ? 'pro' : ''}">${isAct ? '✓' : '→'}</span>
+                  </button>`;
+              }).join('')}
+            </div>
+            <div class="ap-modal-actions">
+              <button type="button" class="btn alt" id="fp-pick-close">${L == 'ru' ? 'Закрыть' : 'Close'}</button>
+            </div>
+          </div>`;
+        document.body.appendChild(bd);
+        bd.onclick = ev => { if (ev.target === bd) bd.remove(); };
+        bd.querySelector('#fp-pick-close').onclick = () => bd.remove();
+        bd.querySelectorAll('[data-pick-pid]').forEach(btn => {
+          btn.onclick = () => {
+            const nextPs = getProgState();
+            nextPs.activeId = btn.dataset.pickPid;
+            saveProgState(nextPs);
+            if (localStorage.userToken && !isLocalToken(localStorage.userToken)) {
+              pushCloudSync().catch(() => false);
+            }
+            vib(25);
+            bd.remove();
+            render();
+          };
+        });
+      };
+
+      const fpProgClear = document.getElementById('fp-prog-clear');
+      if (fpProgClear) fpProgClear.onclick = () => {
+        vib(20);
+        const ps = getProgState();
+        ps.activeId = null;
+        saveProgState(ps);
+        if (localStorage.userToken && !isLocalToken(localStorage.userToken)) {
+          pushCloudSync().catch(() => false);
+        }
+        render();
       };
       const bkExport = document.getElementById('bk-export');
       if (bkExport) bkExport.onclick = () => {
@@ -5997,7 +6321,7 @@
         }
         const totalSetsPlanned = w.s.reduce((acc, st) => acc + (st.length - 1) * st[0], 0);
         const exDone = sessionEx || totalSetsPlanned;
-        const h = hist(); h.push({ id: w.id, t: finishTs, s: totalSec, reps: sessionReps, ex: exDone, vol: sessionVolume }); localStorage.hist = JSON.stringify(h);
+        const h = hist(); h.push({ id: w.id, name: (woName(w) || '').slice(0, 48), t: finishTs, s: totalSec, reps: sessionReps, ex: exDone, vol: sessionVolume }); localStorage.hist = JSON.stringify(h);
         scheduleCloudSync();
         const minsDone = Math.max(1, Math.round(totalSec / 60));
         const kcalDone = Math.max(18, Math.round(minsDone * 7 + sessionReps * 0.35));
@@ -6044,6 +6368,7 @@
             if (entry) {
               entry.rpe = rpeId;
               localStorage.hist = JSON.stringify(curH);
+              if (typeof scheduleCloudSync === 'function') scheduleCloudSync();
             }
             const meta = RPE_OPTS.find(r => r.id === rpeId);
             const hint = document.getElementById('p-rpe-hint');
@@ -6214,6 +6539,7 @@
           btn.onclick = () => {
             const val = +btn.dataset.rp || 0;
             localStorage.restPreset = String(val);
+            if (typeof scheduleCloudSync === 'function') scheduleCloudSync();
             vib(20); sfx('step');
             const nextSec = val > 0 ? val : (s.baseSec || 30);
             s.sec = nextSec;
