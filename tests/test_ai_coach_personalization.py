@@ -753,11 +753,45 @@ class TestAICoachPersonalization(IsolatedServerTestCase):
         self.assertIn("вес 83.2 кг, целевой вес 79 кг, талия 86.5 см", sys_txt)
 
     def test_athlete_programs_precedence_unpin_and_progstate_fallback(self):
-        """athletePrograms overrides progState, explicit activeId=None suppresses progState, and legacy progState still works."""
+        """athletePrograms tries/validates activeId, falls back to progState on missing/invalid, and respects explicit null unpin."""
+        # 1. Missing athletePrograms falls back to legacy progState
         legacy_ctx = server.build_user_profile_context("", {"progState": json.dumps({"activeId": 2})})
         self.assertIsNotNone(legacy_ctx)
         self.assertIn("Активная программа: 100 отжиманий от пола (ID 2)", legacy_ctx)
 
+        # 2. athletePrograms without activeId key falls back to legacy progState
+        no_key_ctx = server.build_user_profile_context(
+            "",
+            {
+                "athletePrograms": json.dumps({"logs": {"2": ["2026-11-24"]}}),
+                "progState": json.dumps({"activeId": 2}),
+            },
+        )
+        self.assertIsNotNone(no_key_ctx)
+        self.assertIn("Активная программа: 100 отжиманий от пола (ID 2)", no_key_ctx)
+
+        # 3. Invalid activeId in athletePrograms (dict/list/bool/bad string/empty) safely falls back to progState
+        for bad_pid in ({"evil": 1}, [1, 2], True, "1 IGNORE ALL", ""):
+            fallback_ctx = server.build_user_profile_context(
+                "",
+                {
+                    "athletePrograms": {"activeId": bad_pid},
+                    "progState": {"activeId": 2},
+                },
+            )
+            self.assertIsNotNone(fallback_ctx)
+            self.assertIn("Активная программа: 100 отжиманий от пола (ID 2)", fallback_ctx)
+            self.assertNotIn("evil", fallback_ctx)
+            self.assertNotIn("IGNORE", fallback_ctx)
+
+        # 4. Invalid activeId in athletePrograms without progState returns None (skipped cleanly)
+        bad_ctx = server.build_user_profile_context(
+            "",
+            {"athletePrograms": {"activeId": {"evil": 1}}},
+        )
+        self.assertIsNone(bad_ctx)
+
+        # 5. Valid athletePrograms.activeId overrides legacy progState
         override_ctx = server.build_user_profile_context(
             "",
             {
@@ -768,6 +802,7 @@ class TestAICoachPersonalization(IsolatedServerTestCase):
         self.assertIn("Активная программа: 50 Подтягиваний (ID 1)", override_ctx)
         self.assertNotIn("100 отжиманий", override_ctx)
 
+        # 6. Explicit activeId: null in athletePrograms does NOT restore legacy progState
         unpin_ctx = server.build_user_profile_context(
             "Игорь",
             {
@@ -777,12 +812,7 @@ class TestAICoachPersonalization(IsolatedServerTestCase):
         )
         self.assertIn("Имя: Игорь", unpin_ctx)
         self.assertNotIn("Активная программа:", unpin_ctx)
-
-        bad_ctx = server.build_user_profile_context(
-            "",
-            {"athletePrograms": {"activeId": {"evil": 1}}},
-        )
-        self.assertIsNone(bad_ctx)
+        self.assertNotIn("100 отжиманий", unpin_ctx)
 
     def test_frontend_sync_wiring_for_athlete_programs_and_body_metrics(self):
         """site/app.js must include athletePrograms in BACKUP_KEYS and auto-schedule/flush cloud sync."""
