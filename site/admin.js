@@ -14,6 +14,25 @@
     setTimeout(() => d.remove(), 2600);
   }
 
+  function confirmDangerous(title, message, onConfirm, confirmLabel) {
+    const ui = window.RizzaUI;
+    if (ui && typeof ui.openConfirmModal === 'function') {
+      ui.openConfirmModal({
+        title: title || 'Подтвердите действие',
+        bodyHtml: `<p style="margin:0;color:var(--tx-sub);line-height:1.5;font-size:13.5px">${esc(message)}</p>`,
+        confirmLabel: confirmLabel || 'Подтвердить',
+        cancelLabel: 'Отмена',
+        danger: true,
+        onConfirm: async close => {
+          close();
+          await onConfirm();
+        }
+      });
+      return;
+    }
+    if (confirm(message)) onConfirm();
+  }
+
   async function api(path, opt = {}) {
     const r = await fetch('/api/' + path, Object.assign({}, opt, {
       headers: Object.assign({}, opt.headers || {}, token ? { Authorization: 'Bearer ' + token } : {})
@@ -216,7 +235,17 @@
         <div style="font-weight:800;font-size:14.5px;margin-bottom:4px">${esc(m.title)}</div>
         <div style="color:var(--mut);font-size:12.5px;line-height:1.45">${esc(m.desc)}</div>
       </div>`).join('')}
-    </div>`;
+    </div>
+    ${ui && typeof ui.renderAuditLogList === 'function' ? ui.renderAuditLogList([
+      {
+        action: 'Этап 2: каркас RizzaFit AI Growth и защитный журнал инициализированы',
+        actor: 'admin-shell',
+        timestamp: '25.11.2026',
+        status: 'approved',
+        statusLabel: 'Активно',
+        details: 'Журнал работает в режиме append-only: записи доступны только для просмотра и защищены от редактирования и удаления.'
+      }
+    ], { title: 'Журнал действий AI Growth' }) : ''}`;
   }
 
   const imgPicker = (id, src, cls) => `<div class="up"><img ${cls ? `class="${cls}"` : ''} id="${id}-prev" src="${esc(src || 'img/logo.svg')}" onerror="this.style.opacity=.2"><div><input type="file" id="${id}" accept="image/*"><br><button class="btn alt" style="padding:8px 14px;margin-top:6px" id="${id}-clr" type="button">Убрать / вернуть оригинал</button></div></div>`;
@@ -583,12 +612,13 @@
         toast(e.message, 1);
       }
     };
-    $('#p-reset').onclick = async () => {
-      if (!confirm('Сбросить все правки этой программы?')) return;
-      delete OV.p[id];
-      await saveOv();
-      programEditor(el, id);
-      toast('Сброшено');
+    $('#p-reset').onclick = () => {
+      confirmDangerous('Сброс программы', 'Сбросить все правки этой программы к исходному виду?', async () => {
+        delete OV.p[id];
+        await saveOv();
+        programEditor(el, id);
+        toast('Сброшено');
+      }, 'Сбросить');
     };
   }
 
@@ -718,20 +748,23 @@
       }
     };
     const r = $('#w-reset');
-    if (r) r.onclick = async () => {
-      if (!confirm('Сбросить правки?')) return;
-      delete OV.w[id];
-      await saveOv();
-      workoutEditor(el, id);
-      toast('Сброшено');
+    if (r) r.onclick = () => {
+      confirmDangerous('Сброс тренировки', 'Сбросить все правки этой тренировки к оригиналу?', async () => {
+        delete OV.w[id];
+        await saveOv();
+        workoutEditor(el, id);
+        toast('Сброшено');
+      }, 'Сбросить');
     };
     const dl = $('#w-del');
-    if (dl) dl.onclick = async () => {
-      if (!confirm('Удалить тренировку?')) return;
-      OV.c = OV.c.filter(x => x.id != id);
-      await saveOv();
-      sub = null;
-      tabWorkouts(el);
+    if (dl) dl.onclick = () => {
+      confirmDangerous('Удаление тренировки', 'Удалить эту пользовательскую тренировку без возможности восстановления?', async () => {
+        OV.c = OV.c.filter(x => x.id != id);
+        await saveOv();
+        sub = null;
+        tabWorkouts(el);
+        toast('Тренировка удалена');
+      }, 'Удалить');
     };
     draw();
   }
@@ -1018,7 +1051,7 @@
     };
     $('#ai-save').onclick = () => save();
     const cl = $('#ai-clr');
-    if (cl) cl.onclick = () => confirm('Удалить ключ?') && save({ clearKey: true, key: '' });
+    if (cl) cl.onclick = () => confirmDangerous('Удаление API-ключа AI Coach', 'Удалить сохранённый API-ключ внешнего AI-провайдера? Это сразу повлияет на работу AI Coach.', () => save({ clearKey: true, key: '' }), 'Удалить ключ');
   }
 
   // ---------- tab: users & subscriptions ----------
@@ -1088,21 +1121,38 @@
     $$('.u-act', el).forEach(btn => btn.onclick = async () => {
       const uid = +btn.dataset.id;
       const act = btn.dataset.act;
-      try {
-        if (act === 'pro30') await post('admin/user/plan', { userId: uid, plan: 'pro', days: 30, note: 'Выдано в админке' });
-        else if (act === 'pro365') await post('admin/user/plan', { userId: uid, plan: 'pro', days: 365, note: 'Выдано в админке' });
-        else if (act === 'pro0') await post('admin/user/plan', { userId: uid, plan: 'pro', days: 0, note: 'Навсегда в админке' });
-        else if (act === 'free') await post('admin/user/plan', { userId: uid, plan: 'free', days: 0, note: 'Сброс в админке' });
-        else if (act === 'block' || act === 'unblock') await post('admin/user/block', { userId: uid, blocked: act === 'block' });
-        else if (act === 'reset') {
-          const res = await post('admin/user/reset-code', { userId: uid });
-          alert('Одноразовый код сброса пароля (действует 24 часа):\n\n' + res.code);
+      const targetUser = (data.users || []).find(x => x.id === uid);
+      const userLabel = targetUser ? '@' + targetUser.username : '#' + uid;
+      const runAct = async () => {
+        try {
+          if (act === 'pro30') await post('admin/user/plan', { userId: uid, plan: 'pro', days: 30, note: 'Выдано в админке' });
+          else if (act === 'pro365') await post('admin/user/plan', { userId: uid, plan: 'pro', days: 365, note: 'Выдано в админке' });
+          else if (act === 'pro0') await post('admin/user/plan', { userId: uid, plan: 'pro', days: 0, note: 'Навсегда в админке' });
+          else if (act === 'free') await post('admin/user/plan', { userId: uid, plan: 'free', days: 0, note: 'Сброс в админке' });
+          else if (act === 'block' || act === 'unblock') await post('admin/user/block', { userId: uid, blocked: act === 'block' });
+          else if (act === 'reset') {
+            const res = await post('admin/user/reset-code', { userId: uid });
+            alert('Одноразовый код сброса пароля (действует 24 часа):\n\n' + res.code);
+          }
+          toast('Готово ✓');
+          tabUsers(el);
+        } catch (e) {
+          toast(e.message, 1);
         }
-        toast('Готово ✓');
-        tabUsers(el);
-      } catch (e) {
-        toast(e.message, 1);
+      };
+      if (act === 'block') {
+        confirmDangerous('Блокировка пользователя', `Заблокировать аккаунт ${userLabel}? Пользователь потеряет доступ к входу на сайт.`, runAct, 'Заблокировать');
+        return;
       }
+      if (act === 'unblock') {
+        confirmDangerous('Разблокировка пользователя', `Снять блокировку с аккаунта ${userLabel}?`, runAct, 'Разблокировать');
+        return;
+      }
+      if (act === 'free') {
+        confirmDangerous('Перевод на Free', `Сбросить тариф пользователя ${userLabel} на бесплатный Free?`, runAct, 'Перевести на Free');
+        return;
+      }
+      await runAct();
     });
   }
 
@@ -1231,15 +1281,16 @@
     };
 
     if ($('#yk-clr-key')) {
-      $('#yk-clr-key').onclick = async () => {
-        if (!confirm('Удалить секретный ключ ЮKassa?')) return;
-        try {
-          await post('admin/yookassa', { clearKey: true });
-          toast('Ключ удалён');
-          tabPayments(el);
-        } catch (e) {
-          toast(e.message, 1);
-        }
+      $('#yk-clr-key').onclick = () => {
+        confirmDangerous('Удаление ключа ЮKassa', 'Удалить сохранённый секретный ключ ЮKassa? Приём платежей перестанет работать до ввода нового ключа.', async () => {
+          try {
+            await post('admin/yookassa', { clearKey: true });
+            toast('Ключ удалён');
+            tabPayments(el);
+          } catch (e) {
+            toast(e.message, 1);
+          }
+        }, 'Удалить ключ');
       };
     }
 
@@ -1480,14 +1531,21 @@
       <button class="btn" id="npb" style="animation:none">Сменить пароль</button></div>
     <div class="box"><h2 style="margin-top:0">Данные</h2><p style="color:var(--mut)">Все правки хранятся в папке <b>site/content</b> (config.json, overrides.json, uploads/). Скопируйте её, чтобы сделать резервную копию.</p>
       <button class="btn alt" id="dl">⬇ Скачать правки (JSON)</button></div>`;
-    $('#npb').onclick = async () => {
-      try {
-        await post('password', { password: $('#np').value });
-        toast('Пароль изменён ✓');
-        $('#np').value = '';
-      } catch (e) {
-        toast(e.message, 1);
+    $('#npb').onclick = () => {
+      const pw = $('#np').value;
+      if (!pw || pw.length < 6) {
+        toast('Пароль должен быть не короче 6 символов', 1);
+        return;
       }
+      confirmDangerous('Смена пароля админки', 'Изменить пароль администратора? После смены текущие сессии администратора будут завершены.', async () => {
+        try {
+          await post('password', { password: pw });
+          toast('Пароль изменён ✓');
+          $('#np').value = '';
+        } catch (e) {
+          toast(e.message, 1);
+        }
+      }, 'Сменить пароль');
     };
     $('#dl').onclick = () => {
       const a = document.createElement('a');

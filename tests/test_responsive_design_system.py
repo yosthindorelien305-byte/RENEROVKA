@@ -77,10 +77,16 @@ class TestResponsiveDesignSystem(unittest.TestCase):
             self.assertIn(f"['{tab_id}'", admin_js)
         self.assertIn("data-t=\"growth\"", admin_js)
         self.assertIn("function tabGrowth(el)", admin_js)
+        self.assertIn("function confirmDangerous(", admin_js)
+        self.assertIn("renderAuditLogList", admin_js)
         self.assertIn("adm-menu-btn", admin_js)
         self.assertIn("adm-sidebar", admin_js)
         self.assertIn("RizzaFit AI Growth", admin_js)
         self.assertIn("AI Coach", admin_js)
+        # Ensure dangerous admin actions use confirmDangerous modal wrapper
+        for marker in ("act === 'block'", "act === 'unblock'", "#ai-clr", "#yk-clr-key", "#p-reset", "#w-del", "#npb"):
+            self.assertIn(marker, admin_js)
+        self.assertGreaterEqual(admin_js.count("confirmDangerous("), 8)
 
     def test_ui_components_js_in_node(self):
         script = r"""
@@ -113,6 +119,26 @@ class TestResponsiveDesignSystem(unittest.TestCase):
         assert(kpi.includes('78 / 100'));
         assert(kpi.includes('&lt;bad&gt;'));
         assert(!kpi.includes('<bad>'));
+
+        const auditHtml = ui.renderAuditLogList([
+          {
+            action: '<script>alert(1)</script>SEO update',
+            actor: 'admin',
+            timestamp: '25.11.2026 22:00',
+            status: 'approved',
+            details: 'Safe log details <b>tag</b>'
+          }
+        ], { title: 'Журнал аудита' });
+        assert(auditHtml.includes('data-readonly="true"'));
+        assert(auditHtml.includes('&lt;script&gt;alert(1)&lt;/script&gt;'));
+        assert(!auditHtml.includes('<script>'));
+        assert(!auditHtml.includes('<input'));
+        assert(!auditHtml.includes('<textarea'));
+        assert(!auditHtml.includes('contenteditable'));
+
+        const emptyAudit = ui.renderAuditLogList([]);
+        assert(emptyAudit.includes('data-readonly="true"'));
+        assert(emptyAudit.includes('Записей в журнале пока нет'));
         console.log('NODE_UI_OK');
         """
         res = subprocess.run(["node", "-e", script], cwd=ROOT, capture_output=True, text=True)

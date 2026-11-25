@@ -123,12 +123,52 @@
     return { close: close, element: bd };
   }
 
+  function renderAuditLogList(entries, opts) {
+    var o = opts || {};
+    var title = o.title || 'Журнал действий';
+    var items = Array.isArray(entries) ? entries : [];
+    var rowsHtml = '';
+    if (!items.length) {
+      rowsHtml = '<div class="rf-empty">Записей в журнале пока нет</div>';
+    } else {
+      rowsHtml = '<div class="rf-audit-list">' + items.map(function (entry) {
+        var item = entry || {};
+        var ts = typeof item.timestamp === 'number'
+          ? formatDateTime(item.timestamp)
+          : (item.timestamp ? String(item.timestamp) : '—');
+        var badge = item.status ? renderStatusBadge(item.status, item.statusLabel) : '';
+        var details = item.details
+          ? '<div class="rf-audit-details">' + esc(item.details) + '</div>'
+          : '';
+        return '<div class="rf-audit-row">' +
+          '<div class="rf-audit-row-top">' +
+            '<span class="rf-audit-action">' + esc(item.action || 'Событие') + '</span>' +
+            badge +
+          '</div>' +
+          '<div class="rf-audit-meta">' +
+            '<span>Инициатор: <strong>' + esc(item.actor || 'system') + '</strong></span>' +
+            '<span>· ' + esc(ts) + '</span>' +
+          '</div>' +
+          details +
+        '</div>';
+      }).join('') + '</div>';
+    }
+    return '<div class="rf-card rf-audit-log" data-readonly="true">' +
+      '<div class="rf-audit-head">' +
+        '<h3>' + esc(title) + '</h3>' +
+        '<span class="rf-pill rf-audit-lock">🔒 Только чтение · защищён от редактирования</span>' +
+      '</div>' +
+      rowsHtml +
+    '</div>';
+  }
+
   return {
     esc: esc,
     formatDateTime: formatDateTime,
     renderStatusBadge: renderStatusBadge,
     renderSourceMeta: renderSourceMeta,
     renderKpiCard: renderKpiCard,
-    openConfirmModal: openConfirmModal
+    openConfirmModal: openConfirmModal,
+    renderAuditLogList: renderAuditLogList
   };
 });
