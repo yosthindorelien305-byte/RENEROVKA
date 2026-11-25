@@ -7249,3 +7249,322 @@ main#app.fx-enter {
   }
 }
 
+/* ===================================================================
+   STAGE 3: RESPONSIVE INNER SCREENS (Obsidian Athletic 2.0)
+   Covers Home, Programs/Workouts, Exercises, Profile, AI Coach & Player
+   =================================================================== */
+.rf-home-top {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.rf-home-top-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.rf-home-top .frosted-search,
+.rf-home-top .last-workout-chip,
+.rf-home-top .coachcard {
+  margin-bottom: 0;
+}
+
+.rf-page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 2px 0 12px;
+}
+.rf-page-head h1,
+.rf-page-head h2 {
+  margin: 0;
+  flex: 1;
+}
+
+.rf-section-lead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--mut);
+  margin: 4px 2px 14px;
+  line-height: 1.4;
+}
+
+.rf-coach-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.rf-coach-aside {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.rf-coach-ctx-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.rf-coach-ctx-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12.5px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.rf-coach-ctx-row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.rf-coach-ctx-row span {
+  color: var(--mut);
+}
+.rf-coach-ctx-row b {
+  color: var(--tx);
+  text-align: right;
+  max-width: 62%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rf-coach-tips {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--tx-sub);
+  font-size: 12.5px;
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rf-auth-gate-wrap {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+.rf-auth-gate-wrap .auth-gate-card {
+  width: 100%;
+  max-width: 480px;
+}
+
+.rf-detail-layout,
+.rf-profile-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.rf-detail-main,
+.rf-detail-side,
+.rf-profile-aside,
+.rf-profile-main,
+.rf-ex-media,
+.rf-ex-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+@media (max-width: 1023px) {
+  .rf-bento-main,
+  .rf-bento-side,
+  .rf-wo-detail,
+  .rf-wo-detail .rf-detail-main,
+  .rf-wo-detail .rf-detail-side,
+  .rf-player-right {
+    display: contents;
+  }
+  .ss-bento .ss-viability { order: 1; }
+  .ss-bento .ss-kpi-pair { order: 2; }
+  .ss-bento .ss-mid-charts { order: 3; }
+  .ss-bento .ss-droplet-wide { order: 4; }
+  .ss-bento .wp-card { order: 5; }
+  .ss-bento .rf-quick-card { order: 6; }
+  .ss-bento .ss-curve-card { order: 7; }
+
+  .rf-wo-detail .wcover { order: 1; }
+  .rf-wo-detail .wstats { order: 2; }
+  .rf-wo-detail .rf-sticky-box { order: 3; }
+  .rf-wo-detail .plan { order: 4; }
+
+  .rf-coach-aside {
+    display: none;
+  }
+}
+
+@media (min-width: 640px) {
+  .grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+  }
+  .card img.cover {
+    height: 132px;
+    max-height: 132px;
+  }
+  .ex-img {
+    height: 120px;
+    max-height: 120px;
+  }
+  .rf-filter-bar input:not([type]) {
+    flex: 2 1 240px;
+  }
+  .rf-filter-bar select {
+    flex: 1 1 150px;
+  }
+  .composer {
+    bottom: 16px;
+  }
+  .chat {
+    min-height: calc(100vh - 118px);
+  }
+  .hist-kpi-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .pr-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .rf-home-top:has(.coachcard) {
+    display: grid;
+    grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.88fr);
+    align-items: center;
+    gap: 16px;
+  }
+  .ss-bento {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+    gap: 16px;
+    align-items: start;
+  }
+  .rf-bento-main,
+  .rf-bento-side {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 0;
+  }
+
+  .rf-detail-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.32fr) minmax(300px, 0.85fr);
+    gap: 20px;
+    align-items: start;
+    margin-top: 10px;
+  }
+  .rf-wo-detail {
+    display: grid;
+  }
+  .rf-wo-detail .rf-detail-main,
+  .rf-wo-detail .rf-detail-side {
+    display: flex;
+  }
+  .rf-sticky-box {
+    position: sticky;
+    top: 84px;
+  }
+
+  .rf-ex-detail {
+    display: grid;
+    grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+    gap: 22px;
+    align-items: start;
+    margin-top: 12px;
+  }
+  .rf-ex-media {
+    position: sticky;
+    top: 84px;
+  }
+  .detail.rf-ex-detail .ex-img {
+    height: 260px;
+    max-height: 260px;
+  }
+  .detail.rf-ex-detail .ex-img img {
+    max-height: 210px;
+  }
+
+  .rf-profile-layout {
+    display: grid;
+    grid-template-columns: minmax(330px, 380px) minmax(0, 1fr);
+    gap: 20px;
+    align-items: start;
+  }
+  .rf-profile-aside {
+    position: sticky;
+    top: 84px;
+  }
+
+  .rf-coach-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 310px;
+    gap: 20px;
+    align-items: start;
+  }
+  .rf-coach-aside {
+    display: flex;
+    position: sticky;
+    top: 84px;
+  }
+
+  .player {
+    max-width: 960px !important;
+  }
+  body.player-open::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background: rgba(9, 11, 15, 0.86);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    z-index: 99990;
+  }
+  .p-body:not(.rest-mode) {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+    gap: 20px;
+    align-items: stretch;
+    padding: 20px 24px 28px;
+    text-align: left;
+  }
+  .p-body:not(.rest-mode) .p-stage-card {
+    height: 100%;
+    justify-content: center;
+    padding: 20px;
+  }
+  .p-body:not(.rest-mode) .p-technique-card {
+    height: 260px;
+  }
+  .p-body:not(.rest-mode) .p-technique-card img {
+    max-height: 220px;
+  }
+  .rf-player-right {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 14px;
+  }
+  .p-finish-card {
+    max-width: 560px;
+  }
+}
+
+@media (min-width: 1366px) {
+  #list.grid,
+  .rf-programs-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .pr-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+

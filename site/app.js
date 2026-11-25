@@ -2025,6 +2025,7 @@
 
   function renderGuestAuthGate() {
     return `
+      <div class="rf-auth-gate-wrap">
       <div class="auth-gate-card">
         <div class="auth-gate-av">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>
@@ -2085,6 +2086,7 @@
             </li>
           </ul>
         </div>
+      </div>
       </div>
     `;
   }
@@ -2989,34 +2991,38 @@
       }).join('');
 
       return `
-      <div class="frosted-search">
-        <i>${uiSvg('bolt', 15)}</i>
-        <input id="hsearch" placeholder="${L == 'ru' ? 'Поиск тренировок, упражнений и программ…' : 'Search workouts, exercises, programs…'}">
-      </div>
-      ${lastW ? `
-      <div class="last-workout-chip">
-        <div class="lw-info">
-          <small>${uiSvg('bolt', 11)} ${L == 'ru' ? 'ПРОДОЛЖИТЬ ПОСЛЕДНЮЮ ТРЕНИРОВКУ' : 'RESUME RECENT WORKOUT'}</small>
-          <b>${esc(woName(lastW))}</b>
-        </div>
-        <a class="lw-btn" href="#/workout/${lastW.id}">▶ ${t('startShort')}</a>
-      </div>` : ''}
-
-      ${COACH.enabled && !(CFG.hidden || []).includes('coach') ? `
-      <a class="coachcard" href="#/coach" id="home-coach-card">
-        <div class="orb sm"><span>AI</span></div>
-        <div class="coachcard-copy">
-          <div class="coachcard-top">
-            <b>${esc(t('coachBanner'))}</b>
-            <span class="coachcard-badge">AI</span>
+      <div class="rf-home-top">
+        <div class="rf-home-top-main">
+          <div class="frosted-search">
+            <i>${uiSvg('bolt', 15)}</i>
+            <input id="hsearch" placeholder="${L == 'ru' ? 'Поиск тренировок, упражнений и программ…' : 'Search workouts, exercises, programs…'}">
           </div>
-          <small>${esc(t('coachSub'))}</small>
+          ${lastW ? `
+          <div class="last-workout-chip">
+            <div class="lw-info">
+              <small>${uiSvg('bolt', 11)} ${L == 'ru' ? 'ПРОДОЛЖИТЬ ПОСЛЕДНЮЮ ТРЕНИРОВКУ' : 'RESUME RECENT WORKOUT'}</small>
+              <b>${esc(woName(lastW))}</b>
+            </div>
+            <a class="lw-btn" href="#/workout/${lastW.id}">▶ ${t('startShort')}</a>
+          </div>` : ''}
         </div>
-        <span class="go" aria-hidden="true">›</span>
-      </a>` : ''}
+        ${COACH.enabled && !(CFG.hidden || []).includes('coach') ? `
+        <a class="coachcard" href="#/coach" id="home-coach-card">
+          <div class="orb sm"><span>AI</span></div>
+          <div class="coachcard-copy">
+            <div class="coachcard-top">
+              <b>${esc(t('coachBanner'))}</b>
+              <span class="coachcard-badge">AI</span>
+            </div>
+            <small>${esc(t('coachSub'))}</small>
+          </div>
+          <span class="go" aria-hidden="true">›</span>
+        </a>` : ''}
+      </div>
 
       <div class="ss-bento">
-        <div class="ss-card ss-viability">
+        <div class="rf-bento-main">
+          <div class="ss-card ss-viability">
           <div class="ss-card-title"><b>${L == 'ru' ? 'Готовность атлета' : 'Athlete Readiness'}</b><span>Lv.${ath.level}</span></div>
           <div class="ss-viability-body">
             ${(() => {
@@ -3052,25 +3058,6 @@
                 <div class="ss-spec-row"><span>${L == 'ru' ? 'Баланс' : 'XP'}</span><b>${Math.round(ath.points).toLocaleString()}</b></div>
               </div>
             </div>
-          </div>
-        </div>
-
-        <div class="ss-kpi-pair">
-          <div class="ss-card">
-            <div class="ss-card-title"><b>${L == 'ru' ? 'Тренировки' : 'Workouts'}</b><span style="color:var(--ac);">${uiSvg('bolt', 13)}</span></div>
-            <div class="ss-kpi-big">
-              <div class="num">${allH.length}<span>/${goal}</span></div>
-              <span class="tag ${h.length ? 'pro' : ''}">${h.length ? (L == 'ru' ? 'Актив' : 'Active') : (L == 'ru' ? 'Старт' : 'Start')}</span>
-            </div>
-            <div class="ss-kpi-foot"><span>${L == 'ru' ? '7 дн' : '7d'}: ${h.length}</span><span>+${h.length * 150} XP</span></div>
-          </div>
-          <div class="ss-card">
-            <div class="ss-card-title"><b>${L == 'ru' ? 'Время' : 'Time'}</b><span style="color:var(--mut);">${uiSvg('clock', 13)}</span></div>
-            <div class="ss-kpi-big">
-              <div class="num">${mins}<span>m</span></div>
-              <span class="tag">${L == 'ru' ? 'Всего' : 'Total'}</span>
-            </div>
-            <div class="ss-kpi-foot"><span>${L == 'ru' ? 'Дней' : 'Days'}: ${Object.keys(minsByDate).length}</span><span style="display:inline-flex;align-items:center;gap:3px;">${uiSvg('flame', 12)} ${streak}</span></div>
           </div>
         </div>
 
@@ -3134,14 +3121,6 @@
           </div>`;
         })() : ''}
 
-        ${renderWeekPlanCard()}
-
-        ${on('quick') ? `
-        <div class="ss-card">
-          <div class="ss-card-title"><b>${esc(t('quick'))}</b><a href="#/workouts" style="color:var(--ac)">${t('seeAll')} ›</a></div>
-          <div class="ss-table-list">${quickRows}</div>
-        </div>` : ''}
-
         <div class="ss-card ss-curve-card">
           <div class="ss-card-title">
             <b>${L == 'ru' ? 'Кривая прогресса (7 дней)' : 'Progress Curve (7d)'}</b>
@@ -3168,17 +3147,80 @@
               <a href="#/workouts" class="btn" style="padding:7px 12px;font-size:11.5px;white-space:nowrap;">▶ ${t('startShort')}</a>
             </div>`}
         </div>
+        </div><!-- /.rf-bento-main -->
+
+        <div class="rf-bento-side">
+        <div class="ss-kpi-pair">
+          <div class="ss-card">
+            <div class="ss-card-title"><b>${L == 'ru' ? 'Тренировки' : 'Workouts'}</b><span style="color:var(--ac);">${uiSvg('bolt', 13)}</span></div>
+            <div class="ss-kpi-big">
+              <div class="num">${allH.length}<span>/${goal}</span></div>
+              <span class="tag ${h.length ? 'pro' : ''}">${h.length ? (L == 'ru' ? 'Актив' : 'Active') : (L == 'ru' ? 'Старт' : 'Start')}</span>
+            </div>
+            <div class="ss-kpi-foot"><span>${L == 'ru' ? '7 дн' : '7d'}: ${h.length}</span><span>+${h.length * 150} XP</span></div>
+          </div>
+          <div class="ss-card">
+            <div class="ss-card-title"><b>${L == 'ru' ? 'Время' : 'Time'}</b><span style="color:var(--mut);">${uiSvg('clock', 13)}</span></div>
+            <div class="ss-kpi-big">
+              <div class="num">${mins}<span>m</span></div>
+              <span class="tag">${L == 'ru' ? 'Всего' : 'Total'}</span>
+            </div>
+            <div class="ss-kpi-foot"><span>${L == 'ru' ? 'Дней' : 'Days'}: ${Object.keys(minsByDate).length}</span><span style="display:inline-flex;align-items:center;gap:3px;">${uiSvg('flame', 12)} ${streak}</span></div>
+          </div>
+        </div>
+
+        ${renderWeekPlanCard()}
+
+        ${on('quick') ? `
+        <div class="ss-card rf-quick-card">
+          <div class="ss-card-title"><b>${esc(t('quick'))}</b><a href="#/workouts" style="color:var(--ac)">${t('seeAll')} ›</a></div>
+          <div class="ss-table-list">${quickRows}</div>
+        </div>` : ''}
+        </div><!-- /.rf-bento-side -->
       </div>
 
-      ${on('featured') ? `<h2>${t('prev')}<a href="#/workouts/programs">${esc(t('seeAll'))}</a></h2><div class="grid">${star.map(programCard).join('')}</div>` : ''}`;
+      ${on('featured') ? `<div class="rf-page-head"><h2>${t('prev')}<a href="#/workouts/programs">${esc(t('seeAll'))}</a></h2></div><div class="grid rf-home-programs">${star.map(programCard).join('')}</div>` : ''}`;
     },
     coach() {
       if (!COACH.enabled) return `<h1 style="display:flex;align-items:center;gap:8px;">${uiSvg('sparkles', 22)} ${esc(t('coachTitle'))}</h1><div class="empty">${esc(t('coachOff'))}</div>`;
-      return `<div class="chat"><div class="chat-head"><div class="orb"><span>AI</span></div><h1>${esc(t('coachTitle'))}</h1><p>${esc(t('coachSub'))}</p></div>
-      <div class="chips" id="chips">${['c1', 'c2', 'c3', 'c4'].map(k => `<button type="button" class="chip2" data-q="${esc(t(k))}">${esc(t(k))}</button>`).join('')}</div>
-      <div class="msgs" id="msgs"></div>
-      <form class="composer" id="cform"><input id="cin" placeholder="${esc(t('coachPh'))}" autocomplete="off" maxlength="1000"><button type="submit" class="send" aria-label="send">➤</button></form>
-      <div class="chat-foot"><button type="button" class="btn alt" id="cclr" style="padding:6px 14px;font-size:12px">${esc(t('coachClear'))}</button></div></div>`;
+      const fp = getFitnessProfile();
+      const bm = getBodyMetrics();
+      const ps = getProgState();
+      const allH = hist();
+      const wkCnt = allH.filter(x => x.t > Date.now() - 7 * 864e5).length;
+      const goalObj = FITNESS_GOALS.find(g => g.id === fp.goal);
+      const lvlObj = FITNESS_LEVELS.find(l => l.id === fp.level);
+      const curW = getCurrentBodyWeight(bm);
+      const activeP = ps.activeId ? D.programs.find(p => String(p.id) === String(ps.activeId)) : null;
+      return `<div class="rf-coach-layout">
+        <div class="chat">
+          <div class="chat-head"><div class="orb"><span>AI</span></div><h1>${esc(t('coachTitle'))}</h1><p>${esc(t('coachSub'))}</p></div>
+          <div class="chips" id="chips">${['c1', 'c2', 'c3', 'c4'].map(k => `<button type="button" class="chip2" data-q="${esc(t(k))}">${esc(t(k))}</button>`).join('')}</div>
+          <div class="msgs" id="msgs"></div>
+          <form class="composer" id="cform"><input id="cin" placeholder="${esc(t('coachPh'))}" autocomplete="off" maxlength="1000"><button type="submit" class="send" aria-label="send">➤</button></form>
+          <div class="chat-foot"><button type="button" class="btn alt" id="cclr" style="padding:6px 14px;font-size:12px">${esc(t('coachClear'))}</button></div>
+        </div>
+        <aside class="rf-coach-aside">
+          <div class="ss-card">
+            <div class="ss-card-title"><b>${uiSvg('user', 14)} ${L == 'ru' ? 'Контекст атлета' : 'Athlete Context'}</b><a href="#/profile" style="color:var(--ac)">${L == 'ru' ? 'Профиль ›' : 'Edit ›'}</a></div>
+            <div class="rf-coach-ctx-list">
+              <div class="rf-coach-ctx-row"><span>${L == 'ru' ? 'Цель' : 'Goal'}</span><b>${esc(goalObj ? (L == 'ru' ? goalObj.ru : goalObj.en) : (L == 'ru' ? 'Не указана' : 'Not set'))}</b></div>
+              <div class="rf-coach-ctx-row"><span>${L == 'ru' ? 'Уровень' : 'Level'}</span><b>${esc(lvlObj ? (L == 'ru' ? lvlObj.ru : lvlObj.en) : (L == 'ru' ? 'Не указан' : 'Not set'))}</b></div>
+              <div class="rf-coach-ctx-row"><span>${L == 'ru' ? 'Вес' : 'Weight'}</span><b>${curW !== null ? esc(curW + ' ' + (L == 'ru' ? 'кг' : 'kg')) : '—'}</b></div>
+              <div class="rf-coach-ctx-row"><span>${L == 'ru' ? 'За 7 дней' : 'Last 7d'}</span><b>${wkCnt} ${L == 'ru' ? 'трен.' : 'wkts'}</b></div>
+              <div class="rf-coach-ctx-row"><span>${L == 'ru' ? 'Программа' : 'Program'}</span><b>${esc(activeP ? pName(activeP) : (L == 'ru' ? 'Не выбрана' : 'None'))}</b></div>
+            </div>
+          </div>
+          <div class="ss-card">
+            <div class="ss-card-title"><b>${uiSvg('sparkles', 14)} ${L == 'ru' ? 'Чем поможет AI Coach' : 'Coach Capabilities'}</b></div>
+            <ul class="rf-coach-tips">
+              <li>${L == 'ru' ? 'Подберёт тренировку под вашу цель, уровень и инвентарь' : 'Matches workouts to your goal and gear'}</li>
+              <li>${L == 'ru' ? 'Учтёт ограничения и историю тренировок' : 'Respects injury notes and workout history'}</li>
+              <li>${L == 'ru' ? 'Соберёт план питания и восстановления' : 'Builds recovery and nutrition guidance'}</li>
+            </ul>
+          </div>
+        </aside>
+      </div>`;
     },
     programs(arg) {
       return routes.workouts('programs');
@@ -3200,27 +3242,33 @@
         const d = richDesc(rawDesc);
         return `<a href="#/workouts/programs">← ${t('programs')}</a><h1>${esc(pName(p))}</h1>
         <div class="tags"><span class="tag">${p.days} ${t('days')}</span><span class="tag">${t('pace')}: ${tempLbl(p.temp)}</span><span class="tag pro" style="background:linear-gradient(135deg,var(--acc),#f59e0b);color:#000;font-weight:900;">PRO</span></div>
-        ${p.img ? `<p><img src="${pImg(p)}" style="width:100%;max-height:360px;object-fit:cover;border-radius:16px"></p>` : ''}
-        <div class="ss-card prog-tracker">
-          <div class="ss-card-title">
-            <b>${uiSvg('trend', 15)} ${L == 'ru' ? 'Прогресс программы' : 'Program Progress'}</b>
-            <span style="color:var(--ac-l);font-weight:800;">${doneDays} / ${totalDays} ${t('days')} (${pct}%)</span>
+        <div class="rf-detail-layout">
+          <div class="rf-detail-main">
+            ${p.img ? `<p style="margin:0 0 14px"><img src="${pImg(p)}" style="width:100%;max-height:360px;object-fit:cover;border-radius:16px"></p>` : ''}
+            <div class="box desc" style="margin-top:0">${d}</div>
           </div>
-          <div class="prog-bar-track"><div class="prog-bar-fill" style="width:${pct}%"></div></div>
-          <div class="prog-actions">
-            <button type="button" class="btn ${isAct ? 'alt' : ''}" id="prog-pin" data-pid="${p.id}">${isAct ? uiSvg('check', 14) + ' ' + (L == 'ru' ? 'Активная программа' : 'Active program') : uiSvg('pin', 14) + ' ' + (L == 'ru' ? 'Сделать моей' : 'Set as active')}</button>
-            <button type="button" class="btn" id="prog-tick" data-pid="${p.id}">${uiSvg('check', 14)} ${doneToday ? (L == 'ru' ? `Ещё день (#${doneDays + 1})` : `Log day #${doneDays + 1}`) : (L == 'ru' ? `День #${doneDays + 1} выполнен` : `Complete day #${doneDays + 1}`)}</button>
-          </div>
-          ${logs.length ? `
-          <div class="prog-sub-foot">
-            <span>${L == 'ru' ? 'Последняя отметка:' : 'Last logged:'} ${logs[logs.length - 1]}</span>
-            <div style="display:flex;gap:10px;">
-              <button type="button" class="prog-link-btn" id="prog-undo" data-pid="${p.id}">−1</button>
-              <button type="button" class="prog-link-btn" id="prog-reset" data-pid="${p.id}">${L == 'ru' ? 'Сброс' : 'Reset'}</button>
+          <div class="rf-detail-side">
+            <div class="ss-card prog-tracker rf-sticky-box">
+              <div class="ss-card-title">
+                <b>${uiSvg('trend', 15)} ${L == 'ru' ? 'Прогресс программы' : 'Program Progress'}</b>
+                <span style="color:var(--ac-l);font-weight:800;">${doneDays} / ${totalDays} ${t('days')} (${pct}%)</span>
+              </div>
+              <div class="prog-bar-track"><div class="prog-bar-fill" style="width:${pct}%"></div></div>
+              <div class="prog-actions">
+                <button type="button" class="btn ${isAct ? 'alt' : ''}" id="prog-pin" data-pid="${p.id}">${isAct ? uiSvg('check', 14) + ' ' + (L == 'ru' ? 'Активная программа' : 'Active program') : uiSvg('pin', 14) + ' ' + (L == 'ru' ? 'Сделать моей' : 'Set as active')}</button>
+                <button type="button" class="btn" id="prog-tick" data-pid="${p.id}">${uiSvg('check', 14)} ${doneToday ? (L == 'ru' ? `Ещё день (#${doneDays + 1})` : `Log day #${doneDays + 1}`) : (L == 'ru' ? `День #${doneDays + 1} выполнен` : `Complete day #${doneDays + 1}`)}</button>
+              </div>
+              ${logs.length ? `
+              <div class="prog-sub-foot">
+                <span>${L == 'ru' ? 'Последняя отметка:' : 'Last logged:'} ${logs[logs.length - 1]}</span>
+                <div style="display:flex;gap:10px;">
+                  <button type="button" class="prog-link-btn" id="prog-undo" data-pid="${p.id}">−1</button>
+                  <button type="button" class="prog-link-btn" id="prog-reset" data-pid="${p.id}">${L == 'ru' ? 'Сброс' : 'Reset'}</button>
+                </div>
+              </div>` : ''}
             </div>
-          </div>` : ''}
-        </div>
-        <div class="box desc">${d}</div>`;
+          </div>
+        </div>`;
       }
 
       // Non-PRO user view:
@@ -3230,41 +3278,47 @@
 
       return `<a href="#/workouts/programs">← ${t('programs')}</a><h1>${esc(pName(p))}</h1>
       <div class="tags"><span class="tag">${p.days} ${t('days')}</span><span class="tag">${t('pace')}: ${tempLbl(p.temp)}</span><span class="tag pro" style="background:rgba(245,158,11,0.18);color:var(--acc);border:1px solid rgba(245,158,11,0.35);font-weight:900;">🔒 PRO ПРОГРАММА</span></div>
-      ${p.img ? `<p><img src="${pImg(p)}" style="width:100%;max-height:360px;object-fit:cover;border-radius:16px"></p>` : ''}
-      <div class="ss-card prog-lock-box">
-        <div class="prog-lock-badge">${uiSvg('bolt', 12)} PRO PROGRAM</div>
-        <div class="prog-lock-head">
-          <div class="prog-lock-icon">${uiSvg('bolt', 24)}</div>
-          <div>
-            <div class="prog-lock-title">${L == 'ru' ? 'Программа доступна в RizzaFit PRO' : 'Available with RizzaFit PRO'}</div>
-            <div class="prog-lock-sub">${L == 'ru' ? 'Отслеживание дней, готовое расписание тренировок и пошаговый прогресс' : 'Daily tracking, workout logs and progression'}</div>
+      <div class="rf-detail-layout">
+        <div class="rf-detail-main">
+          ${p.img ? `<p style="margin:0 0 14px"><img src="${pImg(p)}" style="width:100%;max-height:360px;object-fit:cover;border-radius:16px"></p>` : ''}
+          <div class="box desc" style="margin:0 0 12px">${teaserHtml}</div>
+          <div class="prog-desc-wrap-locked">
+            <div class="prog-desc-locked-content">${lockedHtml}</div>
+            <div class="prog-plan-lock-overlay" id="prog-desc-lock-overlay">
+              <div class="prog-lock-icon" style="margin-bottom:8px;">${uiSvg('bolt', 26)}</div>
+              <div style="font-weight:900;font-size:16px;color:var(--tx);margin-bottom:6px;">
+                ${L == 'ru' ? 'План тренировок на ' + p.days + ' дней заблокирован' : p.days + '-Day Workout Schedule Locked'}
+              </div>
+              <div style="font-size:12.5px;color:var(--mut);line-height:1.45;margin-bottom:14px;max-width:320px;">
+                ${L == 'ru'
+                  ? 'Оформите подписку RizzaFit PRO, чтобы открыть расписание всех дней, входящие тренировки и отслеживание прогресса.'
+                  : 'Upgrade to PRO to unlock the entire day schedule, workouts and tracking.'}
+              </div>
+              <button type="button" class="btn prog-unlock-btn" id="prog-unlock-desc-btn" style="padding:10px 20px;font-size:13.5px;">
+                ${uiSvg('bolt', 14)} ${L == 'ru' ? 'Разблокировать от 290 ₽' : 'Unlock from 290 ₽'}
+              </button>
+            </div>
           </div>
         </div>
-        <div class="prog-lock-feats">
-          <div class="prog-lock-feat">${uiSvg('check', 13)} ${L == 'ru' ? 'Полный доступ к курсу на ' + p.days + ' дней' : 'Full access to ' + p.days + ' days'}</div>
-          <div class="prog-lock-feat">${uiSvg('check', 13)} ${L == 'ru' ? 'Умная отметка выполненных дней и аналитика' : 'Day progression tracking'}</div>
-          <div class="prog-lock-feat">${uiSvg('check', 13)} ${L == 'ru' ? 'Оплата через СБП в 1 клик (от 290 ₽)' : 'Instant SBP payment (from 290 ₽)'}</div>
-        </div>
-        <button type="button" class="btn block prog-unlock-btn" id="prog-unlock-btn">
-          ${uiSvg('bolt', 15)} ${L == 'ru' ? 'Разблокировать программу через СБП' : 'Unlock program with PRO'}
-        </button>
-      </div>
-      <div class="box desc" style="margin-bottom:12px;">${teaserHtml}</div>
-      <div class="prog-desc-wrap-locked">
-        <div class="prog-desc-locked-content">${lockedHtml}</div>
-        <div class="prog-plan-lock-overlay" id="prog-desc-lock-overlay">
-          <div class="prog-lock-icon" style="margin-bottom:8px;">${uiSvg('bolt', 26)}</div>
-          <div style="font-weight:900;font-size:16px;color:var(--tx);margin-bottom:6px;">
-            ${L == 'ru' ? 'План тренировок на ' + p.days + ' дней заблокирован' : p.days + '-Day Workout Schedule Locked'}
+        <div class="rf-detail-side">
+          <div class="ss-card prog-lock-box rf-sticky-box">
+            <div class="prog-lock-badge">${uiSvg('bolt', 12)} PRO PROGRAM</div>
+            <div class="prog-lock-head">
+              <div class="prog-lock-icon">${uiSvg('bolt', 24)}</div>
+              <div>
+                <div class="prog-lock-title">${L == 'ru' ? 'Программа доступна в RizzaFit PRO' : 'Available with RizzaFit PRO'}</div>
+                <div class="prog-lock-sub">${L == 'ru' ? 'Отслеживание дней, готовое расписание тренировок и пошаговый прогресс' : 'Daily tracking, workout logs and progression'}</div>
+              </div>
+            </div>
+            <div class="prog-lock-feats">
+              <div class="prog-lock-feat">${uiSvg('check', 13)} ${L == 'ru' ? 'Полный доступ к курсу на ' + p.days + ' дней' : 'Full access to ' + p.days + ' days'}</div>
+              <div class="prog-lock-feat">${uiSvg('check', 13)} ${L == 'ru' ? 'Умная отметка выполненных дней и аналитика' : 'Day progression tracking'}</div>
+              <div class="prog-lock-feat">${uiSvg('check', 13)} ${L == 'ru' ? 'Оплата через СБП в 1 клик (от 290 ₽)' : 'Instant SBP payment (from 290 ₽)'}</div>
+            </div>
+            <button type="button" class="btn block prog-unlock-btn" id="prog-unlock-btn">
+              ${uiSvg('bolt', 15)} ${L == 'ru' ? 'Разблокировать программу через СБП' : 'Unlock program with PRO'}
+            </button>
           </div>
-          <div style="font-size:12.5px;color:var(--mut);line-height:1.45;margin-bottom:14px;max-width:320px;">
-            ${L == 'ru'
-              ? 'Оформите подписку RizzaFit PRO, чтобы открыть расписание всех дней, входящие тренировки и отслеживание прогресса.'
-              : 'Upgrade to PRO to unlock the entire day schedule, workouts and tracking.'}
-          </div>
-          <button type="button" class="btn prog-unlock-btn" id="prog-unlock-desc-btn" style="padding:10px 20px;font-size:13.5px;">
-            ${uiSvg('bolt', 14)} ${L == 'ru' ? 'Разблокировать от 290 ₽' : 'Unlock from 290 ₽'}
-          </button>
         </div>
       </div>`;
     },
@@ -3294,17 +3348,18 @@
           <button class="mpill" data-m="legs">${L == 'ru' ? 'Ноги' : 'Legs'}</button>
           <button class="mpill" data-m="full">${uiSvg('bolt', 13)} ${L == 'ru' ? 'Все тело' : 'Full body'}</button>
         </div>
-        <div class="filters"><input id="q" placeholder="${L == 'ru' ? 'Поиск по названию или упражнению…' : 'Search workout or exercise…'}">
+        <div class="filters rf-filter-bar"><input id="q" placeholder="${L == 'ru' ? 'Поиск по названию или упражнению…' : 'Search workout or exercise…'}">
         <select id="f-eq"><option value="">${t('eq')}: ${t('all')}</option>${[...new Set(D.workouts.map(w => w.eq))].filter(Boolean).map(v => `<option value="${v}">${eqLbl(v)}</option>`).join('')}</select>
         <select id="f-d"><option value="">${t('diff')}: ${t('all')}</option>${[...new Set(D.workouts.map(w => w.diff))].filter(Boolean).map(v => `<option value="${v}">${diffLbl(v)}</option>`).join('')}</select>
         <label style="align-self:center;color:var(--mut)"><input type="checkbox" id="f-t" checked> ${L == 'ru' ? 'только именованные' : 'named only'}</label></div>
         <div id="list" class="grid"></div><div class="more" id="more"></div>
       </div>
       <div id="wo-sec-programs" style="${isProg ? '' : 'display:none;'}">
-        <div style="font-size:12.5px;color:var(--mut);margin:4px 2px 14px;line-height:1.4;">
-          ${L == 'ru' ? 'Готовые долгосрочные программы тренировок с прогрессией по дням:' : 'Structured training programs with day-by-day progression:'}
+        <div class="rf-section-lead">
+          <span>${L == 'ru' ? 'Готовые долгосрочные программы тренировок с прогрессией по дням:' : 'Structured training programs with day-by-day progression:'}</span>
+          <span class="rf-pill">${D.programs.length}</span>
         </div>
-        <div class="grid">${D.programs.map(programCard).join('')}</div>
+        <div class="grid rf-programs-grid">${D.programs.map(programCard).join('')}</div>
       </div>`;
     },
     builder(editId) {
@@ -3428,33 +3483,41 @@
       }
 
       return `<a href="#/workouts">← ${t('workouts')}</a>
-      <div class="wcover" style="margin-top:12px">
-        <div class="tags" style="margin:0 0 6px;align-items:center">
-          ${w._custom ? `<span class="tag pro">${uiSvg('sparkles', 12)} ${L == 'ru' ? 'Моя' : 'Custom'}</span>` : ''}
-          ${w.eq ? `<span class="tag pro">${eqLbl(w.eq)}</span>` : ''}
-          ${needsPro ? (isPro ? '<span class="tag pro">PRO</span>' : '<span class="tag pro" style="background:rgba(245,158,11,0.18);color:var(--acc);border:1px solid rgba(245,158,11,0.35);font-weight:900;">🔒 PRO ТРЕНИРОВКА</span>') : ''}
-          <span style="flex:1"></span>
-          ${w._custom ? `<a href="#/builder/${esc(w.id)}" class="fav-btn" title="${L == 'ru' ? 'Редактировать' : 'Edit'}">${uiSvg('edit', 15)}</a><button type="button" class="fav-btn" id="wo-del" title="${L == 'ru' ? 'Удалить' : 'Delete'}">${uiSvg('trash', 15)}</button>` : ''}
-          <a href="#/builder/dup-${esc(w.id)}" class="fav-btn" title="${L == 'ru' ? 'Копировать в конструктор' : 'Duplicate to builder'}">${uiSvg('repeat', 15)}</a>
-          <button class="fav-btn ${getFavs().has(w.id) ? 'on' : ''}" id="fav-toggle" aria-label="favorite">${uiSvg(getFavs().has(w.id) ? 'heartFill' : 'heart', 16)}</button>
+      <div class="rf-detail-layout rf-wo-detail">
+        <div class="rf-detail-main">
+          <div class="wcover" style="margin-top:12px">
+            <div class="tags" style="margin:0 0 6px;align-items:center">
+              ${w._custom ? `<span class="tag pro">${uiSvg('sparkles', 12)} ${L == 'ru' ? 'Моя' : 'Custom'}</span>` : ''}
+              ${w.eq ? `<span class="tag pro">${eqLbl(w.eq)}</span>` : ''}
+              ${needsPro ? (isPro ? '<span class="tag pro">PRO</span>' : '<span class="tag pro" style="background:rgba(245,158,11,0.18);color:var(--acc);border:1px solid rgba(245,158,11,0.35);font-weight:900;">🔒 PRO ТРЕНИРОВКА</span>') : ''}
+              <span style="flex:1"></span>
+              ${w._custom ? `<a href="#/builder/${esc(w.id)}" class="fav-btn" title="${L == 'ru' ? 'Редактировать' : 'Edit'}">${uiSvg('edit', 15)}</a><button type="button" class="fav-btn" id="wo-del" title="${L == 'ru' ? 'Удалить' : 'Delete'}">${uiSvg('trash', 15)}</button>` : ''}
+              <a href="#/builder/dup-${esc(w.id)}" class="fav-btn" title="${L == 'ru' ? 'Копировать в конструктор' : 'Duplicate to builder'}">${uiSvg('repeat', 15)}</a>
+              <button class="fav-btn ${getFavs().has(w.id) ? 'on' : ''}" id="fav-toggle" aria-label="favorite">${uiSvg(getFavs().has(w.id) ? 'heartFill' : 'heart', 16)}</button>
+            </div>
+            <h1>${esc(woName(w))}</h1>
+          </div>
+          <div class="wstats"><span>${uiSvg('clock', 14)} <b>${Math.max(1, Math.round(secs / 60))} min</b></span><span>${uiSvg('chart', 14)} <b>${diffLbl(w.diff)}</b></span><span>${uiSvg('bolt', 14)} <b>${tempLbl(w.temp)}</b></span>${w.rating ? `<span>★ <b>${w.rating}</b></span>` : ''}</div>
+          <div class="plan"><h2>${L == 'ru' ? 'План тренировки' : 'Workout plan'}</h2>${sets}</div>
         </div>
-        <h1>${esc(woName(w))}</h1>
-      </div>
-      <div class="wstats"><span>${uiSvg('clock', 14)} <b>${Math.max(1, Math.round(secs / 60))} min</b></span><span>${uiSvg('chart', 14)} <b>${diffLbl(w.diff)}</b></span><span>${uiSvg('bolt', 14)} <b>${tempLbl(w.temp)}</b></span>${w.rating ? `<span>★ <b>${w.rating}</b></span>` : ''}</div>
-      ${isLocked ? `
-        <button class="btn block prog-unlock-btn" id="wo-unlock-main" style="margin-top:14px;padding:14px 18px;font-size:15px;display:flex;align-items:center;justify-content:center;gap:8px;">
-          ${uiSvg('bolt', 17)} ${L == 'ru' ? 'Разблокировать тренировку через СБП' : 'Unlock workout via SBP'}
-        </button>
-      ` : `
-        <button class="btn block" id="go">${uiSvg('play', 14)} ${t('start')}</button>
-        <button class="btn block btn-warmup" id="warmup">${uiSvg('flame', 15)} ${L == 'ru' ? 'Разминка перед тренировкой (3 мин)' : 'Pre-Workout Warm-Up (3 min)'}</button>
-      `}
-      ${renderMuscleCard(w)}
-      ${w.d[L] || w.d.en ? `<div class="box desc">${esc(w.d[L] || w.d.en)}</div>` : ''}
-      <div class="plan"><h2>${L == 'ru' ? 'План тренировки' : 'Workout plan'}</h2>${sets}</div>`;
+        <div class="rf-detail-side">
+          <div class="rf-sticky-box">
+            ${isLocked ? `
+              <button class="btn block prog-unlock-btn" id="wo-unlock-main" style="margin-top:0;padding:14px 18px;font-size:15px;display:flex;align-items:center;justify-content:center;gap:8px;">
+                ${uiSvg('bolt', 17)} ${L == 'ru' ? 'Разблокировать тренировку через СБП' : 'Unlock workout via SBP'}
+              </button>
+            ` : `
+              <button class="btn block" id="go">${uiSvg('play', 14)} ${t('start')}</button>
+              <button class="btn block btn-warmup" id="warmup">${uiSvg('flame', 15)} ${L == 'ru' ? 'Разминка перед тренировкой (3 мин)' : 'Pre-Workout Warm-Up (3 min)'}</button>
+            `}
+            ${renderMuscleCard(w)}
+            ${w.d[L] || w.d.en ? `<div class="box desc">${esc(w.d[L] || w.d.en)}</div>` : ''}
+          </div>
+        </div>
+      </div>`;
     },
     exercises() {
-      return `<h1>${t('exercises')}</h1><div class="filters"><input id="q" placeholder="${t('search')}">
+      return `<div class="rf-page-head"><h1>${t('exercises')}</h1><span class="rf-pill">${D.exercises.length}</span></div><div class="filters rf-filter-bar"><input id="q" placeholder="${t('search')}">
       <select id="f-eq"><option value="">${t('eq')}: ${t('all')}</option>${[...new Set(D.exercises.map(w => w.eq))].filter(Boolean).map(v => `<option value="${v}">${eqLbl(v)}</option>`).join('')}</select>
       <select id="f-l"><option value="">${t('lvl')}: ${t('all')}</option>${['beginner', 'intermediate', 'expert'].map(v => `<option value="${v}">${lvlLbl(v)}</option>`).join('')}</select>
       <label style="align-self:center;color:var(--mut)"><input type="checkbox" id="f-i"> ${L == 'ru' ? 'только с картинкой' : 'with image only'}</label></div>
@@ -3466,9 +3529,9 @@
       const prs = JSON.parse(localStorage.prs || '{}');
       const pr = prs[id];
       const relatedW = D.workouts.filter(w => w.s && w.s.some(st => st.slice(1).some(n => n[0] == id))).slice(0, 6);
-      return `<a href="javascript:history.back()">← ${t('exercises')}</a><h1>${esc(exName(e))}</h1><div class="detail">
-      <div class="ex-img ${e.img ? '' : 'none'}" style="border-radius:20px;overflow:hidden;position:relative;">${renderExVisual(e, { allowToggle: true })}</div>
-      <div><div class="tags"><span class="tag">${eqLbl(e.eq)}</span>${e.lvl && e.lvl != 'none' ? `<span class="tag">${lvlLbl(e.lvl)}</span>` : ''}${e.mech ? `<span class="tag">${e.mech}</span>` : ''}${e.rating ? `<span class="tag star">★ ${e.rating}</span>` : ''}</div>
+      return `<a href="javascript:history.back()">← ${t('exercises')}</a><h1>${esc(exName(e))}</h1><div class="detail rf-ex-detail">
+      <div class="rf-ex-media"><div class="ex-img ${e.img ? '' : 'none'}" style="border-radius:20px;overflow:hidden;position:relative;">${renderExVisual(e, { allowToggle: true })}</div></div>
+      <div class="rf-ex-body"><div class="tags"><span class="tag">${eqLbl(e.eq)}</span>${e.lvl && e.lvl != 'none' ? `<span class="tag">${lvlLbl(e.lvl)}</span>` : ''}${e.mech ? `<span class="tag">${e.mech}</span>` : ''}${e.rating ? `<span class="tag star">★ ${e.rating}</span>` : ''}</div>
       <div class="ex-pr-banner">
         <div class="ex-pr-info">
           <span class="ex-pr-label">${uiSvg('trophy', 13)} ${L == 'ru' ? 'Личный рекорд' : 'Personal Record'}</span>
@@ -3646,7 +3709,10 @@
         histHtml = `<div class="empty">${t('nohist')}</div>`;
       }
 
-      return `${profileCard}${duelBanner}${fitnessCard}${activeProgCard}${bodyCard}${kpis}${analyticsCard}${prsHtml}${histHtml}`;
+      return `<div class="rf-profile-layout">
+        <div class="rf-profile-aside">${profileCard}${duelBanner}${activeProgCard}${bodyCard}</div>
+        <div class="rf-profile-main">${kpis}${fitnessCard}${analyticsCard}${prsHtml}${histHtml}</div>
+      </div>`;
     },
     friends() {
       if (!isLoggedIn()) return renderAuthGateStub(t('authRequired'), t('authRequiredDesc'));
@@ -6688,6 +6754,7 @@
               ${e && (e.d[L] || e.d.en) ? `<div class="p-info-desc hidden" id="p-desc">${esc(e.d[L] || e.d.en)}</div>` : ''}
             </div>
 
+            <div class="rf-player-right">
             <div class="p-control-pod">
               ${isT ? `
                 <div class="p-timer-circle">
@@ -6721,6 +6788,7 @@
             </div>
 
             <button class="p-action-btn" id="n">${isT ? t('skip') : '✓ ' + t('done')}</button>
+            </div>
           </div>`;
         if (isT) {
           const ring = document.getElementById('ring');
