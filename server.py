@@ -1493,6 +1493,25 @@ def _ru_age_unit(age):
         return 'года'
     return 'лет'
 
+def _count_unique_program_days(raw_logs):
+    """Count unique valid YYYY-MM-DD calendar dates in program logs, ignoring duplicates and malformed entries."""
+    if not isinstance(raw_logs, list):
+        return 0
+    unique_dates = set()
+    for item in raw_logs:
+        if not isinstance(item, str):
+            continue
+        s = item.strip()
+        if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', s):
+            continue
+        try:
+            tm = time.strptime(s, '%Y-%m-%d')
+        except ValueError:
+            continue
+        if 2000 <= tm.tm_year <= 2100:
+            unique_dates.add(s)
+    return min(3650, len(unique_dates))
+
 def build_user_profile_context(display_name, state_json_raw):
     """Build sanitized, bounded <user_profile_data> summary from non-empty user fields."""
     state = {}
@@ -1614,9 +1633,7 @@ def build_user_profile_context(display_name, state_json_raw):
         prog_line = f'Активная программа: {p_title} (ID {pid_txt})' if p_title else f'Активная программа: ID {pid_txt}'
         done_days = 0
         if isinstance(ps_used, dict) and isinstance(ps_used.get('logs'), dict):
-            pid_logs = ps_used['logs'].get(pid_txt)
-            if isinstance(pid_logs, list):
-                done_days = min(3650, len(pid_logs))
+            done_days = _count_unique_program_days(ps_used['logs'].get(pid_txt))
         if done_days > 0:
             tot_days = progs_days_map.get(pid_txt, 0)
             if tot_days > 0:

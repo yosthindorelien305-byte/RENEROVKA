@@ -550,6 +550,24 @@
     return s;
   }
 
+  function countProgramUniqueDays(rawLogs) {
+    if (!Array.isArray(rawLogs)) return 0;
+    const seen = new Set();
+    rawLogs.forEach(item => {
+      if (typeof item !== 'string') return;
+      const s = item.trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return;
+      const parts = s.split('-');
+      const y = +parts[0], m = +parts[1], day = +parts[2];
+      if (y < 2000 || y > 2100) return;
+      const dt = new Date(Date.UTC(y, m - 1, day));
+      if (dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === day) {
+        seen.add(s);
+      }
+    });
+    return seen.size;
+  }
+
   function getProgState() {
     let raw = {};
     try { raw = JSON.parse(localStorage.athletePrograms || localStorage.progState || '{}'); } catch (e) {}
@@ -1045,7 +1063,7 @@
             </div>`).join('')}
         </div>
         ${fp.injuries ? `<div class="fp-inj"><b>${L == 'ru' ? 'Ограничения:' : 'Limitations:'}</b> ${esc(fp.injuries)}</div>` : ''}
-        ${filledCnt < totChecks ? `<div class="fp-empty-hint">${L == 'ru' ? 'Заполненные данные автоматически учитываются AI Coach при подборе нагрузки и советов.' : 'Filled details are used by AI Coach to tailor workouts and nutrition advice.'}</div>` : ''}
+        <div class="fp-privacy-note">${L == 'ru' ? 'Приватность: эти параметры скрыты от других пользователей, но передаются внешнему AI-провайдеру в запросах к AI Coach для персонализации советов. Любое поле можно не указывать или очистить.' : 'Privacy: hidden from other users, but shared with the external AI provider during AI Coach requests for personalization. All fields are optional and can be cleared anytime.'}</div>
       </div>`;
   }
 
@@ -1064,7 +1082,7 @@
           <div class="fp-empty-hint" style="margin-top:0">${L == 'ru' ? 'Программа ещё не выбрана' : 'No active program selected yet'}</div>
         </div>`;
     }
-    const doneDays = Array.isArray(ps.logs[activeP.id]) ? ps.logs[activeP.id].length : 0;
+    const doneDays = countProgramUniqueDays(ps.logs[activeP.id]);
     const totalDays = Math.max(1, +activeP.days || 30);
     const pct = Math.min(100, Math.round((doneDays / totalDays) * 100));
     return `
@@ -3046,7 +3064,7 @@
           const ps = getProgState();
           const activeP = ps.activeId ? D.programs.find(p => p.id == ps.activeId) : null;
           const useP = activeP || hp;
-          const pDone = (ps.logs[useP.id] || []).length;
+          const pDone = countProgramUniqueDays(ps.logs[useP.id]);
           const pTot = Math.max(1, +useP.days || 30);
           const hTitle = activeP ? pName(activeP) : heroT;
           const hLink = activeP ? ('#/program/' + activeP.id) : heroLink;
@@ -3133,8 +3151,9 @@
       const p = D.programs.find(x => x.id == id); if (!p) return '';
       const ps = getProgState();
       const logs = Array.isArray(ps.logs[p.id]) ? ps.logs[p.id] : [];
+      const doneDays = countProgramUniqueDays(logs);
       const totalDays = Math.max(1, +p.days || 30);
-      const pct = Math.min(100, Math.round((logs.length / totalDays) * 100));
+      const pct = Math.min(100, Math.round((doneDays / totalDays) * 100));
       const isAct = String(ps.activeId) === String(p.id);
       const todayIso = new Date().toISOString().slice(0, 10);
       const doneToday = logs.includes(todayIso);
@@ -3149,12 +3168,12 @@
         <div class="ss-card prog-tracker">
           <div class="ss-card-title">
             <b>${uiSvg('trend', 15)} ${L == 'ru' ? 'Прогресс программы' : 'Program Progress'}</b>
-            <span style="color:var(--ac-l);font-weight:800;">${logs.length} / ${totalDays} ${t('days')} (${pct}%)</span>
+            <span style="color:var(--ac-l);font-weight:800;">${doneDays} / ${totalDays} ${t('days')} (${pct}%)</span>
           </div>
           <div class="prog-bar-track"><div class="prog-bar-fill" style="width:${pct}%"></div></div>
           <div class="prog-actions">
             <button type="button" class="btn ${isAct ? 'alt' : ''}" id="prog-pin" data-pid="${p.id}">${isAct ? uiSvg('check', 14) + ' ' + (L == 'ru' ? 'Активная программа' : 'Active program') : uiSvg('pin', 14) + ' ' + (L == 'ru' ? 'Сделать моей' : 'Set as active')}</button>
-            <button type="button" class="btn" id="prog-tick" data-pid="${p.id}">${uiSvg('check', 14)} ${doneToday ? (L == 'ru' ? `Ещё день (#${logs.length + 1})` : `Log day #${logs.length + 1}`) : (L == 'ru' ? `День #${logs.length + 1} выполнен` : `Complete day #${logs.length + 1}`)}</button>
+            <button type="button" class="btn" id="prog-tick" data-pid="${p.id}">${uiSvg('check', 14)} ${doneToday ? (L == 'ru' ? `Ещё день (#${doneDays + 1})` : `Log day #${doneDays + 1}`) : (L == 'ru' ? `День #${doneDays + 1} выполнен` : `Complete day #${doneDays + 1}`)}</button>
           </div>
           ${logs.length ? `
           <div class="prog-sub-foot">
@@ -5133,6 +5152,7 @@
             <label style="margin-top:10px;display:block">${L == 'ru' ? 'Ограничения и травмы (необязательно)' : 'Injuries & limitations (optional)'}
               <textarea id="fp-inj" maxlength="160" placeholder="${L == 'ru' ? 'Например: беречь колени, боли в пояснице' : 'e.g. knee discomfort, avoid heavy axial load'}">${esc(fp.injuries || '')}</textarea>
             </label>
+            <div class="fp-privacy-note">${L == 'ru' ? 'Приватность: возраст, пол, вес, параметры и сведения о травмах не отображаются другим пользователям, но передаются внешнему AI-провайдеру при обращении к AI Coach. При необходимости очистите любое поле и сохраните.' : 'Privacy: age, sex, weight, stats, and injuries are never shown to other users, and are sent to the external AI provider only for AI Coach personalization. Clear any field anytime to stop sharing it.'}</div>
             <div class="ap-modal-actions">
               <button type="button" class="btn alt" id="fp-cancel">${L == 'ru' ? 'Отмена' : 'Cancel'}</button>
               <button type="button" class="btn" id="fp-save">${L == 'ru' ? 'Сохранить' : 'Save'}</button>
@@ -5156,7 +5176,8 @@
         bd.querySelector('#fp-save').onclick = () => {
           const hVal = parseFloat(bd.querySelector('#fp-h').value);
           const aVal = parseInt(bd.querySelector('#fp-age').value, 10);
-          const wVal = parseFloat(bd.querySelector('#fp-w').value);
+          const rawW = bd.querySelector('#fp-w').value.trim();
+          const wVal = parseFloat(rawW);
           const twVal = parseFloat(bd.querySelector('#fp-tw').value);
           const goalVal = bd.querySelector('#fp-goal').value;
           const injVal = bd.querySelector('#fp-inj').value;
@@ -5181,6 +5202,9 @@
             if (idx >= 0) bm.logs[idx] = entry;
             else bm.logs.push(entry);
             if (bm.logs.length > 60) bm.logs = bm.logs.slice(-60);
+            bmChanged = true;
+          } else if (rawW === '' && bm.logs.length) {
+            bm.logs = [];
             bmChanged = true;
           }
           const nextTarget = (!isNaN(twVal) && twVal >= 20 && twVal <= 400) ? +twVal.toFixed(1) : null;
@@ -5211,7 +5235,7 @@
             <div class="fp-picker-list">
               ${D.programs.map(p => {
                 const isAct = String(ps.activeId) === String(p.id);
-                const done = Array.isArray(ps.logs[p.id]) ? ps.logs[p.id].length : 0;
+                const done = countProgramUniqueDays(ps.logs[p.id]);
                 return `
                   <button type="button" class="fp-picker-item ${isAct ? 'on' : ''}" data-pick-pid="${p.id}">
                     <span>

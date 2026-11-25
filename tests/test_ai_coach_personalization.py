@@ -1127,3 +1127,159 @@ class TestAICoachPersonalization(IsolatedServerTestCase):
         self.assertIn("app.js?v=62", html_src)
         self.assertIn("style.css?v=62", html_src)
         self.assertIn("flexa-shell-v62", sw_src)
+
+    def test_program_progress_counts_only_unique_valid_dates(self):
+        """Duplicate same-day entries and malformed logs must not inflate completed days or %."""
+        self.assertEqual(server._count_unique_program_days(["2026-11-24", "2026-11-24", "2026-11-25", "2026-11-25"]), 2)
+        self.assertEqual(
+            server._count_unique_program_days([None, "", 123, {"x": 1}, "not-a-date", "2026-02-31", "2026-13-01", "2026-11-25"]),
+            1,
+        )
+        self.assertEqual(server._count_unique_program_days({"2026-11-25": True}), 0)
+        self.assertEqual(server._count_unique_program_days("2026-11-25"), 0)
+
+        dup_ctx = server.build_user_profile_context(
+            "",
+            {
+                "athletePrograms": {
+                    "activeId": 1,
+                    "logs": {
+                        "1": ["2026-11-24", "2026-11-24", "bad-date", "2026-02-31", None, 42, "2026-11-25", "2026-11-25"],
+                    },
+                },
+            },
+        )
+        self.assertIn("Активная программа: 50 Подтягиваний (ID 1), прогресс 2/", dup_ctx)
+        self.assertNotIn("прогресс 8/", dup_ctx)
+        self.assertNotIn("прогресс 4/", dup_ctx)
+
+        malformed_dict_ctx = server.build_user_profile_context(
+            "",
+            {
+                "athletePrograms": {"activeId": 1, "logs": {"1": {"2026-11-25": True}}},
+            },
+        )
+        self.assertIn("Активная программа: 50 Подтягиваний (ID 1)", malformed_dict_ctx)
+        self.assertNotIn("прогресс", malformed_dict_ctx)
+        self.assertNotIn("выполнено", malformed_dict_ctx)
+
+    def test_clearing_profile_fields_persists_across_sync_and_omits_in_coach(self):
+        """Cleared fitnessProfile, bodyMetrics, and unpinned activeId stay cleared after GET /api/user/sync and in AI Coach."""
+        _create_user_with_state(324, "clear_sync_user", display_name="Ольга", token="tok_clear_324", state_obj=None)
+
+        initial_payload = json.dumps({
+            "state": {
+                "fitnessProfile": json.dumps({
+                    "heightCm": 170,
+                    "age": 27,
+                    "sex": "female",
+                    "goal": "fat_loss",
+                    "level": "intermediate",
+                    "injuries": "Колено",
+                }, ensure_ascii=False),
+                "bodyMetrics": json.dumps({"target": 60, "logs": [{"d": "2026-11-25", "w": 66}]}),
+                "athletePrograms": json.dumps({"activeId": 1, "logs": {"1": ["2026-11-25"]}}),
+            }
+        }).encode("utf-8")
+        st1, _, _ = invoke_handler(
+            "POST", "/api/user/sync", body=initial_payload,
+            headers={"Authorization": "Bearer tok_clear_324", "Content-Type": "application/json", "Content-Length": str(len(initial_payload))},
+        )
+        self.assertEqual(st1, 200)
+
+        # User clears all profile fields and unpins active program
+        cleared_payload = json.dumps({
+            "state": {
+                "fitnessProfile": json.dumps({"sex": "unspecified"}),
+                "bodyMetrics": json.dumps({"target": None, "logs": []}),
+                "athletePrograms": json.dumps({"activeId": None, "logs": {"1": ["2026-11-25"]}}),
+            }
+        }).encode("utf-8")
+        st2, _, _ = invoke_handler(
+            "POST", "/api/user/sync", body=cleared_payload,
+            headers={"Authorization": "Bearer tok_clear_324", "Content-Type": "application/json", "Content-Length": str(len(cleared_payload))},
+        )
+        self.assertEqual(st2, 200)
+
+        st_get, _, out_get = invoke_handler("GET", "/api/user/sync", headers={"Authorization": "Bearer tok_clear_324"})
+        self.assertEqual(st_get, 200)
+        srv_state = json.loads(out_get.decode("utf-8"))["state"]
+        self.assertEqual(json.loads(srv_state["fitnessProfile"]), {"sex": "unspecified"})
+        self.assertEqual(json.loads(srv_state["bodyMetrics"]), {"target": None, "logs": []})
+        self.assertIsNone(json.loads(srv_state["athletePrograms"])["activeId"])
+
+        captured_sys = []
+
+        def fake_http_json(req, timeout=40):
+            captured_sys.append(json.loads(req.data.decode("utf-8"))["systemInstruction"]["parts"][0]["text"])
+            return {"candidates": [{"content": {"parts": [{"text": "Ок"}]}}]}
+
+        cb = json.dumps({"message": "Что знаешь обо мне?", "reqId": "clr_chk_1"}).encode("utf-8")
+        with patch.object(server, "ai_cfg", return_value=_gemini_cfg()), \
+             patch.object(server, "http_json", side_effect=fake_http_json):
+            st_c, _, _ = invoke_handler(
+                "POST", "/api/coach", body=cb,
+                headers={"Authorization": "Bearer tok_clear_324", "Content-Type": "application/json", "Content-Length": str(len(cb))},
+            )
+        self.assertEqual(st_c, 200)
+        sys_txt = captured_sys[0]
+        self.assertIn("Имя: Ольга", sys_txt)
+        for cleared_marker in ("рост 170", "возраст 27", "пол женский", "Показатели тела:", "Цель:", "Уровень подготовки:", "Ограничения", "Активная программа:"):
+            self.assertNotIn(cleared_marker, sys_txt)
+
+    def test_privacy_notice_and_no_profile_data_in_ai_logs(self):
+        """UI shows external AI privacy notice + unique day counter; server logs never leak extended profile data."""
+        import io
+        import os
+
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "site", "app.js"), encoding="utf-8") as f:
+            js_src = f.read()
+        self.assertIn("countProgramUniqueDays(", js_src)
+        self.assertIn("внешнему AI-провайдеру", js_src)
+        self.assertEqual(js_src.count("fp-privacy-note"), 2)
+
+        _create_user_with_state(
+            325,
+            "log_privacy_user",
+            display_name="Тимур Лог",
+            token="tok_log_325",
+            state_obj={
+                "fitnessProfile": json.dumps({
+                    "heightCm": 179,
+                    "age": 38,
+                    "sex": "male",
+                    "goal": "health",
+                    "level": "beginner",
+                    "injuries": "СекретнаяТравмаКолена",
+                }, ensure_ascii=False),
+                "bodyMetrics": json.dumps({"target": 72, "logs": [{"d": "2026-11-25", "w": 88.8}]}),
+            },
+        )
+        server.reset_gemini_cooldown()
+        self.addCleanup(server.reset_gemini_cooldown)
+
+        calls = []
+
+        def fake_http_json(req, timeout=40):
+            calls.append(1)
+            if len(calls) <= 2:
+                raise server.AIProviderError("503", status_code=503, reason="overloaded", fallback_allowed=True)
+            return {"candidates": [{"content": {"parts": [{"text": "Ответ"}]}}]}
+
+        err_buf = io.StringIO()
+        cb = json.dumps({"message": "Дай совет", "reqId": "log_priv_1"}).encode("utf-8")
+        with patch.object(server, "ai_cfg", return_value=_gemini_cfg()), \
+             patch.object(server.time, "sleep", return_value=None), \
+             patch.object(server, "http_json", side_effect=fake_http_json), \
+             patch.object(server.sys, "stderr", err_buf):
+            st, _, _ = invoke_handler(
+                "POST", "/api/coach", body=cb,
+                headers={"Authorization": "Bearer tok_log_325", "Content-Type": "application/json", "Content-Length": str(len(cb))},
+            )
+
+        self.assertEqual(st, 200)
+        logged = err_buf.getvalue()
+        self.assertIn("[AI_COACH]", logged)
+        for sensitive in ("СекретнаяТравмаКолена", "Тимур Лог", "179", "38", "88.8", "fitnessProfile"):
+            self.assertNotIn(sensitive, logged)
