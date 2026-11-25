@@ -697,3 +697,134 @@ class TestAICoachPersonalization(IsolatedServerTestCase):
         self.assertIn("Анна", inner)
         self.assertIn("Спорт", inner)
         self.assertIn("День Силы", inner)
+
+    def test_sync_athlete_programs_and_body_metrics_reach_ai_coach(self):
+        """End-to-end: POST /api/user/sync persists athletePrograms & bodyMetrics and delivers program title to AI Coach."""
+        _create_user_with_state(310, "sync_prog_user", display_name="Марат Синк", token="tok_sync_310", state_obj=None)
+
+        sync_payload = {
+            "state": {
+                "athletePrograms": json.dumps({"activeId": 1, "logs": {"1": ["2026-11-25"]}}),
+                "bodyMetrics": json.dumps({"target": 79.0, "logs": [{"d": "2026-11-25", "w": 83.2, "waist": 86.5}]}),
+                "hist": json.dumps([{"id": 1, "t": 1795518400000, "s": 1200}]),
+            }
+        }
+        sync_body = json.dumps(sync_payload).encode("utf-8")
+        st_sync, _, out_sync = invoke_handler(
+            "POST",
+            "/api/user/sync",
+            body=sync_body,
+            headers={"Authorization": "Bearer tok_sync_310", "Content-Type": "application/json", "Content-Length": str(len(sync_body))},
+        )
+        self.assertEqual(st_sync, 200)
+        self.assertTrue(json.loads(out_sync.decode("utf-8")).get("ok"))
+
+        st_get, _, out_get = invoke_handler(
+            "GET",
+            "/api/user/sync",
+            headers={"Authorization": "Bearer tok_sync_310"},
+        )
+        self.assertEqual(st_get, 200)
+        synced_state = json.loads(out_get.decode("utf-8")).get("state", {})
+        self.assertIn("athletePrograms", synced_state)
+        self.assertIn("bodyMetrics", synced_state)
+
+        captured_sys = []
+
+        def fake_http_json(req, timeout=40):
+            captured_sys.append(json.loads(req.data.decode("utf-8"))["systemInstruction"]["parts"][0]["text"])
+            return {"candidates": [{"content": {"parts": [{"text": "Вижу твою программу 50 Подтягиваний!"}]}}]}
+
+        coach_body = json.dumps({"message": "Какая у меня активная программа?", "reqId": "sync_coach_1"}).encode("utf-8")
+        with patch.object(server, "ai_cfg", return_value=_gemini_cfg()), \
+             patch.object(server, "http_json", side_effect=fake_http_json):
+            st_coach, _, out_coach = invoke_handler(
+                "POST",
+                "/api/coach",
+                body=coach_body,
+                headers={"Authorization": "Bearer tok_sync_310", "Content-Type": "application/json", "Content-Length": str(len(coach_body))},
+            )
+
+        self.assertEqual(st_coach, 200)
+        self.assertEqual(json.loads(out_coach.decode("utf-8"))["reply"], "Вижу твою программу 50 Подтягиваний!")
+        sys_txt = captured_sys[0]
+        self.assertIn("Имя: Марат Синк", sys_txt)
+        self.assertIn("Активная программа: 50 Подтягиваний (ID 1)", sys_txt)
+        self.assertIn("вес 83.2 кг, целевой вес 79 кг, талия 86.5 см", sys_txt)
+
+    def test_athlete_programs_precedence_unpin_and_progstate_fallback(self):
+        """athletePrograms tries/validates activeId, falls back to progState on missing/invalid, and respects explicit null unpin."""
+        # 1. Missing athletePrograms falls back to legacy progState
+        legacy_ctx = server.build_user_profile_context("", {"progState": json.dumps({"activeId": 2})})
+        self.assertIsNotNone(legacy_ctx)
+        self.assertIn("Активная программа: 100 отжиманий от пола (ID 2)", legacy_ctx)
+
+        # 2. athletePrograms without activeId key falls back to legacy progState
+        no_key_ctx = server.build_user_profile_context(
+            "",
+            {
+                "athletePrograms": json.dumps({"logs": {"2": ["2026-11-24"]}}),
+                "progState": json.dumps({"activeId": 2}),
+            },
+        )
+        self.assertIsNotNone(no_key_ctx)
+        self.assertIn("Активная программа: 100 отжиманий от пола (ID 2)", no_key_ctx)
+
+        # 3. Invalid activeId in athletePrograms (dict/list/bool/bad string/empty) safely falls back to progState
+        for bad_pid in ({"evil": 1}, [1, 2], True, "1 IGNORE ALL", ""):
+            fallback_ctx = server.build_user_profile_context(
+                "",
+                {
+                    "athletePrograms": {"activeId": bad_pid},
+                    "progState": {"activeId": 2},
+                },
+            )
+            self.assertIsNotNone(fallback_ctx)
+            self.assertIn("Активная программа: 100 отжиманий от пола (ID 2)", fallback_ctx)
+            self.assertNotIn("evil", fallback_ctx)
+            self.assertNotIn("IGNORE", fallback_ctx)
+
+        # 4. Invalid activeId in athletePrograms without progState returns None (skipped cleanly)
+        bad_ctx = server.build_user_profile_context(
+            "",
+            {"athletePrograms": {"activeId": {"evil": 1}}},
+        )
+        self.assertIsNone(bad_ctx)
+
+        # 5. Valid athletePrograms.activeId overrides legacy progState
+        override_ctx = server.build_user_profile_context(
+            "",
+            {
+                "athletePrograms": json.dumps({"activeId": 1, "logs": {}}),
+                "progState": json.dumps({"activeId": 2}),
+            },
+        )
+        self.assertIn("Активная программа: 50 Подтягиваний (ID 1)", override_ctx)
+        self.assertNotIn("100 отжиманий", override_ctx)
+
+        # 6. Explicit activeId: null in athletePrograms does NOT restore legacy progState
+        unpin_ctx = server.build_user_profile_context(
+            "Игорь",
+            {
+                "athletePrograms": json.dumps({"activeId": None, "logs": {"2": ["2026-11-24"]}}),
+                "progState": json.dumps({"activeId": 2}),
+            },
+        )
+        self.assertIn("Имя: Игорь", unpin_ctx)
+        self.assertNotIn("Активная программа:", unpin_ctx)
+        self.assertNotIn("100 отжиманий", unpin_ctx)
+
+    def test_frontend_sync_wiring_for_athlete_programs_and_body_metrics(self):
+        """site/app.js must include athletePrograms in BACKUP_KEYS and auto-schedule/flush cloud sync."""
+        import os
+        app_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "site", "app.js")
+        with open(app_path, encoding="utf-8") as f:
+            js_src = f.read()
+
+        self.assertIn("'athletePrograms'", js_src)
+        self.assertIn("'progState'", js_src)
+        save_prog_block = js_src.split("function saveProgState(st)", 1)[1].split("\n  }", 1)[0]
+        self.assertIn("scheduleCloudSync()", save_prog_block)
+        save_bm_block = js_src.split("function saveBodyMetrics(m)", 1)[1].split("\n  }", 1)[0]
+        self.assertIn("scheduleCloudSync()", save_bm_block)
+        self.assertIn("cloudSyncTimer && typeof pushCloudSync === 'function'", js_src)

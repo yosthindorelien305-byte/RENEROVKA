@@ -17,8 +17,8 @@ DB_FILE = os.path.join(SECRET_DIR, 'flexa.db')
 PASS_TXT = os.path.join(ROOT, 'ADMIN_PASSWORD.txt')
 SYNC_KEYS = {
     'hist', 'prs', 'exLogs', 'weekPlan', 'accentTheme', 'customWorkouts',
-    'progState', 'athleteProfile', 'favs', 'freezeState', 'bodyMetrics',
-    'audioCfg', 'restPreset', 'duels', 'coopQuest', 'notifPrefs'
+    'athletePrograms', 'progState', 'athleteProfile', 'favs', 'freezeState',
+    'bodyMetrics', 'audioCfg', 'restPreset', 'duels', 'coopQuest', 'notifPrefs'
 }
 db_lock = threading.Lock()
 PORT = int(os.environ.get('PORT', 8080))
@@ -1406,9 +1406,19 @@ def build_user_profile_context(display_name, state_json_raw):
             parts.append('Показатели тела: ' + ', '.join(metric_items))
 
     progs_map, wos_map = ({}, {})
-    ps = _parse_state_value(state, 'progState')
+    ps_primary = _parse_state_value(state, 'athletePrograms')
+    ps_legacy = _parse_state_value(state, 'progState')
     hist = _parse_state_value(state, 'hist')
-    pid_txt = _sanitize_profile_id(ps.get('activeId'), max_len=32) if isinstance(ps, dict) else ''
+    pid_txt = ''
+    explicit_unpin = False
+    if isinstance(ps_primary, dict) and 'activeId' in ps_primary:
+        raw_primary_pid = ps_primary.get('activeId')
+        if raw_primary_pid is None:
+            explicit_unpin = True
+        else:
+            pid_txt = _sanitize_profile_id(raw_primary_pid, max_len=32)
+    if not pid_txt and not explicit_unpin and isinstance(ps_legacy, dict):
+        pid_txt = _sanitize_profile_id(ps_legacy.get('activeId'), max_len=32)
     has_prog = bool(pid_txt)
     has_hist = isinstance(hist, list) and any(isinstance(x, dict) for x in hist)
     if has_prog or has_hist:

@@ -549,7 +549,7 @@
 
   function getProgState() {
     let raw = {};
-    try { raw = JSON.parse(localStorage.athletePrograms || '{}'); } catch (e) {}
+    try { raw = JSON.parse(localStorage.athletePrograms || localStorage.progState || '{}'); } catch (e) {}
     return {
       activeId: raw.activeId || null,
       logs: raw.logs && typeof raw.logs === 'object' ? raw.logs : {}
@@ -557,6 +557,7 @@
   }
   function saveProgState(st) {
     localStorage.athletePrograms = JSON.stringify({ activeId: st.activeId || null, logs: st.logs || {} });
+    if (typeof scheduleCloudSync === 'function') scheduleCloudSync();
   }
   const eqLbl = v => ui('wft_eq_' + v) === 'wft_eq_' + v ? v : ui('wft_eq_' + v);
   const lvlLbl = v => t(v) === v ? v : t(v);
@@ -779,6 +780,7 @@
   }
   function saveBodyMetrics(m) {
     localStorage.bodyMetrics = JSON.stringify(m || { target: null, logs: [] });
+    if (typeof scheduleCloudSync === 'function') scheduleCloudSync();
   }
 
   function renderActivityChartHtml(allH, days = 7) {
@@ -997,7 +999,7 @@
       </div>`;
   }
 
-  const BACKUP_KEYS = ['hist', 'prs', 'exLogs', 'weekPlan', 'accentTheme', 'customWorkouts', 'progState', 'athleteProfile', 'favs', 'freezeState', 'bodyMetrics', 'audioCfg', 'restPreset', 'duels', 'coopQuest', 'notifPrefs'];
+  const BACKUP_KEYS = ['hist', 'prs', 'exLogs', 'weekPlan', 'accentTheme', 'customWorkouts', 'athletePrograms', 'progState', 'athleteProfile', 'favs', 'freezeState', 'bodyMetrics', 'audioCfg', 'restPreset', 'duels', 'coopQuest', 'notifPrefs'];
   function collectLocalState() {
     const data = {};
     BACKUP_KEYS.forEach(k => {
@@ -1064,6 +1066,10 @@
   }
   let cloudSyncTimer = null;
   async function pushCloudSync() {
+    if (cloudSyncTimer) {
+      clearTimeout(cloudSyncTimer);
+      cloudSyncTimer = null;
+    }
     const tok = localStorage.userToken;
     if (!tok) return false;
     if (isLocalToken(tok)) {
@@ -1125,10 +1131,18 @@
       if (j.user) saveUserMeta(j.user);
       const srvTs = +(j.updatedAt || 0);
       const locTs = +(localStorage.cloudSyncTs || 0);
+      const hasMissingProfileSync = srvTs > 0 && j.state && (
+        (!j.state.athletePrograms && localStorage.athletePrograms !== undefined)
+        || (!j.state.bodyMetrics && localStorage.bodyMetrics !== undefined)
+      );
       if (srvTs > 0 && (force || srvTs > locTs) && j.state && Object.keys(j.state).length) {
         applyServerState(j.state, srvTs);
+        if (hasMissingProfileSync) scheduleCloudSync();
         render();
         return true;
+      }
+      if (hasMissingProfileSync) {
+        scheduleCloudSync();
       }
       if (srvTs === 0 && Object.keys(collectLocalState()).length) {
         await pushCloudSync();
@@ -4272,6 +4286,10 @@
         }
         try {
           const uTok = localStorage.userToken || '';
+          if (uTok && typeof isLocalToken === 'function' && !isLocalToken(uTok) && cloudSyncTimer && typeof pushCloudSync === 'function') {
+            await pushCloudSync().catch(() => false);
+            if (mySeq !== coachReqSeq || myStorageKey !== getCoachStorageKey()) return;
+          }
           const headers = { 'Content-Type': 'application/json' };
           if (uTok && typeof isLocalToken === 'function' && !isLocalToken(uTok)) {
             headers['Authorization'] = 'Bearer ' + uTok;
