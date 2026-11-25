@@ -1556,22 +1556,24 @@ def build_user_profile_context(display_name, state_json_raw):
         w_val = None
         waist_val = None
         valid_weights = []
+        weight_cleared = (bm.get('currentWeightCleared') is True)
         logs = bm.get('logs')
         if isinstance(logs, list):
-            for entry in logs:
-                if not isinstance(entry, dict):
-                    continue
-                ew = _parse_bounded_num(entry.get('w'), 20, 400)
-                if ew is not None:
-                    valid_weights.append((_format_hist_date(entry.get('d')), float(ew), ew))
+            if not weight_cleared:
+                for entry in logs:
+                    if not isinstance(entry, dict):
+                        continue
+                    ew = _parse_bounded_num(entry.get('w'), 20, 400)
+                    if ew is not None:
+                        valid_weights.append((_format_hist_date(entry.get('d')), float(ew), ew))
             for entry in reversed(logs):
                 if not isinstance(entry, dict):
                     continue
-                if w_val is None:
+                if not weight_cleared and w_val is None:
                     w_val = _parse_bounded_num(entry.get('w'), 20, 400)
                 if waist_val is None:
                     waist_val = _parse_bounded_num(entry.get('waist'), 35, 250)
-                if w_val is not None and waist_val is not None:
+                if (weight_cleared or w_val is not None) and waist_val is not None:
                     break
         target_val = _parse_bounded_num(bm.get('target'), 20, 400)
         if w_val is not None:

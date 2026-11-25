@@ -1283,3 +1283,144 @@ class TestAICoachPersonalization(IsolatedServerTestCase):
         self.assertIn("[AI_COACH]", logged)
         for sensitive in ("СекретнаяТравмаКолена", "Тимур Лог", "179", "38", "88.8", "fitnessProfile"):
             self.assertNotIn(sensitive, logged)
+
+    def test_clearing_current_weight_preserves_history_and_hides_from_ai_coach(self):
+        """Clearing current weight must keep historical logs intact, omit weight in AI Coach, and allow restoring later."""
+        import os
+
+        _create_user_with_state(326, "weight_hist_user", display_name="Ирина", token="tok_whist_326", state_obj=None)
+
+        historical_logs = [
+            {"d": "2026-11-01", "w": 84.0},
+            {"d": "2026-11-12", "w": 82.8},
+            {"d": "2026-11-25", "w": 81.5, "waist": 85},
+        ]
+        init_payload = json.dumps({
+            "state": {
+                "bodyMetrics": json.dumps({"target": 75, "logs": historical_logs}),
+            }
+        }).encode("utf-8")
+        st_init, _, _ = invoke_handler(
+            "POST", "/api/user/sync", body=init_payload,
+            headers={"Authorization": "Bearer tok_whist_326", "Content-Type": "application/json", "Content-Length": str(len(init_payload))},
+        )
+        self.assertEqual(st_init, 200)
+
+        # User clears current weight: logs history stays untouched, currentWeightCleared=True
+        cleared_bm = {"target": 75, "logs": historical_logs, "currentWeightCleared": True}
+        cleared_payload = json.dumps({
+            "state": {
+                "bodyMetrics": json.dumps(cleared_bm),
+            }
+        }).encode("utf-8")
+        st_clr, _, _ = invoke_handler(
+            "POST", "/api/user/sync", body=cleared_payload,
+            headers={"Authorization": "Bearer tok_whist_326", "Content-Type": "application/json", "Content-Length": str(len(cleared_payload))},
+        )
+        self.assertEqual(st_clr, 200)
+
+        st_get, _, out_get = invoke_handler("GET", "/api/user/sync", headers={"Authorization": "Bearer tok_whist_326"})
+        self.assertEqual(st_get, 200)
+        srv_bm = json.loads(json.loads(out_get.decode("utf-8"))["state"]["bodyMetrics"])
+        self.assertIs(srv_bm.get("currentWeightCleared"), True)
+        self.assertEqual(srv_bm["logs"], historical_logs)
+        self.assertEqual(srv_bm["target"], 75)
+
+        captured_sys = []
+
+        def fake_http_json(req, timeout=40):
+            captured_sys.append(json.loads(req.data.decode("utf-8"))["systemInstruction"]["parts"][0]["text"])
+            return {"candidates": [{"content": {"parts": [{"text": "Понял, текущий вес скрыт."}]}}]}
+
+        cb = json.dumps({"message": "Какой у меня вес?", "reqId": "whist_1"}).encode("utf-8")
+        with patch.object(server, "ai_cfg", return_value=_gemini_cfg()), \
+             patch.object(server, "http_json", side_effect=fake_http_json):
+            st_c, _, _ = invoke_handler(
+                "POST", "/api/coach", body=cb,
+                headers={"Authorization": "Bearer tok_whist_326", "Content-Type": "application/json", "Content-Length": str(len(cb))},
+            )
+        self.assertEqual(st_c, 200)
+        sys_cleared = captured_sys[0]
+        profile_block = sys_cleared[sys_cleared.rfind("<user_profile_data>"):]
+        self.assertNotIn("81.5", profile_block)
+        self.assertNotIn("82.8", profile_block)
+        self.assertNotIn("84", profile_block)
+        self.assertNotIn("вес 81.5", sys_cleared)
+        self.assertNotIn("динамика", sys_cleared)
+        self.assertIn("целевой вес 75 кг", profile_block)
+        self.assertIn("талия 85 см", profile_block)
+
+        # Without target or waist, Показатели тела section is omitted completely even when logs exist
+        only_weight_cleared_ctx = server.build_user_profile_context(
+            "Ирина",
+            {
+                "bodyMetrics": {
+                    "target": None,
+                    "logs": [{"d": "2026-11-01", "w": 84.0}, {"d": "2026-11-25", "w": 81.5}],
+                    "currentWeightCleared": True,
+                }
+            },
+        )
+        self.assertIn("Имя: Ирина", only_weight_cleared_ctx)
+        self.assertNotIn("Показатели тела:", only_weight_cleared_ctx)
+        self.assertNotIn("81.5", only_weight_cleared_ctx)
+
+        # Restoring a new weight resumes weight + multi-entry trend across preserved history
+        restored_logs = historical_logs + [{"d": "2026-11-26", "w": 80.5}]
+        restored_payload = json.dumps({
+            "state": {
+                "bodyMetrics": json.dumps({"target": 75, "logs": restored_logs}),
+            }
+        }).encode("utf-8")
+        st_res, _, _ = invoke_handler(
+            "POST", "/api/user/sync", body=restored_payload,
+            headers={"Authorization": "Bearer tok_whist_326", "Content-Type": "application/json", "Content-Length": str(len(restored_payload))},
+        )
+        self.assertEqual(st_res, 200)
+
+        cb2 = json.dumps({"message": "А теперь какой вес?", "reqId": "whist_2"}).encode("utf-8")
+        with patch.object(server, "ai_cfg", return_value=_gemini_cfg()), \
+             patch.object(server, "http_json", side_effect=fake_http_json):
+            st_c2, _, _ = invoke_handler(
+                "POST", "/api/coach", body=cb2,
+                headers={"Authorization": "Bearer tok_whist_326", "Content-Type": "application/json", "Content-Length": str(len(cb2))},
+            )
+        self.assertEqual(st_c2, 200)
+        sys_restored = captured_sys[1]
+        self.assertIn("вес 80.5 кг (динамика -3.5 кг за 4 зам.)", sys_restored)
+
+        # Backward compatibility & strict boolean check for currentWeightCleared
+        legacy_ctx = server.build_user_profile_context(
+            "Лев",
+            {"bodyMetrics": {"target": 70, "logs": [{"d": "2026-11-20", "w": 74.2}]}},
+        )
+        self.assertIn("вес 74.2 кг", legacy_ctx)
+        non_bool_ctx = server.build_user_profile_context(
+            "Лев",
+            {"bodyMetrics": {"target": 70, "logs": [{"d": "2026-11-20", "w": 74.2}], "currentWeightCleared": "true"}},
+        )
+        self.assertIn("вес 74.2 кг", non_bool_ctx)
+
+        # Frontend static checks: bm.logs = [] removed; helpers & flag wired everywhere
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "site", "app.js"), encoding="utf-8") as f:
+            js_src = f.read()
+        self.assertNotIn("bm.logs = []", js_src)
+        self.assertIn("function getCurrentBodyWeight(bm)", js_src)
+        self.assertIn("function getLatestBodyWaist(bm)", js_src)
+        self.assertIn("currentWeightCleared", js_src)
+        for fn_marker in (
+            "function getBodyMetrics()",
+            "function saveBodyMetrics(m)",
+            "function renderBodyMetricsCard()",
+            "function renderFitnessProfileCard()",
+            "id=\"body-log-btn\"",
+            "id=\"fp-edit-btn\"",
+        ):
+            self.assertIn(fn_marker, js_src)
+        fp_save_block = js_src.split("bd.querySelector('#fp-save').onclick = () => {", 1)[1].split("showAppToast(", 1)[0]
+        self.assertIn("bm.currentWeightCleared = true", fp_save_block)
+        self.assertIn("delete bm.currentWeightCleared", fp_save_block)
+        bm_save_block = js_src.split("bd.querySelector('#bm-save').onclick = () => {", 1)[1].split("if (fpEditBtn)", 1)[0]
+        self.assertIn("bm.currentWeightCleared = true", bm_save_block)
+        self.assertIn("delete bm.currentWeightCleared", bm_save_block)

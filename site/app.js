@@ -791,17 +791,40 @@
   function getBodyMetrics() {
     try {
       const m = JSON.parse(localStorage.bodyMetrics || '{}');
-      return {
+      const res = {
         target: typeof m.target === 'number' ? m.target : null,
         logs: Array.isArray(m.logs) ? m.logs : []
       };
+      if (m && m.currentWeightCleared === true) res.currentWeightCleared = true;
+      return res;
     } catch (e) {
       return { target: null, logs: [] };
     }
   }
   function saveBodyMetrics(m) {
-    localStorage.bodyMetrics = JSON.stringify(m || { target: null, logs: [] });
+    const out = {
+      target: m && typeof m.target === 'number' ? m.target : null,
+      logs: m && Array.isArray(m.logs) ? m.logs : []
+    };
+    if (m && m.currentWeightCleared === true) out.currentWeightCleared = true;
+    localStorage.bodyMetrics = JSON.stringify(out);
     if (typeof scheduleCloudSync === 'function') scheduleCloudSync();
+  }
+  function getCurrentBodyWeight(bm) {
+    if (!bm || bm.currentWeightCleared === true || !Array.isArray(bm.logs)) return null;
+    for (let i = bm.logs.length - 1; i >= 0; i--) {
+      const entry = bm.logs[i];
+      if (entry && typeof entry.w === 'number' && isFinite(entry.w) && entry.w > 0) return entry.w;
+    }
+    return null;
+  }
+  function getLatestBodyWaist(bm) {
+    if (!bm || !Array.isArray(bm.logs)) return null;
+    for (let i = bm.logs.length - 1; i >= 0; i--) {
+      const entry = bm.logs[i];
+      if (entry && typeof entry.waist === 'number' && isFinite(entry.waist) && entry.waist > 0) return entry.waist;
+    }
+    return null;
   }
 
   const FITNESS_GOALS = [
@@ -972,12 +995,15 @@
   function renderBodyMetricsCard() {
     const bm = getBodyMetrics();
     const logs = bm.logs;
-    const latest = logs.length ? logs[logs.length - 1] : null;
-    const prev = logs.length > 1 ? logs[logs.length - 2] : null;
-    const delta = latest && prev ? +(latest.w - prev.w).toFixed(1) : null;
+    const weightLogs = logs.filter(p => p && typeof p.w === 'number' && isFinite(p.w) && p.w > 0);
+    const curW = getCurrentBodyWeight(bm);
+    const latestWaist = getLatestBodyWaist(bm);
+    const delta = (curW !== null && weightLogs.length > 1)
+      ? +(weightLogs[weightLogs.length - 1].w - weightLogs[weightLogs.length - 2].w).toFixed(1)
+      : null;
     let spark = '';
-    if (logs.length >= 2) {
-      const pts = logs.slice(-12);
+    if (weightLogs.length >= 2) {
+      const pts = weightLogs.slice(-12);
       const ws = pts.map(p => p.w);
       const minW = Math.min(...ws), maxW = Math.max(...ws);
       const span = Math.max(0.5, maxW - minW);
@@ -988,6 +1014,16 @@
       }).join(' ');
       spark = `<svg class="body-spark" viewBox="0 0 120 32" fill="none"><polyline points="${poly}" stroke="#2DD4BF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
     }
+    let subLead = '';
+    if (bm.currentWeightCleared && logs.length) {
+      subLead = L == 'ru' ? `История: ${logs.length} зам.` : `History: ${logs.length} logs`;
+    } else if (delta !== null) {
+      subLead = `<span style="color:${delta <= 0 ? 'var(--green)' : 'var(--ac-l)'};font-weight:700;">${delta > 0 ? '+' : ''}${delta} ${L == 'ru' ? 'кг' : 'kg'}</span>`;
+    } else if (logs.length) {
+      subLead = L == 'ru' ? `История: ${logs.length} зам.` : `History: ${logs.length} logs`;
+    } else {
+      subLead = L == 'ru' ? 'Нет записей' : 'No logs yet';
+    }
     return `
       <div class="ss-card prof-body">
         <div class="ss-card-title">
@@ -996,11 +1032,11 @@
         </div>
         <div class="body-kpi-row">
           <div>
-            <div class="body-val">${latest ? latest.w + ' <small>' + (L == 'ru' ? 'кг' : 'kg') + '</small>' : '—'}</div>
+            <div class="body-val">${curW !== null ? curW + ' <small>' + (L == 'ru' ? 'кг' : 'kg') + '</small>' : '—'}</div>
             <div class="body-sub">
-              ${delta !== null ? `<span style="color:${delta <= 0 ? 'var(--green)' : 'var(--ac-l)'};font-weight:700;">${delta > 0 ? '+' : ''}${delta} ${L == 'ru' ? 'кг' : 'kg'}</span>` : (L == 'ru' ? 'Нет записей' : 'No logs yet')}
+              ${subLead}
               ${bm.target ? ` · ${L == 'ru' ? 'Цель' : 'Goal'}: ${bm.target}` : ''}
-              ${latest && latest.waist ? ` · ${L == 'ru' ? 'Талия' : 'Waist'}: ${latest.waist}` : ''}
+              ${latestWaist ? ` · ${L == 'ru' ? 'Талия' : 'Waist'}: ${latestWaist}` : ''}
             </div>
           </div>
           ${spark}
@@ -1012,14 +1048,14 @@
     const fp = getFitnessProfile();
     const bm = getBodyMetrics();
     const ps = getProgState();
-    const latest = bm.logs.length ? bm.logs[bm.logs.length - 1] : null;
+    const curW = getCurrentBodyWeight(bm);
     const goalMeta = FITNESS_GOALS.find(g => g.id === fp.goal);
     const levelMeta = FITNESS_LEVELS.find(l => l.id === fp.level);
     const sexMeta = FITNESS_SEX_OPTS.find(s => s.id === fp.sex);
     const filledChecks = [
       Boolean(fp.heightCm),
       Boolean(fp.age),
-      Boolean(latest && latest.w > 0),
+      Boolean(curW && curW > 0),
       Boolean(bm.target && bm.target > 0),
       Boolean(goalMeta),
       Boolean(levelMeta),
@@ -1028,14 +1064,14 @@
     const filledCnt = filledChecks.filter(Boolean).length;
     const totChecks = filledChecks.length;
     const pct = Math.round((filledCnt / totChecks) * 100);
-    const bmi = (fp.heightCm && latest && latest.w > 0)
-      ? (latest.w / Math.pow(fp.heightCm / 100, 2)).toFixed(1)
+    const bmi = (fp.heightCm && curW && curW > 0)
+      ? (curW / Math.pow(fp.heightCm / 100, 2)).toFixed(1)
       : '';
     const emptyLbl = '—';
     const items = [
       { lbl: L == 'ru' ? 'Рост' : 'Height', val: fp.heightCm ? `${fp.heightCm} ${L == 'ru' ? 'см' : 'cm'}` : emptyLbl, empty: !fp.heightCm },
       { lbl: L == 'ru' ? 'Возраст' : 'Age', val: fp.age ? `${fp.age}` : emptyLbl, empty: !fp.age },
-      { lbl: L == 'ru' ? 'Текущий вес' : 'Current weight', val: latest ? `${latest.w} ${L == 'ru' ? 'кг' : 'kg'}${bmi ? ` (ИМТ ${bmi})` : ''}` : emptyLbl, empty: !latest },
+      { lbl: L == 'ru' ? 'Текущий вес' : 'Current weight', val: curW !== null ? `${curW} ${L == 'ru' ? 'кг' : 'kg'}${bmi ? ` (ИМТ ${bmi})` : ''}` : emptyLbl, empty: curW === null },
       { lbl: L == 'ru' ? 'Целевой вес' : 'Target weight', val: bm.target ? `${bm.target} ${L == 'ru' ? 'кг' : 'kg'}` : emptyLbl, empty: !bm.target },
       { lbl: L == 'ru' ? 'Цель' : 'Goal', val: goalMeta ? (L == 'ru' ? goalMeta.ru : goalMeta.en) : emptyLbl, empty: !goalMeta },
       { lbl: L == 'ru' ? 'Уровень' : 'Level', val: levelMeta ? (L == 'ru' ? levelMeta.ru : levelMeta.en) : emptyLbl, empty: !levelMeta }
@@ -5073,15 +5109,16 @@
       if (bodyLogBtn) bodyLogBtn.onclick = () => {
         vib(20);
         const bm = getBodyMetrics();
-        const latest = bm.logs.length ? bm.logs[bm.logs.length - 1] : null;
+        const curW = getCurrentBodyWeight(bm);
+        const latestWaist = getLatestBodyWaist(bm);
         const bd = document.createElement('div');
         bd.className = 'ap-modal-backdrop';
         bd.innerHTML = `
           <div class="ap-modal">
             <h3>${L == 'ru' ? 'Запись веса и замеров' : 'Log Body Weight'}</h3>
-            <label>${L == 'ru' ? 'Текущий вес (кг)' : 'Current weight (kg)'}<input id="bm-w" type="number" step="0.1" min="25" max="300" value="${latest ? latest.w : ''}"></label>
+            <label>${L == 'ru' ? 'Текущий вес (кг)' : 'Current weight (kg)'}<input id="bm-w" type="number" step="0.1" min="25" max="300" value="${curW !== null ? curW : ''}"></label>
             <label>${L == 'ru' ? 'Целевой вес (кг, необязательно)' : 'Target weight (kg, optional)'}<input id="bm-t" type="number" step="0.1" min="25" max="300" value="${bm.target || ''}"></label>
-            <label>${L == 'ru' ? 'Талия (см, необязательно)' : 'Waist (cm, optional)'}<input id="bm-waist" type="number" step="0.5" min="40" max="200" value="${latest && latest.waist ? latest.waist : ''}"></label>
+            <label>${L == 'ru' ? 'Талия (см, необязательно)' : 'Waist (cm, optional)'}<input id="bm-waist" type="number" step="0.5" min="40" max="200" value="${latestWaist !== null ? latestWaist : ''}"></label>
             <div class="ap-modal-actions">
               <button type="button" class="btn alt" id="bm-cancel">${L == 'ru' ? 'Отмена' : 'Cancel'}</button>
               <button type="button" class="btn" id="bm-save">${L == 'ru' ? 'Сохранить' : 'Save'}</button>
@@ -5091,17 +5128,21 @@
         bd.onclick = ev => { if (ev.target === bd) bd.remove(); };
         bd.querySelector('#bm-cancel').onclick = () => bd.remove();
         bd.querySelector('#bm-save').onclick = () => {
-          const wVal = parseFloat(bd.querySelector('#bm-w').value);
+          const rawW = bd.querySelector('#bm-w').value.trim();
+          const wVal = parseFloat(rawW);
           const tVal = parseFloat(bd.querySelector('#bm-t').value);
           const waistVal = parseFloat(bd.querySelector('#bm-waist').value);
           if (!isNaN(wVal) && wVal > 0) {
             const iso = new Date().toISOString().slice(0, 10);
             const entry = { d: iso, w: +wVal.toFixed(1) };
             if (!isNaN(waistVal) && waistVal > 0) entry.waist = +waistVal.toFixed(1);
-            const idx = bm.logs.findIndex(x => x.d === iso);
+            const idx = bm.logs.findIndex(x => x && x.d === iso);
             if (idx >= 0) bm.logs[idx] = entry;
             else bm.logs.push(entry);
             if (bm.logs.length > 60) bm.logs = bm.logs.slice(-60);
+            delete bm.currentWeightCleared;
+          } else if (rawW === '' && bm.logs.length) {
+            bm.currentWeightCleared = true;
           }
           bm.target = !isNaN(tVal) && tVal > 0 ? +tVal.toFixed(1) : null;
           saveBodyMetrics(bm);
@@ -5116,7 +5157,7 @@
         vib(20);
         const fp = getFitnessProfile();
         const bm = getBodyMetrics();
-        const latest = bm.logs.length ? bm.logs[bm.logs.length - 1] : null;
+        const curW = getCurrentBodyWeight(bm);
         let selSex = fp.sex || 'unspecified';
         let selGoal = fp.goal || '';
         let selLevel = fp.level || '';
@@ -5128,7 +5169,7 @@
             <div class="fp-modal-grid">
               <label>${L == 'ru' ? 'Рост (см)' : 'Height (cm)'}<input id="fp-h" type="number" step="0.5" min="100" max="250" value="${fp.heightCm || ''}" placeholder="178"></label>
               <label>${L == 'ru' ? 'Возраст (лет)' : 'Age'}<input id="fp-age" type="number" step="1" min="12" max="100" value="${fp.age || ''}" placeholder="28"></label>
-              <label>${L == 'ru' ? 'Текущий вес (кг)' : 'Current weight (kg)'}<input id="fp-w" type="number" step="0.1" min="20" max="400" value="${latest ? latest.w : ''}" placeholder="80"></label>
+              <label>${L == 'ru' ? 'Текущий вес (кг)' : 'Current weight (kg)'}<input id="fp-w" type="number" step="0.1" min="20" max="400" value="${curW !== null ? curW : ''}" placeholder="80"></label>
               <label>${L == 'ru' ? 'Целевой вес (кг)' : 'Target weight (kg)'}<input id="fp-tw" type="number" step="0.1" min="20" max="400" value="${bm.target || ''}" placeholder="75"></label>
             </div>
             <div style="margin-top:10px">
@@ -5194,17 +5235,22 @@
 
           let bmChanged = false;
           if (!isNaN(wVal) && wVal >= 20 && wVal <= 400) {
-            const iso = new Date().toISOString().slice(0, 10);
-            const prevWaist = latest && latest.d === iso && latest.waist ? latest.waist : null;
-            const entry = { d: iso, w: +wVal.toFixed(1) };
-            if (prevWaist) entry.waist = prevWaist;
-            const idx = bm.logs.findIndex(x => x.d === iso);
-            if (idx >= 0) bm.logs[idx] = entry;
-            else bm.logs.push(entry);
-            if (bm.logs.length > 60) bm.logs = bm.logs.slice(-60);
-            bmChanged = true;
-          } else if (rawW === '' && bm.logs.length) {
-            bm.logs = [];
+            const roundedW = +wVal.toFixed(1);
+            if (roundedW !== curW || bm.currentWeightCleared) {
+              const iso = new Date().toISOString().slice(0, 10);
+              const existingToday = bm.logs.find(x => x && x.d === iso);
+              const prevWaist = existingToday && existingToday.waist ? existingToday.waist : null;
+              const entry = { d: iso, w: roundedW };
+              if (prevWaist) entry.waist = prevWaist;
+              const idx = bm.logs.findIndex(x => x && x.d === iso);
+              if (idx >= 0) bm.logs[idx] = entry;
+              else bm.logs.push(entry);
+              if (bm.logs.length > 60) bm.logs = bm.logs.slice(-60);
+              delete bm.currentWeightCleared;
+              bmChanged = true;
+            }
+          } else if (rawW === '' && bm.logs.length && !bm.currentWeightCleared) {
+            bm.currentWeightCleared = true;
             bmChanged = true;
           }
           const nextTarget = (!isNaN(twVal) && twVal >= 20 && twVal <= 400) ? +twVal.toFixed(1) : null;
