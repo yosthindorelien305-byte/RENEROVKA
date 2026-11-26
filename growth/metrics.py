@@ -10,6 +10,7 @@ import statistics
 import time
 
 from .db import query_audit_log
+from .telemetry import query_feature_usage
 
 ALLOWED_PERIOD_DAYS = (7, 30, 90)
 COACH_WINDOW_DAYS = 14
@@ -224,6 +225,7 @@ def _degraded_analytics(days, now_ts, db_health, err_msg, free_access_mode):
         'rpeDistribution': {**unavail_block, 'definition': 'Распределение субъективной нагрузки RPE'},
         'userProfiles': {**unavail_block, 'definition': 'Цели и уровни подготовки из fitnessProfile'},
         'aiCoach': {**unavail_block, 'windowDays': COACH_WINDOW_DAYS, 'definition': 'Сессии AI Coach за 14-дневное окно'},
+        'featureUsage': {**unavail_block, 'piiStored': False, 'totalInPeriod': 0, 'totalAllTime': 0, 'byEvent': [], 'dailySeries': [], 'definition': 'Агрегированные суточные счётчики использования функций RizzaFit'},
         'monetization': {**unavail_block, 'freeAccessMode': bool(free_access_mode), 'definition': 'Подписки PRO и платежи'},
         'moderation': {**unavail_block, 'definition': 'Жалобы и социальные связи'},
         'externalSources': _external_sources_block(updated_iso),
@@ -654,6 +656,8 @@ def compute_analytics(
     rpe_period_sum = sum(rpe_period.values())
     rpe_total_sum = sum(rpe_total.values())
 
+    feature_usage = query_feature_usage(db_file, db_lock, days=period_days, now_ts=now)
+
     return {
         'ok': True,
         'degraded': False,
@@ -810,6 +814,7 @@ def compute_analytics(
             'avgMessagesPerSession': round(coach_messages_14d / coach_active_14d, 1) if coach_active_14d > 0 else None,
             'adoptionRatePct': _pct(len(coach_unique_users), total_users),
         },
+        'featureUsage': feature_usage,
         'monetization': {
             'status': 'ok',
             'source': 'flexa.db:users + payments + FREE_ACCESS_MODE',

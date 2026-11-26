@@ -285,6 +285,19 @@
     var rpe = data.rpeDistribution || {};
     var prof = data.userProfiles || {};
     var coach = data.aiCoach || {};
+    var feat = data.featureUsage || {
+      status: 'insufficient_data',
+      source: 'flexa.db:growth_feature_daily',
+      updatedAt: data.generatedAt || '—',
+      definition: 'Агрегированные суточные счётчики использования функций RizzaFit (без PII).',
+      totalInPeriod: 0,
+      totalAllTime: 0,
+      byEvent: [],
+      dailySeries: []
+    };
+    var featRows = (Array.isArray(feat.byEvent) ? feat.byEvent : []).map(function (ev) {
+      return { label: ev.label || ev.key, count: Number(ev.countPeriod || 0) };
+    });
     var mon = data.monetization || {};
     var mod = data.moderation || {};
 
@@ -469,6 +482,19 @@
           '</div>' +
           renderMetricBlockFoot(ui, mod) +
         '</div>' +
+      '</div>' +
+      '<div class="rf-card">' +
+        renderMetricBlockHead(ui, 'Использование функций (агрегировано, без PII)', feat) +
+        '<div class="growth-kv-grid">' +
+          '<div class="growth-kv"><span>Событий (' + days + 'д)</span><b>' + esc(fmtNum(feat.totalInPeriod)) + '</b></div>' +
+          '<div class="growth-kv"><span>Всего событий</span><b>' + esc(fmtNum(feat.totalAllTime)) + '</b></div>' +
+          '<div class="growth-kv"><span>PII в таблице</span><b>Нет (allowlist)</b></div>' +
+        '</div>' +
+        '<div class="rf-grid-2" style="margin-top:10px">' +
+          '<div>' + renderShareBars(featRows) + '</div>' +
+          '<div>' + renderBarSeries(feat.dailySeries, 'is-wo') + '</div>' +
+        '</div>' +
+        renderMetricBlockFoot(ui, feat) +
       '</div>' +
       renderExternalSourcesCard(data.externalSources, ui) +
     '</div>';
@@ -824,7 +850,7 @@
           '<div><h3 class="growth-block-title">Создать предложение изменения (Approval Engine)</h3><div class="growth-block-def">Изменения сохраняются как <code>pending</code> и не применяются к файлам сайта автоматически.</div></div>' +
         '</div>' +
         '<div class="growth-form-grid">' +
-          '<label class="growth-filter-field"><span>Объект изменения *</span><input id="growth-new-prop-target" class="growth-input" type="text" placeholder="site/index.html или site/fitify/index.html" value="' + esc((opts && opts.draftTarget) || '') + '"></label>' +
+          '<label class="growth-filter-field"><span>Объект изменения *</span><input id="growth-new-prop-target" class="growth-input" type="text" placeholder="site/index.html, site/programs.html или site/ai-coach.html" value="' + esc((opts && opts.draftTarget) || '') + '"></label>' +
           '<label class="growth-filter-field"><span>Поле</span><select id="growth-new-prop-field">' +
             fields.map(function (fn) { return '<option value="' + fn + '"' + ((opts && opts.draftField) === fn ? ' selected' : '') + '>' + fn + '</option>'; }).join('') +
           '</select></label>' +
@@ -1176,7 +1202,7 @@
                 priority: iss.severity === 'info' ? 'low' : iss.severity,
                 seoAuditRunId: state.seoAudit.runId,
                 seoIssueId: iss.id,
-                targetUrl: iss.pageUrl
+                targetUrl: String(iss.pageUrl || '').split(',')[0].trim()
               })
             });
             state.selectedTaskId = res.task && res.task.id;
@@ -1193,7 +1219,7 @@
           if (!iss) return;
           var rawUrl = String(iss.pageUrl || '/').split(',')[0].trim();
           var targetObj = 'site/index.html';
-          if (rawUrl === '/' || rawUrl === '') targetObj = 'site/index.html';
+          if (rawUrl === '/' || rawUrl === '' || rawUrl.indexOf('/fitify') === 0) targetObj = 'site/index.html';
           else if (rawUrl.endsWith('/')) targetObj = 'site/' + rawUrl.replace(/^\/+/, '') + 'index.html';
           else targetObj = 'site/' + rawUrl.replace(/^\/+/, '');
           state.draftProp = {

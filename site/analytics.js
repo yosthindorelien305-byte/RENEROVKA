@@ -142,6 +142,29 @@
     return basePath + safeHash;
   }
 
+  var SERVER_TELEMETRY_ALLOWLIST = [
+    'coach_open', 'coach_message_sent', 'coach_ref_click',
+    'program_select', 'program_day_complete',
+    'workout_start', 'workout_complete',
+    'profile_completed', 'reminder_toggle', 'seo_landing_cta'
+  ];
+
+  function sendServerTelemetry(eventKey) {
+    if (SERVER_TELEMETRY_ALLOWLIST.indexOf(eventKey) === -1) return false;
+    if (typeof fetch !== 'function') return false;
+    try {
+      fetch('/api/telemetry/event', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event: eventKey }),
+        keepalive: true
+      }).catch(function () {});
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   function sendEvent(eventName, params) {
     if (!isGtagReady()) return;
     try {
@@ -219,6 +242,7 @@
         workout_id: sanitizeString(String(workoutId || '')),
         workout_name: sanitizeString(String(workoutName || ''))
       });
+      sendServerTelemetry('workout_start');
     },
 
     /**
@@ -229,6 +253,42 @@
         workout_id: sanitizeString(String(workoutId || '')),
         duration_seconds: Math.round(Number(durationSec) || 0)
       });
+      sendServerTelemetry('workout_complete');
+    },
+
+    trackCoachOpen: function() {
+      sendEvent('coach_open', {});
+      return sendServerTelemetry('coach_open');
+    },
+
+    trackCoachMessage: function() {
+      sendEvent('coach_message_sent', {});
+      return sendServerTelemetry('coach_message_sent');
+    },
+
+    trackCoachRefClick: function(refType) {
+      sendEvent('coach_ref_click', { ref_type: sanitizeString(String(refType || 'item')) });
+      return sendServerTelemetry('coach_ref_click');
+    },
+
+    trackProgramSelect: function(programId) {
+      sendEvent('program_select', { program_id: sanitizeString(String(programId || '')) });
+      return sendServerTelemetry('program_select');
+    },
+
+    trackProgramDayComplete: function(programId) {
+      sendEvent('program_day_complete', { program_id: sanitizeString(String(programId || '')) });
+      return sendServerTelemetry('program_day_complete');
+    },
+
+    trackProfileCompleted: function() {
+      sendEvent('profile_completed', {});
+      return sendServerTelemetry('profile_completed');
+    },
+
+    trackReminderToggle: function(enabled) {
+      sendEvent('reminder_toggle', { enabled: Boolean(enabled) });
+      return sendServerTelemetry('reminder_toggle');
     },
 
     /**
