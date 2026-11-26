@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-XSBKDCY4CS"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-XSBKDCY4CS');
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0F1218">
+<title>AI-тренер RizzaFit — персональный план и разбор нагрузок</title>
+<meta name="description" content="Персональный AI Coach RizzaFit на базе Gemini: подбор программ и тренировок под вашу цель, анализ RPE, рекомендации по восстановлению и технике.">
+<link rel="canonical" href="https://rizzafit.ru/ai-coach.html">
+<meta name="robots" content="index, follow">
+
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://rizzafit.ru/ai-coach.html">
+<meta property="og:title" content="AI-тренер RizzaFit — персональный план и разбор нагрузок">
+<meta property="og:description" content="Персональные рекомендации по тренировкам, технике, восстановлению и прогрессии весов с опорой на профиль атлета в RizzaFit.">
+<meta property="og:image" content="https://rizzafit.ru/content/uploads/logo.png">
+<meta property="og:site_name" content="RizzaFit">
+<meta property="og:locale" content="ru_RU">
+
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="AI-тренер RizzaFit — персональный план и разбор нагрузок">
+<meta name="twitter:description" content="AI Coach RizzaFit подбирает программы и тренировки из реального каталога с учётом ваших целей, RPE и рекордов.">
+<meta name="twitter:image" content="https://rizzafit.ru/content/uploads/logo.png">
+
+<link rel="icon" href="img/logo.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebPage",
+      "@id": "https://rizzafit.ru/ai-coach.html#webpage",
+      "url": "https://rizzafit.ru/ai-coach.html",
+      "name": "AI-тренер RizzaFit — персональный план и разбор нагрузок",
+      "description": "Персональный AI Coach RizzaFit на базе Gemini для подбора тренировок и разбора прогресса.",
+      "inLanguage": "ru-RU",
+      "isPartOf": {"@id": "https://rizzafit.ru/#website"}
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {"@type": "ListItem", "position": 1, "name": "RizzaFit", "item": "https://rizzafit.ru/"},
+        {"@type": "ListItem", "position": 2, "name": "AI-тренер RizzaFit", "item": "https://rizzafit.ru/ai-coach.html"}
+      ]
+    }
+  ]
+}
+</script>
+<link rel="stylesheet" href="tokens.css?v=65">
+<link rel="stylesheet" href="ui-kit.css?v=65">
+<link rel="stylesheet" href="style.css?v=65">
+<style>
+  body.rf-seo-page{background:var(--bg);color:var(--tx);min-height:100vh;padding:0;margin:0}
+  .rf-seo-top{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 18px;background:rgba(15,18,24,.92);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+  .rf-seo-nav{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .rf-seo-nav a{color:var(--tx-sub);text-decoration:none;font-size:13px;font-weight:700;padding:7px 11px;border-radius:999px;border:1px solid transparent}
+  .rf-seo-nav a.on,.rf-seo-nav a:hover{color:var(--tx);background:var(--card2);border-color:var(--line)}
+  .rf-seo-wrap{max-width:1040px;margin:0 auto;padding:24px 16px 56px;box-sizing:border-box}
+  .rf-seo-hero{background:linear-gradient(155deg,rgba(240,168,48,.12),rgba(45,212,191,.08) 50%,rgba(22,27,36,.95));border:1px solid var(--line);border-radius:var(--r-card);padding:26px 22px;margin-bottom:20px}
+  .rf-seo-crumb{font-size:12px;color:var(--mut);margin-bottom:10px}
+  .rf-seo-crumb a{color:var(--ac);text-decoration:none}
+  .rf-seo-hero h1{margin:0 0 10px;font-size:clamp(24px,4vw,34px);line-height:1.18}
+  .rf-seo-hero p{margin:0 0 18px;color:var(--tx-sub);font-size:15px;line-height:1.6;max-width:740px}
+  .rf-seo-actions{display:flex;flex-wrap:wrap;gap:10px}
+  .rf-seo-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:22px}
+  .rf-seo-card{background:var(--card);border:1px solid var(--line);border-radius:var(--r-card);padding:18px;box-shadow:var(--sh-card)}
+  .rf-seo-card h2{margin:0 0 8px;font-size:17px}
+  .rf-seo-card p{margin:0;color:var(--tx-sub);font-size:14px;line-height:1.55}
+  .rf-seo-tag{display:inline-block;margin-bottom:10px;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:800;background:rgba(var(--acr),.14);color:var(--ac-l)}
+  @media(max-width:860px){.rf-seo-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  @media(max-width:600px){.rf-seo-grid{grid-template-columns:1fr}.rf-seo-top{padding:10px 14px}}
+</style>
+</head>
+<body class="rf-seo-page">
+<header class="rf-seo-top">
+  <a class="brand" href="/">
+    <span class="brand-crest"><img src="img/logo.svg" alt="Логотип RizzaFit"></span>
+    <span class="brand-txt"><span class="brand-name">RIZZAFI<em>T</em></span></span>
+  </a>
+  <nav class="rf-seo-nav" aria-label="Навигация RizzaFit">
+    <a href="/">Приложение</a>
+    <a href="/programs.html">Программы</a>
+    <a href="/exercises.html">Упражнения</a>
+    <a href="/ai-coach.html" class="on">AI-тренер</a>
+  </nav>
+</header>
+<main class="rf-seo-wrap">
+  <section class="rf-seo-hero">
+    <div class="rf-seo-crumb"><a href="/">Главная</a> · AI-тренер RizzaFit</div>
+    <h1>AI-тренер RizzaFit — персональный фитнес-наставник</h1>
+    <p>AI Coach анализирует ваши цели, уровень подготовки, ограничения, динамику веса, личные рекорды и недавние тренировки в RizzaFit, чтобы сразу предложить подходящую программу или конкретное занятие из каталога платформы.</p>
+    <div class="rf-seo-actions">
+      <a class="btn" href="/#/coach" data-seo-cta="open_coach">Открыть чат с AI Coach</a>
+      <a class="btn alt" href="/programs.html" data-seo-cta="coach_to_programs">Выбрать программу вручную</a>
+    </div>
+  </section>
+
+  <section class="rf-seo-grid" aria-label="Чем помогает AI Coach">
+    <article class="rf-seo-card">
+      <span class="rf-seo-tag">Контекст профиля</span>
+      <h2>Учёт целей, уровня и травм</h2>
+      <p>Авторизованный пользователь получает советы с учётом роста, возраста, цели, ограничений, активной программы и частоты занятий за 7 и 30 дней.</p>
+    </article>
+    <article class="rf-seo-card">
+      <span class="rf-seo-tag">Прямые ссылки</span>
+      <h2>Рекомендации из каталога RizzaFit</h2>
+      <p>В ответах тренера формируются кликабельные карточки программ, тренировок и упражнений — вы можете запустить занятие в один клик.</p>
+    </article>
+    <article class="rf-seo-card">
+      <span class="rf-seo-tag">Восстановление</span>
+      <h2>Баланс нагрузки по RPE</h2>
+      <p>Опираясь на оценки сложности прошлых тренировок, AI Coach помогает вовремя снизить интенсивность или подобрать разминку и растяжку.</p>
+    </article>
+  </section>
+
+  <section class="rf-seo-card">
+    <h2>Начните диалог за минуту</h2>
+    <p>Перейдите в раздел <a href="/#/profile" style="color:var(--ac)">профиля атлета</a>, укажите цель и уровень подготовки, а затем откройте <a href="/#/coach" style="color:var(--ac)">AI Coach</a> — тренер сразу адаптирует план под ваши данные.</p>
+  </section>
+</main>
+<script>
+document.querySelectorAll('[data-seo-cta]').forEach(function (el) {
+  el.addEventListener('click', function () {
+    try {
+      if (typeof window.gtag === 'function') {
+        window.gtag('event', 'cta_click', { cta_name: el.getAttribute('data-seo-cta'), cta_category: 'seo_landing' });
+      }
+      if (typeof fetch === 'function') {
+        fetch('/api/telemetry/event', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ event: 'seo_landing_cta' }),
+          keepalive: true
+        }).catch(function () {});
+      }
+    } catch (e) {}
+  });
+});
+</script>
+</body>
+</html>

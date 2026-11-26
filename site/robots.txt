@@ -8,5 +8,6 @@ Allow: /content/uploads/
 Disallow: /admin.html
 Disallow: /api/
 Disallow: /server_data/
+Disallow: /fitify/
 
 Sitemap: https://rizzafit.ru/sitemap.xml
