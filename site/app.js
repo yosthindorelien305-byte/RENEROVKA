@@ -1,23 +1,87 @@
 (async function () {
   const app = document.getElementById('app');
+  if (!app) return;
+  let L = (localStorage.lang === 'en' || localStorage.lang === 'ru') ? localStorage.lang : 'ru';
+  function esc0(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  }
+  function renderBootError(title, desc, showHome) {
+    const h = title || (L === 'en' ? 'Failed to load screen' : 'Не удалось загрузить экран');
+    const d = desc || (L === 'en' ? 'Please refresh the page and try again.' : 'Попробуйте обновить страницу или вернуться на главную.');
+    const reloadLbl = L === 'en' ? 'Reload' : 'Обновить';
+    const homeLbl = L === 'en' ? 'Home' : 'На главную';
+    app.innerHTML = `<section class="rf-boot-error"><h2>${esc0(h)}</h2><p>${esc0(d)}</p><div class="rf-boot-error-actions"><button type="button" class="btn" id="rf-boot-reload">${esc0(reloadLbl)}</button>${showHome ? `<a href="#/home" class="btn alt">${esc0(homeLbl)}</a>` : ''}</div></section>`;
+    const rBtn = document.getElementById('rf-boot-reload');
+    if (rBtn) rBtn.onclick = () => location.reload();
+  }
+  const seoFb = app.querySelector('.rf-seo-fallback');
+  if (seoFb) seoFb.remove();
+  app.innerHTML = '<div class="rf-boot-loader" role="status" aria-live="polite"><span class="rf-boot-spinner" aria-hidden="true"></span></div>';
+
+  try {
   const nc = u => fetch(u + '?v=' + Date.now()).then(r => r.ok ? r.json() : null).catch(() => null);
-  const [D, CFG0, OV0] = await Promise.all([fetch('data.json').then(r => r.json()), nc('content/config.json'), nc('content/overrides.json')]);
-  const CFG = Object.assign({ brand: 'RizzaFit', accent: '#F0A830', logo: '', heroProgram: 2, goal: 5, hidden: [], sections: {}, t: {}, ptitle: {}, athlete: {} }, CFG0 || {});
-  let L = localStorage.lang || 'ru';
-  const [COACH, PAY_CFG] = await Promise.all([
+  const loadCoreData = async () => {
+    const fetchJson = async url => {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' loading ' + url);
+      const d = await r.json();
+      if (!d || !Array.isArray(d.exercises) || !Array.isArray(d.workouts) || !Array.isArray(d.programs)) {
+        throw new Error('Invalid core data payload');
+      }
+      return d;
+    };
+    try {
+      return await fetchJson('data.json?v=66');
+    } catch (e1) {
+      try {
+        return await fetchJson('data.json?v=66&r=' + Date.now());
+      } catch (e2) {
+        if (typeof caches !== 'undefined' && caches && typeof caches.match === 'function') {
+          const cached = await caches.match('data.json', { ignoreSearch: true }).catch(() => null);
+          if (cached) {
+            const d = await cached.json().catch(() => null);
+            if (d && Array.isArray(d.exercises) && Array.isArray(d.workouts) && Array.isArray(d.programs)) return d;
+          }
+        }
+        throw e2;
+      }
+    }
+  };
+  const [D, CFG0, OV0, COACH, PAY_CFG] = await Promise.all([
+    loadCoreData(),
+    nc('content/config.json'),
+    nc('content/overrides.json'),
     fetch('/api/coach/status').then(r => r.ok ? r.json() : { enabled: false }).catch(() => ({ enabled: false })),
     fetch('api/payment/plans').then(r => r.ok ? r.json() : { enabled: false, freeAccessMode: false }).catch(() => ({ enabled: false, freeAccessMode: false }))
   ]);
-  const T = window.TEXTS;
-    const t = k => ((CFG.t[L] || {})[k] || T[L][k] || k);
-  const ui = k => D.ui[L][k] || D.ui.en[k] || k;
+  const CFG = Object.assign({ brand: 'RizzaFit', accent: '#F0A830', logo: '', heroProgram: 2, goal: 5, hidden: [], sections: {}, t: {}, ptitle: {}, athlete: {} }, CFG0 || {});
+  const T = window.TEXTS || { ru: {}, en: {} };
+  T.ru = T.ru || {};
+  T.en = T.en || {};
+  const t = k => (((CFG.t && CFG.t[L]) || {})[k] || (T[L] && T[L][k]) || k);
+  const ui = k => ((D.ui && D.ui[L] && D.ui[L][k]) || (D.ui && D.ui.en && D.ui.en[k]) || k);
+  const safeJsonParse = (raw, fallback) => {
+    try {
+      const parsed = raw ? JSON.parse(raw) : fallback;
+      return (parsed === null || parsed === undefined || typeof parsed !== typeof fallback || Array.isArray(parsed) !== Array.isArray(fallback))
+        ? fallback
+        : parsed;
+    } catch (e) {
+      return fallback;
+    }
+  };
+  const safeIsoDate = ts => {
+    if (ts === null || ts === undefined || ts === '') return '';
+    const d = new Date(ts);
+    return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
+  };
   // ---- content overrides (managed in the admin panel) ----
   const OV = Object.assign({ w: {}, p: {}, c: [], e: {} }, OV0 || {});
   OV.e = OV.e || {};
-  OV.c.forEach(w => D.workouts.unshift(w));
-  Object.entries(OV.w).forEach(([id, o]) => { const w = D.workouts.find(x => x.id == id); if (w) Object.assign(w, o); });
-  Object.entries(OV.p).forEach(([id, o]) => { const p = D.programs.find(x => x.id == id); if (p) { Object.assign(p, o); if (o.image) p.img = true; } });
-  Object.entries(OV.e).forEach(([id, o]) => { const e = D.exercises.find(x => x.id == id); if (e) Object.assign(e, o); });
+  (Array.isArray(OV.c) ? OV.c : []).forEach(w => D.workouts.unshift(w));
+  Object.entries(OV.w || {}).forEach(([id, o]) => { const w = D.workouts.find(x => x.id == id); if (w) Object.assign(w, o); });
+  Object.entries(OV.p || {}).forEach(([id, o]) => { const p = D.programs.find(x => x.id == id); if (p) { Object.assign(p, o); if (o.image) p.img = true; } });
+  Object.entries(OV.e || {}).forEach(([id, o]) => { const e = D.exercises.find(x => x.id == id); if (e) Object.assign(e, o); });
   const pImg = p => p.image || `img/programs/${p.id}.jpg`;
   const ACCENT_THEMES = [
     { id: 'amber', hex: '#F0A830', ru: 'Янтарь', en: 'Amber' },
@@ -43,7 +107,8 @@
     const logo = CFG.logo || 'img/logo.svg';
     st.setProperty('--logo', `url(${logo})`);
     document.title = CFG.brand + ' — ' + (L == 'ru' ? 'тренировки и программы' : 'workouts & programs');
-    document.querySelector('link[rel=icon]').href = logo;
+    const iconEl = document.querySelector('link[rel=icon]');
+    if (iconEl) iconEl.href = logo;
     const bImg = document.querySelector('.brand img');
     if (bImg) bImg.src = logo;
     const nm = CFG.brand || 'RizzaFit';
@@ -54,8 +119,7 @@
     if (topCoachBtn) topCoachBtn.style.display = (COACH.enabled && !(CFG.hidden || []).includes('coach')) ? '' : 'none';
     (CFG.hidden || []).forEach(k => { const a = document.querySelector(`#nav a[data-k=${k}]`); if (a) a.style.display = 'none'; });
     const ft = document.querySelector('footer');
-    if (ft) ft.textContent = '© ' + nm + ' · ' + ((CFG.t[L] || {}).footer || T[L].footer);
-    function esc0(s) { return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+    if (ft) ft.textContent = '© ' + nm + ' · ' + ((CFG.t[L] || {}).footer || T[L].footer || '');
   })();
   function isLoggedIn() {
     return !!(localStorage.userToken && localStorage.userName);
@@ -204,10 +268,8 @@
     return `<svg class="ui-ic" width="${sz}" height="${sz}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p[name] || ''}</svg>`;
   }
   const hist = () => {
-    try {
-      const arr = JSON.parse(localStorage.hist || '[]');
-      return Array.isArray(arr) ? arr : [];
-    } catch (e) { return []; }
+    const arr = safeJsonParse(localStorage.hist, []);
+    return Array.isArray(arr) ? arr.filter(x => x && typeof x === 'object' && safeIsoDate(x.t)) : [];
   };
   const calc1RM = (w, r) => (w > 0 ? (r <= 1 ? w : Math.round(w * (1 + r / 30))) : 0);
   function loadExLogs() {
@@ -526,7 +588,10 @@
       ]
     ]
   };
-  const getFavs = () => new Set(JSON.parse(localStorage.favs || '[]'));
+  const getFavs = () => {
+    const arr = safeJsonParse(localStorage.favs, []);
+    return new Set(Array.isArray(arr) ? arr : []);
+  };
   const toggleFav = id => {
     const f = getFavs();
     if (f.has(id)) f.delete(id); else f.add(id);
@@ -540,7 +605,7 @@
       return window.AthleteProfile.calcStreakSimple(list);
     }
     if (!list || !list.length) return 0;
-    const dates = new Set(list.map(x => new Date(x.t).toISOString().slice(0, 10)));
+    const dates = new Set(list.map(x => safeIsoDate(x && x.t)).filter(Boolean));
     let s = 0, d = new Date();
     if (!dates.has(d.toISOString().slice(0, 10))) d.setDate(d.getDate() - 1);
     while (dates.has(d.toISOString().slice(0, 10))) {
@@ -885,7 +950,8 @@
   function renderActivityChartHtml(allH, days = 7) {
     const dayMap = {};
     allH.forEach(x => {
-      const iso = new Date(x.t).toISOString().slice(0, 10);
+      const iso = safeIsoDate(x && x.t);
+      if (!iso) return;
       dayMap[iso] = (dayMap[iso] || 0) + Math.max(1, Math.round((x.s || 0) / 60));
     });
     const slots = [];
@@ -962,7 +1028,8 @@
     let vol12w = 0;
     const cutoff = Date.now() - 84 * 864e5;
     allH.forEach(x => {
-      const iso = new Date(x.t).toISOString().slice(0, 10);
+      const iso = safeIsoDate(x && x.t);
+      if (!iso) return;
       byDate[iso] = (byDate[iso] || 0) + Math.max(1, Math.round((x.s || 0) / 60));
       if (x.t >= cutoff && x.vol > 0) vol12w += x.vol;
     });
@@ -2924,8 +2991,8 @@
       const ath = window.AthleteProfile ? window.AthleteProfile.merge(Object.assign({}, CFG.athlete || {}, locAth), {
         workoutsCount: allH.length,
         streak,
-        prsCount: Object.keys(JSON.parse(localStorage.prs || '{}')).length,
-        uniqueDays: new Set(allH.map(x => new Date(x.t).toISOString().slice(0, 10))).size,
+        prsCount: Object.keys(safeJsonParse(localStorage.prs, {})).length,
+        uniqueDays: new Set(allH.map(x => safeIsoDate(x && x.t)).filter(Boolean)).size,
         weekPct: allH.length ? pct : null
       }) : { winRate: 0, level: 1, days: 0, streakDays: 0, points: 0 };
 
@@ -2933,7 +3000,8 @@
       const dayNames = L == 'ru' ? ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'] : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
       const minsByDate = {};
       allH.forEach(x => {
-        const iso = new Date(x.t).toISOString().slice(0, 10);
+        const iso = safeIsoDate(x && x.t);
+        if (!iso) return;
         minsByDate[iso] = (minsByDate[iso] || 0) + Math.max(1, Math.round((x.s || 0) / 60));
       });
       const weekDates = [];
@@ -3529,7 +3597,7 @@
     exercise(id) {
       const e = exMap[id]; if (!e) return '';
       const d = richDesc(e.d[L] || e.d.en || '');
-      const prs = JSON.parse(localStorage.prs || '{}');
+      const prs = safeJsonParse(localStorage.prs, {});
       const pr = prs[id];
       const relatedW = D.workouts.filter(w => w.s && w.s.some(st => st.slice(1).some(n => n[0] == id))).slice(0, 6);
       return `<a href="javascript:history.back()">← ${t('exercises')}</a><h1>${esc(exName(e))}</h1><div class="detail rf-ex-detail">
@@ -3559,13 +3627,13 @@
       const totalSec = allH.reduce((sum, x) => sum + (x.s || 0), 0);
       const totalMins = Math.round(totalSec / 60);
       const streak = calcStreak(allH);
-      const prs = JSON.parse(localStorage.prs || '{}');
+      const prs = safeJsonParse(localStorage.prs, {});
       const exLogs = loadExLogs();
       const prIds = Array.from(new Set([...Object.keys(prs), ...Object.keys(exLogs)]));
       const prEntries = prIds
         .filter(id => exMap[id] && ((prs[id] || 0) > 0 || (exLogs[id] && exLogs[id].bestW > 0)))
         .map(id => [id, prs[id] || 0, exLogs[id] || null]);
-      const doneDates = new Set(allH.map(x => new Date(x.t).toISOString().slice(0, 10)));
+      const doneDates = new Set(allH.map(x => safeIsoDate(x && x.t)).filter(Boolean));
       const wk = Date.now() - 7 * 864e5;
       const weekDone = allH.filter(x => x.t > wk).length;
       const goal = Math.max(1, +CFG.goal || 5);
@@ -3617,7 +3685,7 @@
               <span style="display:flex;align-items:center;color:var(--green);">${uiSvg('handshake', 20)}</span>
               <div style="min-width:0;">
                 <div style="font-size:13px;font-weight:800;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(qTitle)}</div>
-                <div style="font-size:11.5px;color:var(--green);font-weight:700;">${qp.total} / ${qp.target} (${qp.pct}%) · с ${esc(activeQ.friendName.split(' ')[0])}</div>
+                <div style="font-size:11.5px;color:var(--green);font-weight:700;">${qp.total} / ${qp.target} (${qp.pct}%) · с ${esc(String(activeQ.friendName || '').split(' ')[0])}</div>
               </div>
             </div>
             <span class="tag pro">${qp.done ? uiSvg('check', 12) : qp.pct + '%'}</span>
@@ -3729,7 +3797,7 @@
       const me = AP ? AP.merge(Object.assign({}, CFG.athlete || {}, loc), {
         workoutsCount: allH.length,
         streak: calcStreak(allH),
-        prsCount: Object.keys(JSON.parse(localStorage.prs || '{}')).length
+        prsCount: Object.keys(safeJsonParse(localStorage.prs, {})).length
       }) : { name: 'Атлет', handle: '@athlete', points: 0, level: 1, streakDays: 0, duelReward: 500 };
 
       const duels = AP ? AP.getDuels().filter(d => !d.claimed && !(AP.isFakeUser && AP.isFakeUser({ id: d.friendId, name: d.friendName, handle: d.friendHandle }))) : [];
@@ -4808,7 +4876,7 @@
       const b = document.getElementById('log-pr-btn');
       if (b) {
         b.onclick = () => {
-          const prs = JSON.parse(localStorage.prs || '{}');
+          const prs = safeJsonParse(localStorage.prs, {});
           const cur = prs[arg] || '';
           const val = prompt(L == 'ru' ? 'Введите ваш лучший результат (повторений):' : 'Enter your best reps:', cur);
           if (val && !isNaN(val) && +val > 0) {
@@ -4934,7 +5002,8 @@
               const frozenSet = new Set(fz.usedDates);
               const byDate = {};
               allH.forEach(x => {
-                const iso = new Date(x.t).toISOString().slice(0, 10);
+                const iso = safeIsoDate(x && x.t);
+                if (!iso) return;
                 if (!byDate[iso]) byDate[iso] = [];
                 byDate[iso].push(x);
               });
@@ -4955,11 +5024,11 @@
               const meMerged = AP.merge(Object.assign({}, CFG.athlete || {}, locP), {
                 workoutsCount: allH.length,
                 streak: streakNow,
-                prsCount: Object.keys(JSON.parse(localStorage.prs || '{}')).length
+                prsCount: Object.keys(safeJsonParse(localStorage.prs, {})).length
               });
 
               const monthPrefix = `${viewY}-${String(viewM + 1).padStart(2, '0')}`;
-              const monthItems = allH.filter(x => new Date(x.t).toISOString().slice(0, 7) === monthPrefix);
+              const monthItems = allH.filter(x => safeIsoDate(x && x.t).slice(0, 7) === monthPrefix);
               const monthMins = Math.round(monthItems.reduce((s, x) => s + (x.s || 0), 0) / 60);
 
               const cells = [];
@@ -6769,7 +6838,7 @@
           speak(`${prefix}${exName(e)}, ${s.n[2]} ${isT ? t('sec') : t('rep')}`);
         }
         afterRest = false;
-        const prs = JSON.parse(localStorage.prs || '{}');
+        const prs = safeJsonParse(localStorage.prs, {});
         const prevPr = prs[s.n[0]] || 0;
         const prevLog = !isT ? getExLog(s.n[0]) : null;
         if (!isT && s.weight === undefined) {
@@ -6993,7 +7062,7 @@
               const prLabel = logRes.isWeightPr ? `${curW} ${L == 'ru' ? 'кг' : 'kg'} × ${s.n[2]}` : s.n[2];
               sessionPrs.push({ id: s.n[0], name: exName(e), val: prLabel });
             }
-            const prs = JSON.parse(localStorage.prs || '{}');
+            const prs = safeJsonParse(localStorage.prs, {});
             prs[s.n[0]] = Math.max(prs[s.n[0]] || 0, s.n[2]);
             localStorage.prs = JSON.stringify(prs);
             sfx(isNewPr ? 'pr' : 'done');
@@ -7076,10 +7145,20 @@
     syncNavAthlete();
     syncSndBtn();
     app.classList.remove('fx-enter');
-    app.innerHTML = routes[key](a);
-    void app.offsetWidth;
-    app.classList.add('fx-enter');
-    after(key);
+    try {
+      app.innerHTML = routes[key](a);
+      void app.offsetWidth;
+      app.classList.add('fx-enter');
+      after(key);
+    } catch (renderErr) {
+      console.error('[RizzaFit] Route render error:', key, renderErr);
+      renderBootError(
+        L == 'ru' ? 'Не удалось отобразить раздел' : 'Failed to display section',
+        L == 'ru' ? 'Попробуйте обновить страницу или вернуться на главную.' : 'Try refreshing the page or returning home.',
+        key !== 'home'
+      );
+      return;
+    }
     if (window.RizzaAnalytics) {
       const pageTitle = 'RizzaFit · ' + (t(key) || key);
       window.RizzaAnalytics.trackPageView(location.pathname + (location.hash || '#/'), pageTitle);
@@ -7133,7 +7212,7 @@
     if (prefs.lastFiredDate === todayIso) return;
     const hhmm = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
     if (hhmm < prefs.time) return;
-    const doneToday = hist().some(x => new Date(x.t).toISOString().slice(0, 10) === todayIso);
+    const doneToday = hist().some(x => safeIsoDate(x && x.t) === todayIso);
     if (doneToday) return;
     window.AthleteProfile.saveNotifPrefs({ lastFiredDate: todayIso });
     const msg = L == 'ru' ? `Запланированное время (${prefs.time}) — пора на тренировку!` : `Scheduled time (${prefs.time}) — time to train!`;
@@ -7207,5 +7286,9 @@
     if (location.hash.includes('friends') || location.hash.includes('profile')) render();
   });
   setTimeout(checkDailyReminder, 1500);
+  } catch (bootErr) {
+    console.error('[RizzaFit] SPA boot failed:', bootErr);
+    renderBootError(null, null, false);
+  }
 })();
 

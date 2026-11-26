@@ -45,12 +45,12 @@ class TestMobileImagesFix(unittest.TestCase):
         with open(os.path.join(SITE, "sw.js"), encoding="utf-8") as f:
             sw_js = f.read()
 
-        self.assertIn("flexa-shell-v65", sw_js)
+        self.assertIn("flexa-shell-v66", sw_js)
         self.assertIn("MEDIA_CACHE_NAME = 'flexa-media-v1'", sw_js)
         self.assertNotIn("./content/texts.json", sw_js)
         self.assertIn("/content/uploads/", sw_js)
         self.assertIn("res.status === 200", sw_js)
-        self.assertIn(".catch(() => caches.match(req, { ignoreSearch: true }))", sw_js)
+        self.assertIn("caches.match(req, { ignoreSearch: true }).then(hit => hit || Response.error())", sw_js)
 
     def test_server_and_catalog_assets_exist(self):
         with open(os.path.join(ROOT, "server.py"), encoding="utf-8") as f:

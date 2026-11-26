@@ -16,7 +16,7 @@ class TestGrowthFrontendUI(unittest.TestCase):
 
         with open(os.path.join(SITE, "admin.html"), encoding="utf-8") as f:
             admin_html = f.read()
-        self.assertIn('<script src="admin_growth.js?v=65"></script>', admin_html)
+        self.assertIn('<script src="admin_growth.js?v=66"></script>', admin_html)
 
         with open(os.path.join(SITE, "admin.js"), encoding="utf-8") as f:
             admin_js = f.read()
