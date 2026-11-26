@@ -54,6 +54,8 @@ class TestGrowthProposalsAndDiff(IsolatedServerTestCase):
             "file:///etc/passwd",
             "server_data/ai.json",
             "site/server_data/admin.json",
+            "site/fitify/index.html",
+            "fitify/muscles.html",
             "server.py",
             "growth/db.py",
             "site/index.html\x00",
@@ -75,7 +77,7 @@ class TestGrowthProposalsAndDiff(IsolatedServerTestCase):
             )
             self.assertEqual(code, 400, msg=f"targetObject must be rejected with 400: {bad_target!r} -> {body}")
 
-        for good_target in ("site/index.html", "site/index.html#title", "site/fitify/index.html", "site/robots.txt"):
+        for good_target in ("site/index.html", "site/index.html#title", "site/programs.html", "site/robots.txt"):
             code_ok, res_ok = invoke_http(
                 "POST",
                 "/api/admin/growth/proposals",
@@ -181,10 +183,10 @@ class TestGrowthProposalsAndDiff(IsolatedServerTestCase):
             "POST",
             "/api/admin/growth/proposals",
             {
-                "targetObject": "site/fitify/index.html",
+                "targetObject": "site/ai-coach.html",
                 "fieldName": "meta_description",
                 "currentValue": "",
-                "proposedValue": "Новое мета-описание Fitify для поисковых систем длиной более 50 символов.",
+                "proposedValue": "Новое мета-описание страницы AI-тренера RizzaFit длиной более 50 символов.",
                 "reason": "Добавить description",
             },
             headers=self.admin_hdrs,

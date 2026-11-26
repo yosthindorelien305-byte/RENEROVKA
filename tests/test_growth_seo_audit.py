@@ -49,7 +49,16 @@ class TestGrowthSeoAudit(IsolatedServerTestCase):
 
         c_run, b_run = invoke_http("POST", "/api/admin/growth/seo-audit/run", {}, headers=self.admin_hdrs)
         self.assertEqual(c_run, 200)
-        self.assertEqual(b_run["pagesChecked"], 4)
+        self.assertEqual(b_run["pagesChecked"], 5)
+        checked_urls = [p["pageUrl"] for p in b_run["pages"]]
+        self.assertEqual(
+            set(checked_urls),
+            {"/", "/admin.html", "/programs.html", "/exercises.html", "/ai-coach.html"},
+        )
+        self.assertFalse(any("fitify" in u.lower() for u in checked_urls))
+        self.assertEqual(b_run["summary"]["critical"], 0)
+        self.assertEqual(b_run["summary"]["high"], 0)
+        self.assertFalse(any("fitify" in str(i["pageUrl"]).lower() for i in b_run["issues"]))
         self.assertTrue(b_run["robotsCheck"]["exists"])
         self.assertTrue(b_run["sitemapCheck"]["valid"])
         unknown_names = {u["check"] for u in b_run["unknownChecks"]}
@@ -77,12 +86,13 @@ class TestGrowthSeoAudit(IsolatedServerTestCase):
     def test_synthetic_site_detects_all_required_seo_issues_deterministically(self):
         with tempfile.TemporaryDirectory(prefix="flexa_seo_synth_") as sdir:
             with open(os.path.join(sdir, "robots.txt"), "w", encoding="utf-8") as f:
-                f.write("User-agent: *\nDisallow: /\n")
+                f.write("User-agent: *\nAllow: /\n")
             with open(os.path.join(sdir, "sitemap.xml"), "w", encoding="utf-8") as f:
                 f.write(
                     '<?xml version="1.0" encoding="UTF-8"?>'
                     '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
                     "<url><loc>https://rizzafit.ru/missing.html</loc></url>"
+                    "<url><loc>https://rizzafit.ru/fitify/</loc></url>"
                     "</urlset>"
                 )
             with open(os.path.join(sdir, "index.html"), "w", encoding="utf-8") as f:
@@ -109,14 +119,19 @@ class TestGrowthSeoAudit(IsolatedServerTestCase):
                 )
             with open(os.path.join(sdir, "admin.html"), "w", encoding="utf-8") as f:
                 f.write("<html><head><title>Admin</title></head><body>Admin</body></html>")
+            os.makedirs(os.path.join(sdir, "fitify"), exist_ok=True)
+            with open(os.path.join(sdir, "fitify", "index.html"), "w", encoding="utf-8") as f:
+                f.write("<html><head><title>Fitify</title></head><body>Fitify</body></html>")
 
             before = _tree_snapshot(sdir)
             report = seo_audit.scan_site_seo(sdir)
             self.assertEqual(_tree_snapshot(sdir), before)
+            self.assertFalse(any("fitify" in p["pageUrl"].lower() for p in report["pages"]))
 
             types = {(i["pageUrl"], i["issueType"]): i["severity"] for i in report["issues"]}
-            self.assertEqual(types[("/robots.txt", "robots_disallow_all")], "critical")
+            self.assertEqual(types[("/robots.txt", "robots_missing_fitify_disallow")], "medium")
             self.assertEqual(types[("/robots.txt", "robots_missing_sitemap")], "medium")
+            self.assertEqual(types[("/fitify/", "sitemap_excluded_fitify_url")], "high")
             self.assertEqual(types[("/", "public_page_noindex")], "critical")
             self.assertEqual(types[("/", "missing_canonical")], "high")
             self.assertEqual(types[("/", "missing_h1")], "high")

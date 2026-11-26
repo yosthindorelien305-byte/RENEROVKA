@@ -33,7 +33,7 @@ class TestSeoStage1Files(unittest.TestCase):
         self.assertIn("Disallow: /admin.html", content)
         self.assertIn("Disallow: /api/", content)
         self.assertIn("Disallow: /server_data/", content)
-        self.assertNotIn("Disallow: /fitify/", content)
+        self.assertIn("Disallow: /fitify/", content)
         self.assertIn("Sitemap: https://rizzafit.ru/sitemap.xml", content)
 
         # Ensure no deprecated Google directives are present
@@ -53,8 +53,8 @@ class TestSeoStage1Files(unittest.TestCase):
         ns = {"ns": "http://www.sitemaps.org/schemas/sitemap/0.9"}
         urls = root_el.findall("ns:url", ns)
 
-        # Only real, existing canonical URLs should be listed (root and public fitify pages in Stage 2)
-        self.assertEqual(len(urls), 3, "sitemap.xml must contain only real indexable canonical URLs")
+        # Only real, existing canonical RizzaFit URLs should be listed (zero Fitify URLs)
+        self.assertEqual(len(urls), 4, "sitemap.xml must contain only real RizzaFit canonical URLs")
 
         loc_el = urls[0].find("ns:loc", ns)
         self.assertIsNotNone(loc_el, "<loc> element missing in sitemap URL entry")
@@ -84,6 +84,9 @@ class TestSeoStage1Files(unittest.TestCase):
         self.assertIn('<meta name="description"', html)
         self.assertIn('<link rel="canonical" href="https://rizzafit.ru/">', html)
         self.assertIn('<meta name="robots" content="index, follow">', html)
+        self.assertNotIn('user-scalable=no', html)
+        self.assertNotIn('maximum-scale=1.0', html)
+        self.assertIn('<h1', html)
 
         # OpenGraph tags
         self.assertIn('<meta property="og:type" content="website">', html)
