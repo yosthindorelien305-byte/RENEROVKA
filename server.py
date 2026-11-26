@@ -4185,5 +4185,6 @@ if __name__ == '__main__':
     threading.Thread(target=telegram_bot_worker, daemon=True).start()
     print('Flexa: http://localhost:%d   Admin: http://localhost:%d/admin.html' % (PORT, PORT))
     ThreadingHTTPServer.allow_reuse_address = True
+    ThreadingHTTPServer.request_queue_size = 128
     httpd = ThreadingHTTPServer(('127.0.0.1', PORT), H)
     httpd.serve_forever()
