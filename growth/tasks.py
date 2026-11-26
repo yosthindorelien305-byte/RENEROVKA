@@ -93,7 +93,8 @@ def _validate_and_classify_target_url(raw):
             raise ValueError('Запрещённая encoded URI-схема в targetUrl')
 
     if s.startswith('/'):
-        if not INTERNAL_URL_RE.fullmatch(s) or s.lower().startswith('/server_data'):
+        low_s = s.lower()
+        if not INTERNAL_URL_RE.fullmatch(s) or low_s.startswith('/server_data') or low_s == '/fitify' or low_s.startswith('/fitify/'):
             raise ValueError('Недопустимый внутренний targetUrl')
         return s, 'internal'
 

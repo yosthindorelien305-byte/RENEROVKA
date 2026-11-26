@@ -112,6 +112,9 @@ class TestSeoStage2(unittest.TestCase):
             self.assertIn('<meta name="robots" content="index, follow">', html)
             self.assertNotIn("user-scalable=no", html)
             self.assertNotIn("fitify", html.lower())
+            if fpath != INDEX_FILE:
+                self.assertIn('aria-current="page"', html)
+                self.assertIn(".rf-seo-top .brand{flex:0 0 auto", html)
 
             t_m = re.search(r"<title>(.*?)</title>", html, re.S)
             d_m = re.search(r'<meta\s+name="description"\s+content="(.*?)"', html, re.S)

@@ -63,8 +63,11 @@
 <style>
   body.rf-seo-page{background:var(--bg);color:var(--tx);min-height:100vh;padding:0;margin:0}
   .rf-seo-top{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 18px;background:rgba(15,18,24,.92);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+  .rf-seo-top .brand{flex:0 0 auto;white-space:nowrap}
+  .rf-seo-top .brand-name{overflow:visible;text-overflow:clip}
   .rf-seo-nav{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
   .rf-seo-nav a{color:var(--tx-sub);text-decoration:none;font-size:13px;font-weight:700;padding:7px 11px;border-radius:999px;border:1px solid transparent}
+  .rf-seo-top .brand:focus-visible,.rf-seo-nav a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:10px}
   .rf-seo-nav a.on,.rf-seo-nav a:hover{color:var(--tx);background:var(--card2);border-color:var(--line)}
   .rf-seo-wrap{max-width:1040px;margin:0 auto;padding:24px 16px 56px;box-sizing:border-box}
   .rf-seo-hero{background:linear-gradient(155deg,rgba(240,168,48,.12),rgba(22,27,36,.95) 55%);border:1px solid var(--line);border-radius:var(--r-card);padding:26px 22px;margin-bottom:20px}
@@ -79,7 +82,8 @@
   .rf-seo-card p{margin:0;color:var(--tx-sub);font-size:14px;line-height:1.55}
   .rf-seo-tag{display:inline-block;margin-bottom:10px;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:800;background:rgba(var(--acr),.14);color:var(--ac-l)}
   @media(max-width:860px){.rf-seo-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-  @media(max-width:600px){.rf-seo-grid{grid-template-columns:1fr}.rf-seo-top{padding:10px 14px}}
+  @media(max-width:640px){.rf-seo-top{flex-direction:column;align-items:flex-start;gap:8px;padding:10px 14px}.rf-seo-nav{width:100%;display:flex;flex-wrap:wrap;gap:6px}.rf-seo-nav a{font-size:12.5px;padding:6px 10px;min-height:32px;display:inline-flex;align-items:center}}
+  @media(max-width:600px){.rf-seo-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body class="rf-seo-page">
@@ -90,7 +94,7 @@
   </a>
   <nav class="rf-seo-nav" aria-label="Навигация RizzaFit">
     <a href="/">Приложение</a>
-    <a href="/programs.html" class="on">Программы</a>
+    <a href="/programs.html" class="on" aria-current="page">Программы</a>
     <a href="/exercises.html">Упражнения</a>
     <a href="/ai-coach.html">AI-тренер</a>
   </nav>

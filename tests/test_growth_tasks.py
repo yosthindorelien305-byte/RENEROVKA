@@ -178,6 +178,8 @@ class TestGrowthTasks(IsolatedServerTestCase):
             "/null\x00byte",
             "https://user@evil.example/test",
             "/server_data/ai.json",
+            "/fitify/",
+            "/fitify/muscles.html",
             "relative-without-leading-slash",
         )
         for bad in bad_urls:

@@ -72,10 +72,9 @@ def validate_telemetry_payload(payload):
     ev = payload.get('event')
     if not isinstance(ev, str):
         raise ValueError('Поле event должно быть строкой')
-    clean_ev = ev.strip()
-    if not clean_ev or clean_ev not in ALLOWED_TELEMETRY_EVENTS:
+    if not ev or ev != ev.strip() or ev not in ALLOWED_TELEMETRY_EVENTS:
         raise ValueError('Недопустимый тип события телеметрии')
-    return clean_ev
+    return ev
 
 
 def _fmt_utc_date(ts):

@@ -46,6 +46,8 @@ class TestGrowthTelemetry(IsolatedServerTestCase):
         # 2. Arbitrary events and extra PII fields must be rejected with 400
         bad_payloads = [
             {"event": "arbitrary_custom_event"},
+            {"event": " coach_open "},
+            {"event": "COACH_OPEN"},
             {"event": ""},
             {"event": 123},
             {"event": "coach_open", "email": "user@example.com"},
@@ -118,6 +120,23 @@ class TestGrowthTelemetry(IsolatedServerTestCase):
         res = subprocess.run(["node", "-e", script], cwd=server.ROOT, capture_output=True, text=True)
         self.assertEqual(res.returncode, 0, msg=res.stderr or res.stdout)
         self.assertIn("ANALYTICS_TELEMETRY_JS_OK", res.stdout)
+
+        # Resilience: telemetry failure (rejected Promise or sync throw) must never break app
+        resilient_script = r"""
+        const assert = require('assert');
+        global.window = {
+          location: { origin: 'https://rizzafit.ru', pathname: '/', hash: '#/', href: 'https://rizzafit.ru/#/' }
+        };
+        global.fetch = () => Promise.reject(new Error('network down'));
+        require('./site/analytics.js');
+        assert.doesNotThrow(() => global.window.RizzaAnalytics.trackCoachOpen());
+        global.fetch = () => { throw new Error('sync fail'); };
+        assert.strictEqual(global.window.RizzaAnalytics.trackWorkoutStart(1, 'Test') || 'ok', 'ok');
+        console.log('ANALYTICS_RESILIENCE_OK');
+        """
+        res2 = subprocess.run(["node", "-e", resilient_script], cwd=server.ROOT, capture_output=True, text=True)
+        self.assertEqual(res2.returncode, 0, msg=res2.stderr or res2.stdout)
+        self.assertIn("ANALYTICS_RESILIENCE_OK", res2.stdout)
 
 
 if __name__ == "__main__":

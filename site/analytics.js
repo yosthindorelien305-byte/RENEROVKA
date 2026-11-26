@@ -153,12 +153,15 @@
     if (SERVER_TELEMETRY_ALLOWLIST.indexOf(eventKey) === -1) return false;
     if (typeof fetch !== 'function') return false;
     try {
-      fetch('/api/telemetry/event', {
+      var req = fetch('/api/telemetry/event', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ event: eventKey }),
         keepalive: true
-      }).catch(function () {});
+      });
+      if (req && typeof req.catch === 'function') {
+        req.catch(function () {});
+      }
       return true;
     } catch (e) {
       return false;
