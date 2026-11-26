@@ -5,6 +5,7 @@ import base64, hashlib, hmac, html, ipaddress, json, os, re, secrets, socket, sq
 from http.cookies import SimpleCookie
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, parse_qsl
+from growth import db as growth_db, routes as growth_routes
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SITE = os.path.join(ROOT, 'site')
@@ -413,7 +414,22 @@ def init_db():
         conn.execute('CREATE INDEX IF NOT EXISTS idx_coach_sessions_updated ON coach_sessions (updated_at)')
         now_ts = int(time.time())
         conn.execute('DELETE FROM coach_sessions WHERE updated_at < ?', (now_ts - 14 * 86400,))
+        growth_db.init_growth_db(conn)
         conn.commit()
+
+
+def log_growth_audit(action, module='admin', target='', status='ok', actor='admin', actor_ip='', details=None, backup_ref=''):
+    """Fail-safe server-side append-only audit logger."""
+    try:
+        if DB_FILE and os.path.isfile(DB_FILE):
+            growth_db.record_audit_event(
+                DB_FILE, db_lock,
+                action=action, module=module, target=target,
+                status=status, actor=actor, actor_ip=actor_ip,
+                details=details, backup_ref=backup_ref,
+            )
+    except Exception:
+        pass
 
 EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 USERNAME_RE = re.compile(r'^[a-zA-Z0-9_]{3,24}$')
@@ -2603,6 +2619,17 @@ class H(SimpleHTTPRequestHandler):
             if p == '/api/ai/settings' or p == '/api/uploads' or p.startswith('/api/admin/'):
                 if not self.authed():
                     return self.send_j(401, {'error': 'unauthorized'})
+                if p == '/api/admin/growth' or p.startswith('/api/admin/growth/'):
+                    return growth_routes.handle_growth_get(
+                        self,
+                        p,
+                        parse_qs(urlparse(self.path).query),
+                        db_file=DB_FILE,
+                        db_lock=db_lock,
+                        site_dir=SITE,
+                        content_dir=CONTENT,
+                        free_access_mode=FREE_ACCESS_MODE,
+                    )
                 if p == '/api/ai/settings':
                     c = ai_cfg()
                     return self.send_j(200, {'provider': c['provider'], 'baseUrl': c.get('base_url', ''), 'hasKey': bool(c.get('key')), 'keyHint': ('…' + c['key'][-4:]) if c.get('key') else '', 'model': c['model'], 'enabled': c['enabled'], 'prompt': c.get('prompt', '')})
@@ -2813,6 +2840,21 @@ class H(SimpleHTTPRequestHandler):
                 return self.send_j(200, {'ok': True, 'confirmed': False})
             return self.send_j(404, {'error': 'not found'})
         return super().do_GET()
+
+    def _reject_growth_mutation(self):
+        p = urlparse(self.path).path
+        if p == '/api/admin/growth' or p.startswith('/api/admin/growth/'):
+            return growth_routes.handle_growth_write_attempt(self, p)
+        return self.send_j(501, {'error': 'unsupported method'})
+
+    def do_PUT(self):
+        return self._reject_growth_mutation()
+
+    def do_DELETE(self):
+        return self._reject_growth_mutation()
+
+    def do_PATCH(self):
+        return self._reject_growth_mutation()
 
     def do_POST(self):
         u = urlparse(self.path); p = u.path
@@ -3939,6 +3981,7 @@ class H(SimpleHTTPRequestHandler):
                 t = secrets.token_urlsafe(32)
                 with lock:
                     tokens[t] = time.time() + 12 * 3600
+                log_growth_audit('admin.login', module='auth', target='admin-panel', actor_ip=ip, details={'ttlHours': 12})
                 return self.send_j(200, {'token': t})
             record_fail('adm:' + ip, ttl=300)
             time.sleep(1)
@@ -3946,12 +3989,17 @@ class H(SimpleHTTPRequestHandler):
         if p in ('/api/admin/logout', '/api/logout'):
             auth = self.headers.get('Authorization', '').strip()
             t = auth[7:].strip() if auth.lower().startswith('bearer ') else auth
+            removed = None
             if t:
                 with lock:
-                    tokens.pop(t, None)
+                    removed = tokens.pop(t, None)
+            if p == '/api/admin/logout' and removed is not None:
+                log_growth_audit('admin.logout', module='auth', target='admin-panel', actor_ip=get_client_ip(self))
             return self.send_j(200, {'ok': True})
         if not self.authed():
             return self.send_j(401, {'error': 'unauthorized'})
+        if p == '/api/admin/growth' or p.startswith('/api/admin/growth/'):
+            return growth_routes.handle_growth_write_attempt(self, p)
         if p == '/api/ai/settings':
             try:
                 j = json.loads(self.body(16 * 1024))
@@ -3988,6 +4036,7 @@ class H(SimpleHTTPRequestHandler):
             except Exception:
                 return self.send_j(400, {'error': 'bad json'})
             write_json(f + '.json', obj)
+            log_growth_audit('content.save', module='content', target=f + '.json', actor_ip=get_client_ip(self), details={'bytes': len(raw)})
             return self.send_j(200, {'ok': True})
         if p == '/api/upload':        # ?name=program_2  body: raw image; header X-Filename for ext
             name = re.sub(r'[^a-zA-Z0-9_-]', '', parse_qs(u.query).get('name', ['file'])[0])[:40] or 'file'
@@ -4045,6 +4094,7 @@ class H(SimpleHTTPRequestHandler):
                     (uid, plan, days, amount, note, now)
                 )
                 conn.commit()
+            log_growth_audit('user.plan_update', module='users', target=f'user:{uid}', actor_ip=get_client_ip(self), details={'plan': plan, 'days': days, 'amount': amount})
             return self.send_j(200, {'ok': True, 'plan': plan, 'planExpiresAt': exp})
         if p == '/api/admin/user/block':
             try:
@@ -4058,6 +4108,7 @@ class H(SimpleHTTPRequestHandler):
                 if blk:
                     conn.execute('DELETE FROM user_sessions WHERE user_id = ?', (uid,))
                 conn.commit()
+            log_growth_audit('user.block_toggle', module='users', target=f'user:{uid}', actor_ip=get_client_ip(self), details={'blocked': bool(blk)})
             return self.send_j(200, {'ok': True, 'blocked': bool(blk)})
         if p == '/api/admin/user/reset-code':
             try:

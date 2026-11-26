@@ -208,44 +208,20 @@
   }
 
   function tabGrowth(el) {
+    if (window.RizzaGrowth && typeof window.RizzaGrowth.render === 'function') {
+      return window.RizzaGrowth.render(el, {
+        api,
+        toast,
+        esc,
+        ui: window.RizzaUI
+      });
+    }
     const ui = window.RizzaUI;
-    const modules = [
-      { id: 'dashboard', title: '📊 Dashboard', desc: 'Сводка KPI, очередь одобрения и последние события' },
-      { id: 'seo', title: '🔎 SEO AI', desc: 'Аудит метаданных, sitemap.xml и рекомендации с diff-превью' },
-      { id: 'content', title: '✍️ Content AI', desc: 'Генерация статей и публикация в /articles/ после одобрения' },
-      { id: 'social', title: '📣 Social AI', desc: 'Посты для Telegram и соцсетей через отдельного бота' },
-      { id: 'analytics', title: '📈 Analytics AI', desc: 'Метрики сайта с указанием источника и времени обновления' },
-      { id: 'tasks', title: '✅ Task Manager', desc: 'Задачи развития платформы и приоритеты' },
-      { id: 'reports', title: '📑 Reports AI', desc: 'Сводные отчёты и журнал действий' }
-    ];
-    el.innerHTML = `<div class="rf-card" style="margin-bottom:14px">
-      <div class="growth-hub-banner">
-        <div>
-          <h2 style="margin:0;font-size:18px">RizzaFit AI Growth</h2>
-          <p style="margin:4px 0 0;color:var(--mut);font-size:13px">Встроенный контур развития сайта внутри админ-панели. Полностью изолирован от AI Coach атлетов.</p>
-        </div>
-        ${ui ? ui.renderStatusBadge('pending_approval', 'Этап 2: каркас готов') : ''}
-      </div>
-      <div class="rf-card-inset" style="font-size:12.5px;color:var(--tx-sub);line-height:1.5">
-        <b>Правила безопасности:</b> все публикации, SEO-правки и изменения контента выполняются только после явного подтверждения администратора и автоматического резервного копирования. Настройки, история и ключи AI Coach (<code style="color:var(--ac)">server_data/ai.json</code>) не затрагиваются.
-      </div>
-    </div>
-    <div class="rf-grid-2">
-      ${modules.map(m => `<div class="rf-card">
-        <div style="font-weight:800;font-size:14.5px;margin-bottom:4px">${esc(m.title)}</div>
-        <div style="color:var(--mut);font-size:12.5px;line-height:1.45">${esc(m.desc)}</div>
-      </div>`).join('')}
-    </div>
-    ${ui && typeof ui.renderAuditLogList === 'function' ? ui.renderAuditLogList([
-      {
-        action: 'Этап 2: подготовлен UI-каркас RizzaFit AI Growth',
-        actor: 'admin-shell',
-        timestamp: '25.11.2026',
-        status: 'approved',
-        statusLabel: 'UI готов',
-        details: 'UI-макет журнала (только просмотр в интерфейсе). Серверная запись, хранение и защита от изменений будут реализованы и проверены на Этапе 3.'
-      }
-    ], { title: 'Журнал действий AI Growth' }) : ''}`;
+    el.innerHTML = `<div class="rf-card">
+      <h2 style="margin:0;font-size:18px">RizzaFit AI Growth</h2>
+      <p style="margin:6px 0 0;color:var(--mut);font-size:13px">Изолированный от AI Coach контур развития. Не удалось загрузить модуль admin_growth.js.</p>
+      ${ui && typeof ui.renderAuditLogList === 'function' ? ui.renderAuditLogList([], { title: 'Журнал действий AI Growth' }) : ''}
+    </div>`;
   }
 
   const imgPicker = (id, src, cls) => `<div class="up"><img ${cls ? `class="${cls}"` : ''} id="${id}-prev" src="${esc(src || 'img/logo.svg')}" onerror="this.style.opacity=.2"><div><input type="file" id="${id}" accept="image/*"><br><button class="btn alt" style="padding:8px 14px;margin-top:6px" id="${id}-clr" type="button">Убрать / вернуть оригинал</button></div></div>`;

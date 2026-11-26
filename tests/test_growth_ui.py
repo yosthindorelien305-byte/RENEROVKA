@@ -1,0 +1,104 @@
+"""UI & Node.js tests for site/admin_growth.js integration (PR 4.1)."""
+
+import os
+import subprocess
+import unittest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SITE = os.path.join(ROOT, "site")
+
+
+class TestGrowthFrontendUI(unittest.TestCase):
+    def test_js_syntax_and_admin_wiring(self):
+        for rel in ("admin_growth.js", "admin.js", "ui_components.js"):
+            res = subprocess.run(["node", "--check", os.path.join(SITE, rel)], capture_output=True, text=True)
+            self.assertEqual(res.returncode, 0, msg=res.stderr or res.stdout)
+
+        with open(os.path.join(SITE, "admin.html"), encoding="utf-8") as f:
+            admin_html = f.read()
+        self.assertIn('<script src="admin_growth.js?v=65"></script>', admin_html)
+
+        with open(os.path.join(SITE, "admin.js"), encoding="utf-8") as f:
+            admin_js = f.read()
+        self.assertIn("window.RizzaGrowth", admin_js)
+
+    def test_admin_growth_renders_dashboard_analytics_and_audit_safely(self):
+        script = r"""
+        const assert = require('assert');
+        const growth = require('./site/admin_growth.js');
+
+        const dashHtml = growth.renderDashboardHtml({
+          generatedAt: '2026-11-26T12:00:00Z',
+          systemStatus: { dbHealth: 'ok', freeAccessMode: true, aiGrowthLlm: 'disabled_pr41', auditAppendOnly: true, auditTotal: 3 },
+          kpis: [
+            { id: 'users_total', label: 'Пользователи', value: '42', delta: '+5 за 30д', source: 'flexa.db:users', updatedAt: '2026-11-26T12:00:00Z', status: 'ok' }
+          ],
+          attentionItems: [
+            { id: 'a1', severity: 'high', title: '<script>xss</script>Жалобы', details: 'Check <img onerror=1>', source: 'flexa.db:user_reports' }
+          ],
+          recentAudit: [
+            { id: 1, action: 'admin.login', module: 'auth', actor: 'admin', actorIp: '127.0.0.1', timestamp: '2026-11-26 12:00 UTC', status: 'ok', detailsText: 'IP: 127.0.0.1' }
+          ],
+          modules: [{ id: 'dashboard', title: 'Dashboard', status: 'done', statusLabel: 'PR 4.1 активен' }]
+        });
+        assert(dashHtml.includes('Пользователи'));
+        assert(dashHtml.includes('flexa.db:users'));
+        assert(dashHtml.includes('2026-11-26T12:00:00Z'));
+        assert(dashHtml.includes('&lt;script&gt;xss&lt;/script&gt;'));
+        assert(!dashHtml.includes('<script>'));
+        assert(dashHtml.includes('Серверный append-only журнал'));
+
+        const anHtml = growth.renderAnalyticsHtml({
+          periodDays: 30,
+          generatedAt: '2026-11-26T12:00:00Z',
+          dataQuality: { dbHealth: 'ok' },
+          registrations: { status: 'ok', source: 'flexa.db:users', updatedAt: '2026-11-26T12:00:00Z', totalUsers: 4, newInPeriod: 3, byAuthMethod: { telegram: 1, password: 3 }, dailySeries: [{ date: '2026-11-26', count: 3 }] },
+          engagement: {
+            lastLoginActivity: { status: 'ok', isProxy: true, metricType: 'last_login_proxy', source: 'flexa.db:users.last_login_at', updatedAt: '2026-11-26T12:00:00Z', last24h: 1, last7d: 2, last30d: 3 },
+            workoutActivity: { status: 'ok', isProxy: false, metricType: 'workout_history', source: 'flexa.db:user_state.hist', updatedAt: '2026-11-26T12:00:00Z', dau: 1, wau: 2, mau: 2, workoutsInPeriod: 3, workoutsTotal: 3, medianDurationSec: 1200 }
+          },
+          retention: {
+            workoutRetention: { status: 'insufficient_data', isProxy: false, source: 'flexa.db', updatedAt: '2026-11-26T12:00:00Z', d1: { windowDefinition: '[+1д, +2д)', cohortSize: 0, excludedIncompleteCount: 2, retainedCount: 0, ratePct: null, status: 'insufficient_data' }, d7: {}, d30: {} },
+            lastLoginReturnProxy: { status: 'ok', isProxy: true, source: 'flexa.db', updatedAt: '2026-11-26T12:00:00Z', d1: { windowDefinition: 'last_login_at >= +1д', cohortSize: 2, excludedIncompleteCount: 1, retainedCount: 1, ratePct: 50.0, status: 'ok' }, d7: {}, d30: {} }
+          },
+          activation: { status: 'ok', firstWorkoutUsers: 2, firstWorkoutRatePct: 50.0, profileCompletedUsers: 2, profileCompletedRatePct: 50.0, programStartedUsers: 1, programStartedRatePct: 25.0 },
+          workouts: { status: 'ok', completedInPeriod: 3, completedTotal: 3, avgExercisesPerWorkout: 4.5, dailySeries: [{ date: '2026-11-26', count: 3 }] },
+          popularCatalog: { status: 'ok', topPrograms: [{ id: '1', title: '50 Подтягиваний', usersCount: 1, completedDaysTotal: 1 }], topWorkouts: [] },
+          rpeDistribution: { status: 'ok', period: { easy: { count: 1 }, good: { count: 1 }, hard: { count: 1 }, unrated: { count: 0 } } },
+          userProfiles: { status: 'ok', goals: { strength: 1 }, levels: { beginner: 1 } },
+          aiCoach: { status: 'ok', windowDays: 14, activeSessions14d: 2, userSessions14d: 1, guestSessions14d: 1, totalMessages14d: 3, avgMessagesPerSession: 1.5, adoptionRatePct: 25.0 },
+          monetization: { status: 'ok', freeAccessMode: true, realProUsersActive: 1, paymentsInPeriodByStatus: { paid: 1, pending: 0 }, paidRevenueInPeriod: 1990 },
+          moderation: { status: 'ok', reportsByStatus: { new: 1, reviewed: 1, closed: 0 }, avgReviewTimeHours: 2.0, acceptedFriendships: 1, activeBlocks: 1 },
+          externalSources: { status: 'unavailable', updatedAt: '2026-11-26T12:00:00Z', items: [{ id: 'ga4', label: 'Google Analytics 4', status: 'unavailable', source: 'GA4', reason: 'Not connected' }] }
+        });
+        assert(anHtml.includes('Последний вход в аккаунт (прокси: 24ч / 7д / 30д)'));
+        assert(!anHtml.includes('Auth DAU/WAU/MAU'));
+        assert(anHtml.includes('Фактические тренировки (Workout DAU/WAU/MAU)'));
+        assert(anHtml.includes('Возврат по последнему входу (прокси)'));
+        assert(anHtml.includes('исключено неполн.: 2'));
+        assert(anHtml.includes('Недостаточно данных'));
+        assert(anHtml.includes('unavailable'));
+
+        const auditHtml = growth.renderAuditHtml({
+          appendOnlyEnforced: true,
+          source: 'flexa.db:growth_audit_log',
+          updatedAt: '2026-11-26T12:00:00Z',
+          entries: [{ id: 1, action: 'admin.login', module: 'auth', actor: 'admin', actorIp: '127.0.0.1', timestamp: '2026-11-26 12:00 UTC', status: 'ok', detailsText: 'IP: 127.0.0.1' }],
+          total: 1,
+          limit: 25,
+          offset: 0,
+          hasMore: false
+        });
+        assert(auditHtml.includes('data-readonly="true"'));
+        assert(auditHtml.includes('Triggers ON'));
+        assert(auditHtml.includes('BEFORE UPDATE'));
+        assert(auditHtml.includes('BEFORE DELETE'));
+        console.log('GROWTH_UI_OK');
+        """
+        res = subprocess.run(["node", "-e", script], cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, msg=res.stderr or res.stdout)
+        self.assertIn("GROWTH_UI_OK", res.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()
