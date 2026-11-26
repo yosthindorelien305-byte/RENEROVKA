@@ -7599,3 +7599,57 @@ main#app.fx-enter {
   }
 }
 
+.rf-js .rf-seo-fallback {
+  display: none !important;
+}
+
+.rf-boot-loader {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 46vh;
+  padding: 32px 16px;
+}
+
+.rf-boot-spinner {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.1);
+  border-top-color: var(--ac, #F0A830);
+  animation: rfSpin 0.8s linear infinite;
+}
+
+@keyframes rfSpin {
+  to { transform: rotate(360deg); }
+}
+
+.rf-boot-error {
+  max-width: 520px;
+  margin: 36px auto;
+  padding: 24px 20px;
+  border-radius: var(--r-card, 18px);
+  background: var(--card, #161B24);
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  text-align: center;
+}
+
+.rf-boot-error h2 {
+  margin: 0 0 8px;
+  font-size: 19px;
+}
+
+.rf-boot-error p {
+  margin: 0 0 18px;
+  color: var(--mut, #A9B1BD);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.rf-boot-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+

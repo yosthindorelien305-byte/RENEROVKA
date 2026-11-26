@@ -26,16 +26,16 @@ class TestResponsiveDesignSystem(unittest.TestCase):
             sw_js = f.read()
 
         for html_src, name in ((index_html, "index.html"), (admin_html, "admin.html")):
-            for token in ("tokens.css?v=65", "ui-kit.css?v=65", "style.css?v=65", "ui_components.js?v=65"):
+            for token in ("tokens.css?v=66", "ui-kit.css?v=66", "style.css?v=66", "ui_components.js?v=66"):
                 self.assertIn(token, html_src, msg=f"{token} missing in {name}")
 
-        self.assertIn("admin.css?v=65", admin_html)
-        self.assertIn("admin.js?v=65", admin_html)
-        self.assertIn("app.js?v=65", index_html)
+        self.assertIn("admin.css?v=66", admin_html)
+        self.assertIn("admin.js?v=66", admin_html)
+        self.assertIn("app.js?v=66", index_html)
         self.assertIn("G-XSBKDCY4CS", index_html)
         self.assertIn('id="nav"', index_html)
 
-        self.assertIn("flexa-shell-v65", sw_js)
+        self.assertIn("flexa-shell-v66", sw_js)
         for asset in ("./tokens.css", "./ui-kit.css", "./ui_components.js"):
             self.assertIn(asset, sw_js)
 

@@ -2,6 +2,8 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
+<script>document.documentElement.classList.add('rf-js');</script>
+<style>.rf-js .rf-seo-fallback{display:none!important}</style>
 <!-- Google tag (gtag.js) -->
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-XSBKDCY4CS"></script>
 <script>
@@ -70,9 +72,9 @@
   ]
 }
 </script>
-<link rel="stylesheet" href="tokens.css?v=65">
-<link rel="stylesheet" href="ui-kit.css?v=65">
-<link rel="stylesheet" href="style.css?v=65">
+<link rel="stylesheet" href="tokens.css?v=66">
+<link rel="stylesheet" href="ui-kit.css?v=66">
+<link rel="stylesheet" href="style.css?v=66">
 </head>
 <body class="mob-app">
 <header class="top">
@@ -146,17 +148,18 @@
   </a>
 </nav>
 <div id="player" class="player hidden"></div>
-<script src="texts.js?v=65"></script>
-<script src="muscles.js?v=65"></script>
-<script src="athlete_profile.js?v=65"></script>
-<script src="analytics.js?v=65"></script>
-<script src="ui_components.js?v=65"></script>
-<script src="app.js?v=65"></script>
+<script src="texts.js?v=66"></script>
+<script src="muscles.js?v=66"></script>
+<script src="athlete_profile.js?v=66"></script>
+<script src="analytics.js?v=66"></script>
+<script src="ui_components.js?v=66"></script>
+<script src="app.js?v=66"></script>
 <script>
 if ('serviceWorker' in navigator) {
   let refreshing = false;
+  const hadController = !!navigator.serviceWorker.controller;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (!refreshing) {
+    if (hadController && !refreshing) {
       refreshing = true;
       window.location.reload();
     }

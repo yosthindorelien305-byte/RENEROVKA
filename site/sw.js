@@ -1,4 +1,4 @@
-const CACHE_NAME = 'flexa-shell-v65';
+const CACHE_NAME = 'flexa-shell-v66';
 const MEDIA_CACHE_NAME = 'flexa-media-v1';
 const CORE_ASSETS = [
   './',
@@ -54,7 +54,7 @@ self.addEventListener('fetch', event => {
             return res;
           });
         })
-      ).catch(() => caches.match(req, { ignoreSearch: true }))
+      ).catch(() => caches.match(req, { ignoreSearch: true }).then(hit => hit || Response.error()))
     );
     return;
   }
@@ -67,6 +67,6 @@ self.addEventListener('fetch', event => {
         caches.open(CACHE_NAME).then(c => c.put(req, cp)).catch(() => {});
       }
       return res;
-    }).catch(() => caches.match(req, { ignoreSearch: true }))
+    }).catch(() => caches.match(req, { ignoreSearch: true }).then(hit => hit || Response.error()))
   );
 });
