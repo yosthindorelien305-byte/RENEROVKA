@@ -549,7 +549,9 @@
                 '</div>' +
               '</div>' +
               '<div class="growth-item-meta">Категория: <b>' + esc(t.category) + '</b>' +
-                (t.targetUrl ? (' · URL: <code>' + esc(t.targetUrl) + '</code>') : '') +
+                (t.targetUrl
+                  ? (' · URL (' + (t.targetUrlType === 'external' ? 'внешний, без перехода' : 'внутренний') + '): <code>' + esc(t.targetUrl) + '</code>')
+                  : '') +
                 (t.seoIssueId ? (' · SEO #' + esc(t.seoIssueId)) : '') +
                 ' · Обновлено: ' + esc(t.updatedAtIso || '—') +
               '</div>' +
@@ -574,7 +576,9 @@
         '</div>' +
         '<div class="growth-kv-list" style="margin-bottom:12px">' +
           '<div class="growth-kv-line"><span>Категория / Приоритет</span><b>' + esc(dt.category) + ' / ' + esc(dt.priority) + '</b></div>' +
-          (dt.targetUrl ? '<div class="growth-kv-line"><span>Целевой URL</span><b>' + esc(dt.targetUrl) + '</b></div>' : '') +
+          (dt.targetUrl
+            ? '<div class="growth-kv-line"><span>Целевой URL (' + (dt.targetUrlType === 'external' ? 'внешний · без перехода' : 'внутренний') + ')</span><b><code>' + esc(dt.targetUrl) + '</code></b></div>'
+            : '') +
           (detail.seoIssue ? '<div class="growth-kv-line"><span>Связанная SEO-проблема</span><b>#' + esc(detail.seoIssue.id) + ' (' + esc(detail.seoIssue.issueType) + ' · ' + esc(detail.seoIssue.severity) + ')</b></div>' : '') +
           '<div class="growth-kv-line"><span>Создана / Обновлена</span><b>' + esc(dt.createdAtIso) + ' / ' + esc(dt.updatedAtIso) + '</b></div>' +
         '</div>' +
@@ -820,7 +824,7 @@
           '<div><h3 class="growth-block-title">Создать предложение изменения (Approval Engine)</h3><div class="growth-block-def">Изменения сохраняются как <code>pending</code> и не применяются к файлам сайта автоматически.</div></div>' +
         '</div>' +
         '<div class="growth-form-grid">' +
-          '<label class="growth-filter-field"><span>Объект изменения *</span><input id="growth-new-prop-target" class="growth-input" type="text" placeholder="/ или site/index.html" value="' + esc((opts && opts.draftTarget) || '') + '"></label>' +
+          '<label class="growth-filter-field"><span>Объект изменения *</span><input id="growth-new-prop-target" class="growth-input" type="text" placeholder="site/index.html или site/fitify/index.html" value="' + esc((opts && opts.draftTarget) || '') + '"></label>' +
           '<label class="growth-filter-field"><span>Поле</span><select id="growth-new-prop-field">' +
             fields.map(function (fn) { return '<option value="' + fn + '"' + ((opts && opts.draftField) === fn ? ' selected' : '') + '>' + fn + '</option>'; }).join('') +
           '</select></label>' +
@@ -1187,8 +1191,13 @@
           var idx = Number(btn.getAttribute('data-seo-to-prop'));
           var iss = state.seoAudit && state.seoAudit.issues && state.seoAudit.issues[idx];
           if (!iss) return;
+          var rawUrl = String(iss.pageUrl || '/').split(',')[0].trim();
+          var targetObj = 'site/index.html';
+          if (rawUrl === '/' || rawUrl === '') targetObj = 'site/index.html';
+          else if (rawUrl.endsWith('/')) targetObj = 'site/' + rawUrl.replace(/^\/+/, '') + 'index.html';
+          else targetObj = 'site/' + rawUrl.replace(/^\/+/, '');
           state.draftProp = {
-            draftTarget: iss.pageUrl,
+            draftTarget: targetObj,
             draftField: iss.fieldName || 'content',
             draftCurr: iss.currentValue || ''
           };

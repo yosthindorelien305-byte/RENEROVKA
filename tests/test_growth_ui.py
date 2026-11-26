@@ -94,20 +94,27 @@ class TestGrowthFrontendUI(unittest.TestCase):
         assert(auditHtml.includes('BEFORE UPDATE'));
         assert(auditHtml.includes('BEFORE DELETE'));
 
-        // PR 4.2 Views: Tasks, SEO Audit, Proposals, Diff Review + XSS protection
+        // PR 4.2 Views: Tasks (inert internal/external URL rendering), SEO Audit, Proposals, Diff Review + XSS protection
         const tasksHtml = growth.renderTasksHtml({
-          total: 1,
+          total: 2,
           source: 'flexa.db:growth_tasks',
           updatedAt: '2026-11-26T12:00:00Z',
-          tasks: [{ id: 1, title: '<script>xss</script>Fix H1', category: 'SEO', priority: 'high', status: 'open', targetUrl: '/', updatedAtIso: '2026-11-26T12:00:00Z' }]
+          tasks: [
+            { id: 1, title: '<script>xss</script>Fix H1', category: 'SEO', priority: 'high', status: 'open', targetUrl: '/', targetUrlType: 'internal', updatedAtIso: '2026-11-26T12:00:00Z' },
+            { id: 2, title: 'External Ref', category: 'SEO', priority: 'low', status: 'open', targetUrl: 'https://example.org/<xss>', targetUrlType: 'external', updatedAtIso: '2026-11-26T12:00:00Z' }
+          ]
         }, {
-          task: { id: 1, title: '<script>xss</script>Fix H1', description: 'Desc', category: 'SEO', priority: 'high', status: 'open', allowedTransitions: ['in_progress'], createdAtIso: '2026-11-26T12:00:00Z', updatedAtIso: '2026-11-26T12:00:00Z' },
-          history: [{ field: 'created', oldValue: '', newValue: 'open/high/SEO', actor: 'admin', createdAtIso: '2026-11-26T12:00:00Z' }],
+          task: { id: 2, title: 'External Ref', description: 'Desc', category: 'SEO', priority: 'low', status: 'open', targetUrl: 'https://example.org/<xss>', targetUrlType: 'external', allowedTransitions: ['in_progress'], createdAtIso: '2026-11-26T12:00:00Z', updatedAtIso: '2026-11-26T12:00:00Z' },
+          history: [{ field: 'created', oldValue: '', newValue: 'open/low/SEO', actor: 'admin', createdAtIso: '2026-11-26T12:00:00Z' }],
           proposals: []
         });
         assert(tasksHtml.includes('&lt;script&gt;xss&lt;/script&gt;Fix H1'));
         assert(!tasksHtml.includes('<script>'));
-        assert(tasksHtml.includes('Список задач (1)'));
+        assert(!tasksHtml.includes('<a '));
+        assert(tasksHtml.includes('внешний, без перехода'));
+        assert(tasksHtml.includes('внутренний'));
+        assert(tasksHtml.includes('&lt;xss&gt;'));
+        assert(tasksHtml.includes('Список задач (2)'));
 
         const seoHtml = growth.renderSeoAuditHtml({
           hasRun: true,

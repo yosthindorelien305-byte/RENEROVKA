@@ -1,4 +1,4 @@
-"""Tests for AI Growth Approval Engine, Diff Engine, re-apply protection, and safety (PR 4.2)."""
+"""Tests for AI Growth Approval Engine, Diff Engine, targetObject hardening, and CSRF (PR 4.2)."""
 
 import hashlib
 import os
@@ -19,6 +19,7 @@ class TestGrowthProposalsAndDiff(IsolatedServerTestCase):
         self.assertEqual(code, 200)
         self.admin_hdrs = {
             "Authorization": f"Bearer {body['token']}",
+            "Host": "127.0.0.1:8080",
             "Origin": "http://127.0.0.1:8080",
             "X-Requested-With": "XMLHttpRequest",
             "Content-Type": "application/json",
@@ -27,16 +28,69 @@ class TestGrowthProposalsAndDiff(IsolatedServerTestCase):
     def test_diff_engine_handles_added_removed_lines_and_inert_payloads(self):
         orig = "Старый заголовок\nВторая строка\nУдаляемая строка"
         prop = "<script>alert(1)</script>; DROP TABLE users; $(rm -rf /)\nВторая строка\nНовая строка"
-        diff = diff_engine.compute_text_diff(orig, prop, field_name="title", target_object="/index.html")
+        diff = diff_engine.compute_text_diff(orig, prop, field_name="title", target_object="site/index.html")
         self.assertTrue(diff["hasChanges"])
         self.assertIn("<script>alert(1)</script>; DROP TABLE users; $(rm -rf /)", diff["addedLines"])
         self.assertIn("Старый заголовок", diff["removedLines"])
         self.assertIn("Удаляемая строка", diff["removedLines"])
         self.assertEqual(diff["stats"]["unchangedCount"], 1)
         self.assertIsNotNone(diff["seoFieldGuidance"])
-        self.assertIn("current:/index.html", diff["unifiedDiff"])
+        self.assertIn("current:site/index.html", diff["unifiedDiff"])
 
-    def test_proposal_lifecycle_double_approve_guard_and_no_site_or_prod_mutation(self):
+    def test_target_object_rejects_absolute_traversal_urls_and_secrets(self):
+        forbidden_targets = (
+            "/etc/passwd",
+            "/index.html",
+            "//etc/passwd",
+            "C:/Windows",
+            "C:\\Windows\\System32",
+            "../secret",
+            "site/../../secret",
+            "site/%2e%2e/secret",
+            "site/%2e%2e%2fsecret",
+            "site/%252e%252e/secret",
+            "https://evil.com/index.html",
+            "javascript:alert(1)",
+            "file:///etc/passwd",
+            "server_data/ai.json",
+            "site/server_data/admin.json",
+            "server.py",
+            "growth/db.py",
+            "site/index.html\x00",
+            "~root/.ssh/id_rsa",
+            "site/index.html#bad?x=1",
+        )
+        for bad_target in forbidden_targets:
+            code, body = invoke_http(
+                "POST",
+                "/api/admin/growth/proposals",
+                {
+                    "targetObject": bad_target,
+                    "fieldName": "content",
+                    "currentValue": "old",
+                    "proposedValue": "new",
+                    "reason": "security check",
+                },
+                headers=self.admin_hdrs,
+            )
+            self.assertEqual(code, 400, msg=f"targetObject must be rejected with 400: {bad_target!r} -> {body}")
+
+        for good_target in ("site/index.html", "site/index.html#title", "site/fitify/index.html", "site/robots.txt"):
+            code_ok, res_ok = invoke_http(
+                "POST",
+                "/api/admin/growth/proposals",
+                {
+                    "targetObject": good_target,
+                    "fieldName": "title",
+                    "currentValue": "Old",
+                    "proposedValue": "New",
+                    "reason": "valid relative identifier",
+                },
+                headers=self.admin_hdrs,
+            )
+            self.assertEqual(code_ok, 201, msg=f"Valid relative targetObject rejected: {good_target!r} -> {res_ok}")
+
+    def test_proposal_lifecycle_csrf_double_approve_guard_and_no_site_or_prod_mutation(self):
         index_path = os.path.join(server.SITE, "index.html")
         index_hash_before = hashlib.sha256(open(index_path, "rb").read()).hexdigest()
         prod_db_before = (
@@ -55,26 +109,12 @@ class TestGrowthProposalsAndDiff(IsolatedServerTestCase):
         self.assertEqual(c_t, 201)
         tid = b_t["task"]["id"]
 
-        # Validation rejects path traversal / server.py / identical text / bad CSRF
-        c_trav, _ = invoke_http(
-            "POST",
-            "/api/admin/growth/proposals",
-            {
-                "targetObject": "../server.py",
-                "fieldName": "content",
-                "currentValue": "a",
-                "proposedValue": "b",
-                "reason": "invalid path",
-            },
-            headers=self.admin_hdrs,
-        )
-        self.assertEqual(c_trav, 400)
-
+        # Reject identical current/proposed values
         c_same, _ = invoke_http(
             "POST",
             "/api/admin/growth/proposals",
             {
-                "targetObject": "/index.html",
+                "targetObject": "site/index.html",
                 "fieldName": "title",
                 "currentValue": "Same",
                 "proposedValue": "Same",
@@ -90,7 +130,7 @@ class TestGrowthProposalsAndDiff(IsolatedServerTestCase):
             "/api/admin/growth/proposals",
             {
                 "taskId": tid,
-                "targetObject": "/index.html",
+                "targetObject": "site/index.html#title",
                 "fieldName": "title",
                 "currentValue": "RizzaFit — тренировки",
                 "proposedValue": "RizzaFit — программы тренировок и прогресс",
@@ -109,14 +149,18 @@ class TestGrowthProposalsAndDiff(IsolatedServerTestCase):
         self.assertTrue(b_diff["diff"]["hasChanges"])
         self.assertEqual(b_diff["diff"]["addedLines"], ["RizzaFit — программы тренировок и прогресс"])
 
-        # CSRF protection on approve
-        c_csrf, _ = invoke_http(
-            "POST",
-            f"/api/admin/growth/proposals/{pid}/approve",
-            {},
-            headers={**self.admin_hdrs, "Origin": "https://attacker.example"},
-        )
-        self.assertEqual(c_csrf, 403)
+        # CSRF checks across approve & reject
+        for ep in (f"/api/admin/growth/proposals/{pid}/approve", f"/api/admin/growth/proposals/{pid}/reject"):
+            # Missing both Origin & Referer -> 403
+            h_no_org = {"Authorization": self.admin_hdrs["Authorization"], "Host": "127.0.0.1:8080", "X-Requested-With": "XMLHttpRequest", "Content-Type": "application/json"}
+            self.assertEqual(invoke_http("POST", ep, {}, headers=h_no_org)[0], 403)
+            # Content-Type: application/json alone without X-Requested-With -> 403
+            h_json_only = {"Authorization": self.admin_hdrs["Authorization"], "Host": "127.0.0.1:8080", "Origin": "http://127.0.0.1:8080", "Content-Type": "application/json"}
+            self.assertEqual(invoke_http("POST", ep, {}, headers=h_json_only)[0], 403)
+            # Cross-origin -> 403
+            self.assertEqual(invoke_http("POST", ep, {}, headers={**self.admin_hdrs, "Origin": "https://attacker.example"})[0], 403)
+            # Port mismatch -> 403
+            self.assertEqual(invoke_http("POST", ep, {}, headers={**self.admin_hdrs, "Origin": "http://127.0.0.1:9999"})[0], 403)
 
         # Approve proposal -> status becomes approved, linked task becomes approved
         c_app, b_app = invoke_http(
@@ -128,28 +172,16 @@ class TestGrowthProposalsAndDiff(IsolatedServerTestCase):
         self.assertEqual(c_app, 200)
         self.assertEqual(b_app["proposal"]["status"], "approved")
 
-        # Double-approve or reject after approve MUST fail with 409 Conflict (re-apply guard)
-        c_reapp, _ = invoke_http(
-            "POST",
-            f"/api/admin/growth/proposals/{pid}/approve",
-            {},
-            headers=self.admin_hdrs,
-        )
-        self.assertEqual(c_reapp, 409)
-        c_rej_after, _ = invoke_http(
-            "POST",
-            f"/api/admin/growth/proposals/{pid}/reject",
-            {},
-            headers=self.admin_hdrs,
-        )
-        self.assertEqual(c_rej_after, 409)
+        # Double-approve or reject after approve MUST fail with 409 Conflict
+        self.assertEqual(invoke_http("POST", f"/api/admin/growth/proposals/{pid}/approve", {}, headers=self.admin_hdrs)[0], 409)
+        self.assertEqual(invoke_http("POST", f"/api/admin/growth/proposals/{pid}/reject", {}, headers=self.admin_hdrs)[0], 409)
 
         # Verify reject workflow on a second proposal
         c_cr2, b_cr2 = invoke_http(
             "POST",
             "/api/admin/growth/proposals",
             {
-                "targetObject": "/fitify/",
+                "targetObject": "site/fitify/index.html",
                 "fieldName": "meta_description",
                 "currentValue": "",
                 "proposedValue": "Новое мета-описание Fitify для поисковых систем длиной более 50 символов.",

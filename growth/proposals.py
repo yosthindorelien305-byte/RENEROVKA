@@ -6,6 +6,7 @@ import os
 import re
 import sqlite3
 import time
+import urllib.parse
 
 from .db import init_growth_db, record_audit_event
 from .diff_engine import compute_text_diff
@@ -26,7 +27,20 @@ PROPOSAL_FIELDS = (
     'other',
 )
 
-TARGET_OBJECT_RE = re.compile(r'^[A-Za-z0-9_./:#-]{1,200}$')
+REL_TARGET_PATH_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.-]*(?:/[A-Za-z0-9][A-Za-z0-9_.-]*)*$')
+FRAGMENT_RE = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
+FORBIDDEN_TARGET_SEGMENTS = {
+    '.', '..', 'server_data', '.git', '.env', 'etc', 'proc', 'sys', 'var',
+    'root', 'home', 'windows', 'system32', 'secrets', 'backups', 'tests',
+}
+FORBIDDEN_TARGET_FILENAMES = {
+    'admin.json', 'ai.json', 'telegram.json', 'yookassa.json', 'flexa.db',
+    'admin_password', 'admin_password.txt', 'passwd', 'shadow', 'id_rsa',
+}
+FORBIDDEN_TARGET_EXTENSIONS = (
+    '.py', '.pyc', '.db', '.sqlite', '.sqlite3', '.env',
+    '.pem', '.key', '.sh', '.bat', '.ps1', '.exe', '.dll', '.so',
+)
 
 
 class ConflictError(Exception):
@@ -43,17 +57,44 @@ def _fmt_iso(ts):
 
 
 def _validate_target_object(raw):
+    """Allow strictly normalized relative project object identifiers (e.g. site/index.html#title)."""
     if not isinstance(raw, str):
         raise ValueError('Поле targetObject должно быть строкой')
-    s = raw.replace('\x00', '').strip()
-    if not s or not TARGET_OBJECT_RE.fullmatch(s):
-        raise ValueError('Некорректный формат targetObject (разрешены латиница, цифры, _./:#-)')
-    low = s.lower()
-    if '..' in s or 'server_data' in low or low.endswith('.py') or low.startswith(('/', '\\')):
-        if not s.startswith('/'):
-            raise ValueError('Недопустимый путь в targetObject')
-    if '..' in s or 'server_data' in low or low.endswith('.py') or '://' in s:
-        raise ValueError('Недопустимый targetObject')
+    if '\x00' in raw or any(ord(c) < 32 or ord(c) == 127 for c in raw):
+        raise ValueError('Поле targetObject содержит недопустимые управляющие символы')
+    s = raw.strip()
+    if not s or len(s) > 200 or s != raw:
+        raise ValueError('Некорректный формат или длина targetObject')
+    if any(ch.isspace() for ch in s) or '\\' in s or '%' in s or ':' in s or '://' in s:
+        raise ValueError('targetObject запрещает пробелы, обратные слеши, URL-схемы и encoded-последовательности')
+    if s.startswith(('/', '~')) or '//' in s:
+        raise ValueError('targetObject должен быть относительным идентификатором без ведущего слеша')
+
+    # Defense-in-depth double-decode check
+    dec1 = urllib.parse.unquote(s)
+    dec2 = urllib.parse.unquote(dec1)
+    for cand in (s, dec1, dec2):
+        if '..' in cand or '\\' in cand or '\x00' in cand or ':' in cand or cand.startswith('/'):
+            raise ValueError('Недопустимый traversal или системный путь в targetObject')
+
+    if s.count('#') > 1:
+        raise ValueError('Некорректный фрагмент # в targetObject')
+    path_part, _, frag_part = s.partition('#')
+    if '#' in s and not FRAGMENT_RE.fullmatch(frag_part):
+        raise ValueError('Некорректный идентификатор якоря в targetObject')
+
+    if not REL_TARGET_PATH_RE.fullmatch(path_part):
+        raise ValueError('targetObject разрешает только относительные пути вида site/index.html')
+
+    segments = path_part.split('/')
+    for seg in segments:
+        low_seg = seg.lower()
+        if low_seg in FORBIDDEN_TARGET_SEGMENTS or '..' in seg:
+            raise ValueError('Запрещённый системный или секретный сегмент в targetObject')
+
+    last_low = segments[-1].lower()
+    if last_low in FORBIDDEN_TARGET_FILENAMES or last_low.endswith(FORBIDDEN_TARGET_EXTENSIONS):
+        raise ValueError('Запрещённый тип файла в targetObject')
     return s
 
 

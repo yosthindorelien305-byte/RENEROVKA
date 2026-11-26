@@ -6,6 +6,7 @@ import os
 import re
 import sqlite3
 import time
+import urllib.parse
 
 from .db import init_growth_db, record_audit_event
 
@@ -59,16 +60,63 @@ def _clean_text(raw, *, field, min_len=0, max_len=2000):
     return s
 
 
-def _validate_target_url(raw):
-    s = _clean_text(raw, field='targetUrl', min_len=0, max_len=300)
+INTERNAL_URL_RE = re.compile(r'^/[A-Za-z0-9_./-]*(\?[A-Za-z0-9_=&.%-]*)?(#[A-Za-z0-9_./=-]*)?$')
+
+
+def _validate_and_classify_target_url(raw):
+    """Validate targetUrl and classify strictly into ('none' | 'internal' | 'external')."""
+    if raw is None or raw == '':
+        return '', 'none'
+    if not isinstance(raw, str):
+        raise ValueError('Поле targetUrl должно быть строкой')
+    if '\x00' in raw or any(ord(c) < 32 or ord(c) == 127 for c in raw):
+        raise ValueError('Поле targetUrl содержит недопустимые управляющие символы')
+    s = raw.strip()
     if not s:
-        return ''
+        return '', 'none'
+    if len(s) > 300 or any(ch.isspace() for ch in s) or '\\' in s:
+        raise ValueError('Некорректный формат или длина targetUrl')
+
     low = s.lower()
-    if low.startswith(('javascript:', 'data:', 'vbscript:')) or '..' in s:
-        raise ValueError('Недопустимый targetUrl')
-    if not (s.startswith('/') or re.match(r'^https?://', s, re.I) or re.fullmatch(r'[A-Za-z0-9_./:#-]+', s)):
-        raise ValueError('Некорректный формат targetUrl')
-    return s
+    if low.startswith(('javascript:', 'data:', 'vbscript:', 'file:', 'blob:', 'about:')):
+        raise ValueError('Запрещённая URI-схема в targetUrl')
+    if s.startswith('//'):
+        raise ValueError('Protocol-relative URL (//host) запрещён в targetUrl')
+
+    dec1 = urllib.parse.unquote(s)
+    dec2 = urllib.parse.unquote(dec1)
+    for cand in (s, dec1, dec2):
+        cand_low = cand.lower()
+        if '..' in cand or '\\' in cand or '\x00' in cand or any(ord(c) < 32 or ord(c) == 127 for c in cand):
+            raise ValueError('Недопустимый traversal или спецсимвол в targetUrl')
+        if cand_low.startswith(('javascript:', 'data:', 'vbscript:', 'file:', 'blob:', 'about:')):
+            raise ValueError('Запрещённая encoded URI-схема в targetUrl')
+
+    if s.startswith('/'):
+        if not INTERNAL_URL_RE.fullmatch(s) or s.lower().startswith('/server_data'):
+            raise ValueError('Недопустимый внутренний targetUrl')
+        return s, 'internal'
+
+    parsed = urllib.parse.urlparse(s)
+    scheme = (parsed.scheme or '').lower()
+    if scheme in ('http', 'https'):
+        if parsed.username is not None or parsed.password is not None or '@' in (parsed.netloc or ''):
+            raise ValueError('Userinfo (@) запрещён во внешнем targetUrl')
+        try:
+            _ = parsed.port
+        except ValueError:
+            raise ValueError('Некорректный порт во внешнем targetUrl')
+        host = (parsed.hostname or '').strip()
+        if not host or ('.' not in host and host != 'localhost'):
+            raise ValueError('Некорректный домен во внешнем targetUrl')
+        return s, 'external'
+
+    raise ValueError('targetUrl должен быть относительным внутренним путём (/...) или http(s):// URL')
+
+
+def _validate_target_url(raw):
+    clean, _ = _validate_and_classify_target_url(raw)
+    return clean
 
 
 def _parse_optional_pos_int(val, field):
@@ -89,6 +137,11 @@ def _row_to_task(row):
     c_at = int(row['created_at'] or 0)
     u_at = int(row['updated_at'] or 0)
     done_at = int(row['completed_at']) if row['completed_at'] else None
+    t_url = str(row['target_url'] or '')
+    try:
+        clean_url, url_type = _validate_and_classify_target_url(t_url)
+    except ValueError:
+        clean_url, url_type = '', 'none'
     return {
         'id': int(row['id']),
         'title': str(row['title'] or ''),
@@ -98,7 +151,9 @@ def _row_to_task(row):
         'status': str(row['status'] or 'open'),
         'seoAuditRunId': int(row['seo_audit_run_id']) if row['seo_audit_run_id'] is not None else None,
         'seoIssueId': int(row['seo_issue_id']) if row['seo_issue_id'] is not None else None,
-        'targetUrl': str(row['target_url'] or ''),
+        'targetUrl': clean_url,
+        'targetUrlType': url_type,
+        'externalNavigationDisabled': (url_type == 'external'),
         'createdBy': str(row['created_by'] or 'admin'),
         'createdAt': c_at,
         'createdAtIso': _fmt_iso(c_at),
@@ -344,7 +399,12 @@ def create_task(db_file, db_lock, payload, *, actor='admin', actor_ip=''):
             if run_id is None:
                 run_id = int(ir['run_id'])
             if not target_url:
-                target_url = str(ir['page_url'] or '')
+                first_page = str(ir['page_url'] or '').split(',')[0].strip()
+                if first_page:
+                    try:
+                        target_url, _ = _validate_and_classify_target_url(first_page)
+                    except ValueError:
+                        target_url = ''
         elif run_id is not None:
             rr = conn.execute('SELECT id FROM growth_seo_audit_runs WHERE id = ?', (run_id,)).fetchone()
             if not rr:

@@ -52,33 +52,106 @@ def _read_json_body(handler, *, allow_empty=False):
     return obj, None
 
 
+def _parse_host_header(raw_host):
+    """Normalize HTTP Host header into (hostname, port_or_None) or None if invalid."""
+    s = str(raw_host or '').strip().lower()
+    if not s or len(s) > 255 or any(ch.isspace() for ch in s) or '@' in s or '/' in s or '\\' in s:
+        return None
+    if s.startswith('['):
+        if ']' not in s:
+            return None
+        host_part, rest = s.split(']', 1)
+        hostname = host_part[1:].rstrip('.')
+        if not hostname:
+            return None
+        if not rest:
+            return hostname, None
+        if not rest.startswith(':'):
+            return None
+        port_str = rest[1:]
+        if not port_str.isdigit() or not (1 <= int(port_str) <= 65535):
+            return None
+        return hostname, int(port_str)
+
+    if s.count(':') > 1:
+        return None
+    if ':' in s:
+        hostname, port_str = s.split(':', 1)
+        hostname = hostname.rstrip('.')
+        if not hostname or not port_str.isdigit() or not (1 <= int(port_str) <= 65535):
+            return None
+        return hostname, int(port_str)
+    return s.rstrip('.'), None
+
+
+def _parse_url_host_port(raw_url):
+    """Parse Origin/Referer URL into (scheme, hostname, port_or_None) or None if invalid."""
+    s = str(raw_url or '').strip()
+    if not s or s.lower() == 'null' or any(ch.isspace() for ch in s):
+        return None
+    parsed = urlparse(s)
+    scheme = (parsed.scheme or '').lower()
+    if scheme not in ('http', 'https'):
+        return None
+    if parsed.username is not None or parsed.password is not None or '@' in (parsed.netloc or ''):
+        return None
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    hostname = (parsed.hostname or '').strip().lower().rstrip('.')
+    if not hostname:
+        return None
+    return scheme, hostname, port
+
+
+def _url_matches_host(url_info, req_host_info):
+    scheme, u_host, u_port = url_info
+    r_host, r_port = req_host_info
+    if u_host != r_host:
+        return False
+    default_port = 443 if scheme == 'https' else 80
+    u_eff = u_port if u_port is not None else default_port
+    if r_port is not None:
+        return u_eff == r_port
+    return u_eff == default_port
+
+
 def check_growth_csrf(handler):
-    """Verify Origin/Referer host match and non-form request headers on mutating endpoints."""
+    """Enforce Host normalization, Origin/Referer presence+match, and trusted non-simple headers."""
     hdrs = getattr(handler, 'headers', None)
     if hdrs is None:
-        return False, 'missing headers'
+        return False, 'missing_headers'
 
-    host = str(hdrs.get('Host') or '').strip().lower()
+    req_host_info = _parse_host_header(hdrs.get('Host'))
+    if not req_host_info:
+        return False, 'csrf_invalid_host'
+
     origin = str(hdrs.get('Origin') or '').strip()
     referer = str(hdrs.get('Referer') or '').strip()
+    if not origin and not referer:
+        return False, 'csrf_missing_origin_or_referer'
 
     if origin:
-        parsed = urlparse(origin)
-        origin_host = (parsed.netloc or '').lower()
-        if parsed.scheme not in ('http', 'https') or not origin_host or (host and origin_host != host):
+        o_info = _parse_url_host_port(origin)
+        if not o_info or not _url_matches_host(o_info, req_host_info):
             return False, 'csrf_origin_mismatch'
-    elif referer:
-        parsed = urlparse(referer)
-        ref_host = (parsed.netloc or '').lower()
-        if parsed.scheme not in ('http', 'https') or not ref_host or (host and ref_host != host):
+
+    if referer:
+        r_info = _parse_url_host_port(referer)
+        if not r_info or not _url_matches_host(r_info, req_host_info):
             return False, 'csrf_referer_mismatch'
+
+    ctype = str(hdrs.get('Content-Type') or '').strip().lower()
+    if ctype.startswith(('application/x-www-form-urlencoded', 'multipart/form-data', 'text/plain')):
+        return False, 'csrf_invalid_content_type'
 
     x_req = str(hdrs.get('X-Requested-With') or '').strip().lower()
     x_adm = str(hdrs.get('X-Rizza-Admin') or '').strip()
-    ctype = str(hdrs.get('Content-Type') or '').strip().lower()
-    if x_req == 'xmlhttprequest' or x_adm == '1' or ctype.startswith('application/json'):
-        return True, ''
-    return False, 'csrf_header_or_json_required'
+    if x_req != 'xmlhttprequest' and x_adm != '1':
+        return False, 'csrf_trusted_header_required'
+
+    return True, ''
 
 
 def handle_growth_get(handler, path, query_params, *, db_file, db_lock, site_dir, content_dir, free_access_mode):
