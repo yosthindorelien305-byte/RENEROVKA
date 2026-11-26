@@ -54,12 +54,12 @@ class TestGrowthFrontendUI(unittest.TestCase):
           dataQuality: { dbHealth: 'ok' },
           registrations: { status: 'ok', source: 'flexa.db:users', updatedAt: '2026-11-26T12:00:00Z', totalUsers: 4, newInPeriod: 3, byAuthMethod: { telegram: 1, password: 3 }, dailySeries: [{ date: '2026-11-26', count: 3 }] },
           engagement: {
-            loginActivity: { status: 'ok', source: 'flexa.db:users.last_login_at', updatedAt: '2026-11-26T12:00:00Z', dau: 1, wau: 2, mau: 3 },
-            workoutActivity: { status: 'ok', source: 'flexa.db:user_state.hist', updatedAt: '2026-11-26T12:00:00Z', dau: 1, wau: 2, mau: 2, workoutsInPeriod: 3, workoutsTotal: 3, medianDurationSec: 1200 }
+            lastLoginActivity: { status: 'ok', isProxy: true, metricType: 'last_login_proxy', source: 'flexa.db:users.last_login_at', updatedAt: '2026-11-26T12:00:00Z', last24h: 1, last7d: 2, last30d: 3 },
+            workoutActivity: { status: 'ok', isProxy: false, metricType: 'workout_history', source: 'flexa.db:user_state.hist', updatedAt: '2026-11-26T12:00:00Z', dau: 1, wau: 2, mau: 2, workoutsInPeriod: 3, workoutsTotal: 3, medianDurationSec: 1200 }
           },
           retention: {
-            workoutRetention: { status: 'insufficient_data', source: 'flexa.db', updatedAt: '2026-11-26T12:00:00Z', d1: { cohortSize: 0, retainedCount: 0, ratePct: null, status: 'insufficient_data' }, d7: {}, d30: {} },
-            loginRetention: { status: 'ok', source: 'flexa.db', updatedAt: '2026-11-26T12:00:00Z', d1: { cohortSize: 2, retainedCount: 1, ratePct: 50.0, status: 'ok' }, d7: {}, d30: {} }
+            workoutRetention: { status: 'insufficient_data', isProxy: false, source: 'flexa.db', updatedAt: '2026-11-26T12:00:00Z', d1: { windowDefinition: '[+1д, +2д)', cohortSize: 0, excludedIncompleteCount: 2, retainedCount: 0, ratePct: null, status: 'insufficient_data' }, d7: {}, d30: {} },
+            lastLoginReturnProxy: { status: 'ok', isProxy: true, source: 'flexa.db', updatedAt: '2026-11-26T12:00:00Z', d1: { windowDefinition: 'last_login_at >= +1д', cohortSize: 2, excludedIncompleteCount: 1, retainedCount: 1, ratePct: 50.0, status: 'ok' }, d7: {}, d30: {} }
           },
           activation: { status: 'ok', firstWorkoutUsers: 2, firstWorkoutRatePct: 50.0, profileCompletedUsers: 2, profileCompletedRatePct: 50.0, programStartedUsers: 1, programStartedRatePct: 25.0 },
           workouts: { status: 'ok', completedInPeriod: 3, completedTotal: 3, avgExercisesPerWorkout: 4.5, dailySeries: [{ date: '2026-11-26', count: 3 }] },
@@ -71,8 +71,11 @@ class TestGrowthFrontendUI(unittest.TestCase):
           moderation: { status: 'ok', reportsByStatus: { new: 1, reviewed: 1, closed: 0 }, avgReviewTimeHours: 2.0, acceptedFriendships: 1, activeBlocks: 1 },
           externalSources: { status: 'unavailable', updatedAt: '2026-11-26T12:00:00Z', items: [{ id: 'ga4', label: 'Google Analytics 4', status: 'unavailable', source: 'GA4', reason: 'Not connected' }] }
         });
-        assert(anHtml.includes('Входы в аккаунт (Auth DAU/WAU/MAU)'));
+        assert(anHtml.includes('Последний вход в аккаунт (прокси: 24ч / 7д / 30д)'));
+        assert(!anHtml.includes('Auth DAU/WAU/MAU'));
         assert(anHtml.includes('Фактические тренировки (Workout DAU/WAU/MAU)'));
+        assert(anHtml.includes('Возврат по последнему входу (прокси)'));
+        assert(anHtml.includes('исключено неполн.: 2'));
         assert(anHtml.includes('Недостаточно данных'));
         assert(anHtml.includes('unavailable'));
 

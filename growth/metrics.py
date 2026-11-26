@@ -211,12 +211,12 @@ def _degraded_analytics(days, now_ts, db_health, err_msg, free_access_mode):
         },
         'registrations': {**unavail_block, 'definition': 'Регистрации в таблице users'},
         'engagement': {
-            'loginActivity': {**unavail_block, 'definition': 'Активность входов по users.last_login_at'},
-            'workoutActivity': {**unavail_block, 'definition': 'Активность тренировок по user_state.hist'},
+            'lastLoginActivity': {**unavail_block, 'isProxy': True, 'metricType': 'last_login_proxy', 'definition': 'Прокси недавних входов по единственному полю users.last_login_at (не исторический DAU/WAU/MAU)'},
+            'workoutActivity': {**unavail_block, 'isProxy': False, 'metricType': 'workout_history', 'definition': 'Фактическая активность тренировок по user_state.hist'},
         },
         'retention': {
-            'workoutRetention': {**unavail_block, 'definition': 'Когортное удержание тренировок D1/D7/D30'},
-            'loginRetention': {**unavail_block, 'definition': 'Возврат по last_login_at D1/D7/D30'},
+            'workoutRetention': {**unavail_block, 'isProxy': False, 'definition': 'Когортное удержание фактических тренировок D1/D7/D30'},
+            'lastLoginReturnProxy': {**unavail_block, 'isProxy': True, 'metricType': 'last_login_return_proxy', 'definition': 'Rolling-прокси возврата по единственному полю users.last_login_at D1/D7/D30'},
         },
         'activation': {**unavail_block, 'definition': 'Активация зарегистрированных пользователей'},
         'workouts': {**unavail_block, 'definition': 'Завершённые тренировки из user_state.hist'},
@@ -315,12 +315,13 @@ def compute_analytics(
 
     prog_titles, wo_titles = _load_catalog_titles(site_dir, content_dir)
     period_start = now - period_days * 86400
+    max_ts = now + 300
     d1_cut = now - 86400
     d7_cut = now - 7 * 86400
     d30_cut = now - 30 * 86400
     coach_cut = now - COACH_WINDOW_DAYS * 86400
 
-    # --- 1. Users & Login Activity (strictly users.last_login_at) ---
+    # --- 1. Users & Last-Login Recency Proxy (strictly users.last_login_at) ---
     users_rows = snap['users']
     total_users = len(users_rows)
     blocked_users = 0
@@ -330,9 +331,9 @@ def compute_analytics(
     auth_pw = 0
     real_pro_active = 0
 
-    login_dau = 0
-    login_wau = 0
-    login_mau = 0
+    last_login_24h = 0
+    last_login_7d = 0
+    last_login_30d = 0
 
     user_created_map = {}
     user_last_login_map = {}
@@ -357,7 +358,7 @@ def compute_analytics(
         else:
             auth_pw += 1
 
-        if c_ts >= period_start:
+        if c_ts >= period_start and c_ts <= max_ts:
             new_in_period += 1
             d_str = _fmt_utc_date(c_ts)
             if d_str in reg_buckets:
@@ -366,13 +367,13 @@ def compute_analytics(
         if not blk and str(plan or '').lower() == 'pro' and (int(plan_expires_at or 0) == 0 or int(plan_expires_at or 0) > now):
             real_pro_active += 1
 
-        if l_ts > 0:
+        if not blk and 0 < l_ts <= max_ts:
             if l_ts >= d1_cut:
-                login_dau += 1
+                last_login_24h += 1
             if l_ts >= d7_cut:
-                login_wau += 1
+                last_login_7d += 1
             if l_ts >= d30_cut:
-                login_mau += 1
+                last_login_30d += 1
 
     # --- 2. User State: Workouts, Programs, RPE, Fitness Profiles ---
     malformed_state_rows = 0
@@ -505,48 +506,56 @@ def compute_analytics(
             if u_times:
                 user_workout_times[uid_int] = u_times
 
-    workout_dau = sum(1 for ts_list in user_workout_times.values() if any(t >= d1_cut for t in ts_list))
-    workout_wau = sum(1 for ts_list in user_workout_times.values() if any(t >= d7_cut for t in ts_list))
-    workout_mau = sum(1 for ts_list in user_workout_times.values() if any(t >= d30_cut for t in ts_list))
+    workout_dau = sum(1 for ts_list in user_workout_times.values() if any(d1_cut <= t <= max_ts for t in ts_list))
+    workout_wau = sum(1 for ts_list in user_workout_times.values() if any(d7_cut <= t <= max_ts for t in ts_list))
+    workout_mau = sum(1 for ts_list in user_workout_times.values() if any(d30_cut <= t <= max_ts for t in ts_list))
 
-    # --- 3. Retention (Workout Cohorts vs Login Proxy) ---
+    # --- 3. Retention (Completed Workout Cohorts vs Last-Login Return Proxy) ---
     workout_retention = {}
-    login_retention = {}
+    last_login_return_proxy = {}
     for n in (1, 7, 30):
         key = f'd{n}'
-        # Workout cohort D(N): registered at least N+1 days ago, logged workout in [created + N*d, created + (N+1)*d)
-        w_eligible = [
+        min_age_sec = (n + 1) * 86400
+        # Only users registered >= N+1 full days ago have a closed Day N observation window [created+N*d, created+(N+1)*d)
+        matured_cohort = [
             uid_i for uid_i, c_ts in user_created_map.items()
-            if c_ts > 0 and (now - c_ts) >= (n + 1) * 86400
+            if 0 < c_ts <= max_ts and (now - c_ts) >= min_age_sec
         ]
+        incomplete_cnt = sum(
+            1 for c_ts in user_created_map.values()
+            if 0 < c_ts <= max_ts and 0 <= (now - c_ts) < min_age_sec
+        )
+
         w_retained = 0
-        for uid_i in w_eligible:
+        for uid_i in matured_cohort:
             c_ts = user_created_map[uid_i]
             win_start = c_ts + n * 86400
             win_end = c_ts + (n + 1) * 86400
             if any(win_start <= wt < win_end for wt in user_workout_times.get(uid_i, ())):
                 w_retained += 1
         workout_retention[key] = {
-            'cohortSize': len(w_eligible),
+            'minAgeDays': n + 1,
+            'windowDefinition': f'[+{n}д, +{n + 1}д) от регистрации',
+            'cohortSize': len(matured_cohort),
+            'excludedIncompleteCount': incomplete_cnt,
             'retainedCount': w_retained,
-            'ratePct': _pct(w_retained, len(w_eligible)),
-            'status': 'ok' if w_eligible else 'insufficient_data',
+            'ratePct': _pct(w_retained, len(matured_cohort)),
+            'status': 'ok' if matured_cohort else 'insufficient_data',
         }
 
-        # Login rolling proxy D(N): last_login_at >= created_at + N*d among users >= N days old
-        l_eligible = [
-            uid_i for uid_i, c_ts in user_created_map.items()
-            if c_ts > 0 and (now - c_ts) >= n * 86400
-        ]
+        # Last-login rolling proxy among the same matured cohort (>= N+1 days old) to avoid incomplete-cohort bias
         l_retained = sum(
-            1 for uid_i in l_eligible
-            if user_last_login_map.get(uid_i, 0) >= user_created_map[uid_i] + n * 86400
+            1 for uid_i in matured_cohort
+            if (user_created_map[uid_i] + n * 86400) <= user_last_login_map.get(uid_i, 0) <= max_ts
         )
-        login_retention[key] = {
-            'cohortSize': len(l_eligible),
+        last_login_return_proxy[key] = {
+            'minAgeDays': n + 1,
+            'windowDefinition': f'last_login_at >= +{n}д (когорта >= {n + 1}д)',
+            'cohortSize': len(matured_cohort),
+            'excludedIncompleteCount': incomplete_cnt,
             'retainedCount': l_retained,
-            'ratePct': _pct(l_retained, len(l_eligible)),
-            'status': 'ok' if l_eligible else 'insufficient_data',
+            'ratePct': _pct(l_retained, len(matured_cohort)),
+            'status': 'ok' if matured_cohort else 'insufficient_data',
         }
 
     # --- 4. Catalog Popularity ---
@@ -674,21 +683,25 @@ def compute_analytics(
             'dailySeries': [{'date': d, 'count': reg_buckets[d]} for d in reg_dates],
         },
         'engagement': {
-            'loginActivity': {
+            'lastLoginActivity': {
                 'status': 'ok' if total_users > 0 else 'insufficient_data',
-                'source': 'flexa.db:users.last_login_at',
+                'isProxy': True,
+                'metricType': 'last_login_proxy',
+                'source': 'flexa.db:users.last_login_at (активные, не заблокированы)',
                 'updatedAt': updated_iso,
-                'definition': 'Уникальные аккаунты с last_login_at в окнах 24ч / 7д / 30д (только входы, не тренировки)',
-                'limitations': 'Хранится только время последнего входа, а не журнал каждой сессии входа.',
-                'dau': login_dau,
-                'wau': login_wau,
-                'mau': login_mau,
+                'definition': 'Прокси недавности входа: активные аккаунты, у которых единственное поле last_login_at попадает в 24ч / 7д / 30д. Не является точным историческим DAU/WAU/MAU.',
+                'limitations': 'БД хранит только время последнего входа (перезаписывается новым входом), без истории отдельных логин-сессий; пользователи без повторного входа после регистрации или с более поздним логином искажают исторические окна.',
+                'last24h': last_login_24h,
+                'last7d': last_login_7d,
+                'last30d': last_login_30d,
             },
             'workoutActivity': {
                 'status': 'ok' if total_users > 0 else 'insufficient_data',
+                'isProxy': False,
+                'metricType': 'workout_history',
                 'source': 'flexa.db:user_state.hist',
                 'updatedAt': updated_iso,
-                'definition': 'Уникальные аккаунты с фактическими записями в hist за последние 24ч / 7д / 30д',
+                'definition': 'Фактическая активность тренировок: уникальные аккаунты с синхронизированными записями в hist за 24ч (DAU) / 7д (WAU) / 30д (MAU)',
                 'limitations': 'Учитываются только авторизованные аккаунты, выполнившие синхронизацию user_state.',
                 'dau': workout_dau,
                 'wau': workout_wau,
@@ -701,19 +714,23 @@ def compute_analytics(
         'retention': {
             'workoutRetention': {
                 'status': 'ok' if any(v['status'] == 'ok' for v in workout_retention.values()) else 'insufficient_data',
+                'isProxy': False,
+                'metricType': 'workout_cohort_retention',
                 'source': 'flexa.db:users.created_at + user_state.hist',
                 'updatedAt': updated_iso,
-                'definition': 'Доля пользователей когорты (>= N+1 дн.), зафиксировавших тренировку в окно [N, N+1) дней после регистрации',
-                'limitations': 'При малых когортах или отсутствии тренировок в точное суточное окно показатель помечается как insufficient_data.',
+                'definition': 'Доля пользователей зрелой когорты (возраст >= N+1 полных дней), зафиксировавших тренировку в точное окно [N, N+1) дней после регистрации (День 0 не засчитывается).',
+                'limitations': 'Аккаунты, не завершившие окно наблюдения (возраст < N+1 дн.), строго исключены из знаменателя; при cohortSize=0 возвращается insufficient_data.',
                 **workout_retention,
             },
-            'loginRetention': {
-                'status': 'ok' if any(v['status'] == 'ok' for v in login_retention.values()) else 'insufficient_data',
+            'lastLoginReturnProxy': {
+                'status': 'ok' if any(v['status'] == 'ok' for v in last_login_return_proxy.values()) else 'insufficient_data',
+                'isProxy': True,
+                'metricType': 'last_login_return_proxy',
                 'source': 'flexa.db:users.created_at + users.last_login_at',
                 'updatedAt': updated_iso,
-                'definition': 'Rolling-прокси возврата: last_login_at >= created_at + N дней (без тренировок)',
-                'limitations': 'last_login_at перезаписывается при каждом входе, поэтому это верхняя оценка возврата в аккаунт.',
-                **login_retention,
+                'definition': 'Rolling-прокси возврата в аккаунт: доля зрелой когорты (>= N+1 дн.), у которой last_login_at >= created_at + N дней (не является точным D-retention).',
+                'limitations': 'last_login_at перезаписывается при каждом входе и не фиксирует посещения в конкретный день N; неполные когорты (< N+1 дн.) исключены из знаменателя.',
+                **last_login_return_proxy,
             },
         },
         'activation': {
@@ -859,13 +876,14 @@ def compute_overview(
                 'definition': analytics['dataQuality'].get('error', 'БД недоступна'),
             },
             {
-                'id': 'login_wau',
-                'label': 'Входы WAU (7д)',
+                'id': 'last_login_7d_proxy',
+                'label': 'Последний вход за 7д (прокси)',
                 'value': 'Нет данных',
                 'delta': '',
                 'source': 'flexa.db:users.last_login_at',
                 'updatedAt': updated_iso,
                 'status': 'unavailable',
+                'isProxy': True,
             },
             {
                 'id': 'workout_wau',
@@ -895,7 +913,7 @@ def compute_overview(
         }]
     else:
         reg = analytics['registrations']
-        l_eng = analytics['engagement']['loginActivity']
+        l_eng = analytics['engagement']['lastLoginActivity']
         w_eng = analytics['engagement']['workoutActivity']
         act = analytics['activation']
         coach = analytics['aiCoach']
@@ -915,14 +933,15 @@ def compute_overview(
                 'definition': reg['definition'],
             },
             {
-                'id': 'login_wau',
-                'label': 'Входы в аккаунт WAU (7д)',
-                'value': str(l_eng['wau']),
-                'delta': f"DAU {l_eng['dau']} · MAU {l_eng['mau']}",
+                'id': 'last_login_7d_proxy',
+                'label': 'Последний вход за 7д (прокси)',
+                'value': str(l_eng['last7d']),
+                'delta': f"24ч: {l_eng['last24h']} · 30д: {l_eng['last30d']} (прокси)",
                 'source': l_eng['source'],
                 'updatedAt': updated_iso,
                 'status': l_eng['status'],
                 'definition': l_eng['definition'],
+                'isProxy': True,
             },
             {
                 'id': 'workout_wau',

@@ -1,16 +1,22 @@
 """Tests for AI Growth authorization, append-only SQLite audit log, and isolation (PR 4.1)."""
 
+import contextlib
+import gc
 import hashlib
 import io
 import json
 import os
 import sqlite3
+import subprocess
+import sys
+import tempfile
 import time
 import unittest
 from email.message import Message
 
 import server
 from growth import db as growth_db
+from growth import metrics as growth_metrics
 from tests.test_isolation import IsolatedServerTestCase, PROD_SECRET_DIR
 
 
@@ -208,6 +214,77 @@ class TestGrowthSecurityAndAudit(IsolatedServerTestCase):
 
         for p in prod_files:
             self.assertEqual(_snapshot(p), before[p], msg=f"Production file mutated: {p}")
+
+    def test_import_and_readonly_queries_do_not_mutate_existing_db(self):
+        with tempfile.TemporaryDirectory(prefix="flexa_pre_pr22_", ignore_cleanup_errors=True) as pre_dir:
+            pre_db = os.path.join(pre_dir, "flexa.db")
+            with contextlib.closing(sqlite3.connect(pre_db)) as conn:
+                conn.execute(
+                    "CREATE TABLE users ("
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "username TEXT UNIQUE NOT NULL, "
+                    "pw_salt TEXT NOT NULL, pw_hash TEXT NOT NULL, "
+                    "display_name TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '', "
+                    "plan TEXT NOT NULL DEFAULT 'free', plan_expires_at INTEGER NOT NULL DEFAULT 0, "
+                    "is_blocked INTEGER NOT NULL DEFAULT 0, last_login_at INTEGER NOT NULL DEFAULT 0, "
+                    "created_at INTEGER NOT NULL, oauth_provider TEXT NOT NULL DEFAULT '', "
+                    "oauth_id TEXT NOT NULL DEFAULT '', avatar TEXT NOT NULL DEFAULT '')"
+                )
+                conn.execute(
+                    "INSERT INTO users (id, username, pw_salt, pw_hash, created_at, last_login_at) "
+                    "VALUES (1, 'legacy_user', 's', 'h', 1760000000, 1761000000)"
+                )
+                conn.commit()
+
+            snap_before = _snapshot(pre_db)
+
+            # 1. Importing server & growth modules in a fresh Python process must NOT alter the existing DB
+            env = dict(os.environ)
+            env["FLEXA_DATA_DIR"] = pre_dir
+            res = subprocess.run(
+                [sys.executable, "-c", "import server, growth.db, growth.metrics, growth.routes; print('IMPORT_OK')"],
+                cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(res.returncode, 0, msg=res.stderr or res.stdout)
+            self.assertIn("IMPORT_OK", res.stdout)
+            self.assertEqual(_snapshot(pre_db), snap_before)
+
+            # 2. Read-only Growth queries against legacy DB without growth_audit_log must NOT create/mutate tables
+            audit_pre = growth_db.query_audit_log(pre_db, server.db_lock)
+            self.assertEqual(audit_pre["status"], "unavailable")
+            self.assertEqual(audit_pre["dbHealth"], "missing_table")
+            self.assertFalse(audit_pre["appendOnlyEnforced"])
+            an_pre = growth_metrics.compute_analytics(pre_db, server.db_lock, now_ts=1764000000)
+            self.assertTrue(an_pre["ok"])
+            self.assertEqual(an_pre["registrations"]["totalUsers"], 1)
+            self.assertEqual(_snapshot(pre_db), snap_before)
+
+            # 3. Explicit init_db() initializes growth_audit_log + triggers while preserving legacy users
+            orig_db, orig_sec = server.DB_FILE, server.SECRET_DIR
+            try:
+                server.SECRET_DIR = pre_dir
+                server.DB_FILE = pre_db
+                server.init_db()
+            finally:
+                server.DB_FILE, server.SECRET_DIR = orig_db, orig_sec
+                gc.collect()
+
+            with contextlib.closing(sqlite3.connect(pre_db)) as conn:
+                tbl = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='growth_audit_log'"
+                ).fetchone()
+                self.assertIsNotNone(tbl)
+                trigs = {
+                    r[0] for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name='growth_audit_log'"
+                    ).fetchall()
+                }
+                self.assertEqual(trigs, {"trg_growth_audit_no_update", "trg_growth_audit_no_delete"})
+                legacy = conn.execute("SELECT username FROM users WHERE id = 1").fetchone()
+                self.assertEqual(legacy[0], "legacy_user")
 
 
 if __name__ == "__main__":

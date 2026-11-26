@@ -50,7 +50,9 @@
 
   function renderMetricBlockHead(ui, title, block) {
     var b = block || {};
-    var sm = statusForMetric(b.status, 'Актуально');
+    var sm = b.isProxy && b.status === 'ok'
+      ? { code: 'pending_approval', label: 'Прокси (last_login_at)' }
+      : statusForMetric(b.status, 'Актуально');
     return '<div class="growth-block-head">' +
       '<div>' +
         '<h3 class="growth-block-title">' + esc(title) + '</h3>' +
@@ -114,23 +116,27 @@
   function renderRetentionTable(title, block, ui, noteText) {
     var b = block || {};
     var rows = [
-      { label: 'D1 (1-е сутки после регистрации)', data: b.d1 || {} },
-      { label: 'D7 (7-е сутки после регистрации)', data: b.d7 || {} },
-      { label: 'D30 (30-е сутки после регистрации)', data: b.d30 || {} }
+      { key: 'D1', fallbackWin: '[+1д, +2д) · мин. возраст 2д', data: b.d1 || {} },
+      { key: 'D7', fallbackWin: '[+7д, +8д) · мин. возраст 8д', data: b.d7 || {} },
+      { key: 'D30', fallbackWin: '[+30д, +31д) · мин. возраст 31д', data: b.d30 || {} }
     ];
     return '<div class="rf-card">' +
       renderMetricBlockHead(ui, title, b) +
       (b.status === 'unavailable'
         ? '<div class="rf-empty">Источник недоступен</div>'
-        : '<div class="rf-table-wrap"><table class="growth-table"><thead><tr><th>Окно</th><th>Когорта</th><th>Вернулись</th><th>Retention</th></tr></thead><tbody>' +
+        : '<div class="rf-table-wrap"><table class="growth-table"><thead><tr><th>Окно наблюдения</th><th>Зрелая когорта</th><th>Вернулись</th><th>Retention</th></tr></thead><tbody>' +
           rows.map(function (r) {
             var d = r.data || {};
-            var rateTxt = (d.ratePct !== null && d.ratePct !== undefined) ? (d.ratePct + '%') : 'Недостаточно данных';
+            var hasRate = d.ratePct !== null && d.ratePct !== undefined && Number(d.cohortSize || 0) > 0;
+            var rateTxt = hasRate ? (d.ratePct + '%') : 'Недостаточно данных';
+            var winLabel = r.key + ': ' + (d.windowDefinition || r.fallbackWin);
+            var excl = Number(d.excludedIncompleteCount || 0);
+            var cohortCell = fmtNum(d.cohortSize) + (excl > 0 ? (' (исключено неполн.: ' + excl + ')') : '');
             return '<tr>' +
-              '<td>' + esc(r.label) + '</td>' +
-              '<td>' + esc(fmtNum(d.cohortSize)) + '</td>' +
+              '<td>' + esc(winLabel) + '</td>' +
+              '<td>' + esc(cohortCell) + '</td>' +
               '<td>' + esc(fmtNum(d.retainedCount)) + '</td>' +
-              '<td>' + renderBadge(ui, d.status === 'ok' ? 'approved' : 'draft', rateTxt) + '</td>' +
+              '<td>' + renderBadge(ui, hasRate ? (b.isProxy ? 'pending_approval' : 'approved') : 'draft', rateTxt) + '</td>' +
             '</tr>';
           }).join('') +
           '</tbody></table></div>') +
@@ -270,7 +276,7 @@
 
     var reg = data.registrations || {};
     var eng = data.engagement || {};
-    var lEng = eng.loginActivity || {};
+    var lEng = eng.lastLoginActivity || eng.loginActivity || {};
     var wEng = eng.workoutActivity || {};
     var ret = data.retention || {};
     var act = data.activation || {};
@@ -337,11 +343,11 @@
       degradedBanner +
       '<div class="rf-grid-2">' +
         '<div class="rf-card">' +
-          renderMetricBlockHead(ui, 'Входы в аккаунт (Auth DAU/WAU/MAU)', lEng) +
+          renderMetricBlockHead(ui, 'Последний вход в аккаунт (прокси: 24ч / 7д / 30д)', lEng) +
           '<div class="growth-kv-grid">' +
-            '<div class="growth-kv"><span>DAU (24ч)</span><b>' + esc(fmtNum(lEng.dau)) + '</b></div>' +
-            '<div class="growth-kv"><span>WAU (7д)</span><b>' + esc(fmtNum(lEng.wau)) + '</b></div>' +
-            '<div class="growth-kv"><span>MAU (30д)</span><b>' + esc(fmtNum(lEng.mau)) + '</b></div>' +
+            '<div class="growth-kv"><span>За 24ч (прокси)</span><b>' + esc(fmtNum(lEng.last24h != null ? lEng.last24h : lEng.dau)) + '</b></div>' +
+            '<div class="growth-kv"><span>За 7д (прокси)</span><b>' + esc(fmtNum(lEng.last7d != null ? lEng.last7d : lEng.wau)) + '</b></div>' +
+            '<div class="growth-kv"><span>За 30д (прокси)</span><b>' + esc(fmtNum(lEng.last30d != null ? lEng.last30d : lEng.mau)) + '</b></div>' +
           '</div>' +
           renderMetricBlockFoot(ui, lEng) +
         '</div>' +
@@ -379,8 +385,8 @@
         '</div>' +
       '</div>' +
       '<div class="rf-grid-2">' +
-        renderRetentionTable('Когортный Retention тренировок', ret.workoutRetention, ui, 'Учитываются только фактические тренировки из user_state.hist.') +
-        renderRetentionTable('Возврат в аккаунт (Login Proxy)', ret.loginRetention, ui, 'Рассчитан отдельно по last_login_at (не является тренировочным retention).') +
+        renderRetentionTable('Когортный Retention тренировок', ret.workoutRetention, ui, 'Учитываются только зрелые когорты (возраст >= N+1 дн.) и фактические тренировки из user_state.hist (День 0 не засчитывается).') +
+        renderRetentionTable('Возврат по последнему входу (прокси)', ret.lastLoginReturnProxy || ret.loginRetention, ui, 'Rolling-прокси по единственному полю last_login_at среди зрелых когорт; не отражает точный исторический день N.') +
       '</div>' +
       '<div class="rf-grid-2">' +
         '<div class="rf-card">' +

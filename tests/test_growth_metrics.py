@@ -46,6 +46,9 @@ class TestGrowthMetrics(IsolatedServerTestCase):
         self.assertEqual(an["activation"]["status"], "insufficient_data")
         self.assertIsNone(an["retention"]["workoutRetention"]["d7"]["ratePct"])
         self.assertEqual(an["retention"]["workoutRetention"]["d7"]["status"], "insufficient_data")
+        self.assertIsNone(an["retention"]["lastLoginReturnProxy"]["d7"]["ratePct"])
+        self.assertTrue(an["retention"]["lastLoginReturnProxy"]["isProxy"])
+        self.assertTrue(an["engagement"]["lastLoginActivity"]["isProxy"])
         self.assertIsNone(an["aiCoach"]["avgMessagesPerSession"])
         self.assertEqual(an["externalSources"]["status"], "unavailable")
         for ext in an["externalSources"]["items"]:
@@ -194,18 +197,27 @@ class TestGrowthMetrics(IsolatedServerTestCase):
         self.assertEqual(reg["newInPeriod"], 3)
         self.assertEqual(reg["byAuthMethod"], {"telegram": 1, "password": 3})
 
-        # Strict Login vs Workout separation
-        l_eng = an_free["engagement"]["loginActivity"]
+        # Strict Last-Login Proxy vs Workout Activity separation
+        l_eng = an_free["engagement"]["lastLoginActivity"]
         w_eng = an_free["engagement"]["workoutActivity"]
-        self.assertEqual((l_eng["dau"], l_eng["wau"], l_eng["mau"]), (1, 2, 3))
+        self.assertTrue(l_eng["isProxy"])
+        self.assertEqual(l_eng["metricType"], "last_login_proxy")
+        self.assertEqual((l_eng["last24h"], l_eng["last7d"], l_eng["last30d"]), (1, 2, 3))
+        self.assertFalse(w_eng["isProxy"])
         self.assertEqual((w_eng["dau"], w_eng["wau"], w_eng["mau"]), (1, 2, 2))
 
-        # Retention D1 (eligible at >=2d old -> users 1, 2, 3, 4; user 2 worked out in D1 window)
+        # Retention D1 (matured at >=2d old -> users 1, 2, 3, 4; user 2 worked out in D1 window)
+        self.assertEqual(an_free["retention"]["workoutRetention"]["d1"]["minAgeDays"], 2)
         self.assertEqual(an_free["retention"]["workoutRetention"]["d1"]["cohortSize"], 4)
+        self.assertEqual(an_free["retention"]["workoutRetention"]["d1"]["excludedIncompleteCount"], 0)
         self.assertEqual(an_free["retention"]["workoutRetention"]["d1"]["retainedCount"], 1)
         self.assertEqual(an_free["retention"]["workoutRetention"]["d1"]["ratePct"], 25.0)
-        # D30 cohort has user 4 only
+        # D30 cohort (>=31d old) has user 4 only, leaving 3 incomplete users excluded
+        self.assertEqual(an_free["retention"]["workoutRetention"]["d30"]["minAgeDays"], 31)
         self.assertEqual(an_free["retention"]["workoutRetention"]["d30"]["cohortSize"], 1)
+        self.assertEqual(an_free["retention"]["workoutRetention"]["d30"]["excludedIncompleteCount"], 3)
+        self.assertTrue(an_free["retention"]["lastLoginReturnProxy"]["isProxy"])
+        self.assertEqual(an_free["retention"]["lastLoginReturnProxy"]["d1"]["cohortSize"], 4)
 
         # Activation & Workouts
         self.assertEqual(an_free["activation"]["firstWorkoutUsers"], 2)
@@ -329,6 +341,100 @@ class TestGrowthMetrics(IsolatedServerTestCase):
         self.assertTrue(ov["degraded"])
         self.assertEqual(ov["systemStatus"]["dbHealth"], "corrupted")
         self.assertEqual(ov["kpis"][0]["value"], "Нет данных")
+
+
+    def test_retention_incomplete_cohorts_excluded_and_day0_not_counted(self):
+        day = 86400
+        # User 10: registered 36h ago -> INCOMPLETE for D1 (requires >=48h); worked out on Day 0 (+2h) and +26h
+        u10_crt = FIXED_NOW - int(1.5 * day)
+        # User 11: registered 7.5d ago -> MATURE for D1 (>=2d) with Day 0 only (+1h -> NOT retained!), INCOMPLETE for D7 (>=8d)
+        u11_crt = FIXED_NOW - int(7.5 * day)
+        # User 12: registered 8.5d ago -> MATURE for D1 and D7; worked out inside [7d, 8d) and logged in at +7.2d
+        u12_crt = FIXED_NOW - int(8.5 * day)
+        # User 13: blocked user registered 12h ago with last_login_at 1h ago -> incomplete for D1 and excluded from lastLoginActivity
+        u13_crt = FIXED_NOW - int(0.5 * day)
+        # User 14: registered 9.5d ago -> MATURE for D1 and D7; worked out at +2d (outside D1 and D7) and logged in only at +1h
+        u14_crt = FIXED_NOW - int(9.5 * day)
+        with server.db_lock, sqlite3.connect(server.DB_FILE) as conn:
+            conn.execute(
+                "INSERT INTO users (id, username, pw_salt, pw_hash, display_name, email, plan, plan_expires_at, is_blocked, last_login_at, created_at) "
+                "VALUES (10, 'u10', 's', 'h', 'U10', 'u10@x.com', 'free', 0, 0, ?, ?)",
+                (u10_crt + 2 * 3600, u10_crt),
+            )
+            conn.execute(
+                "INSERT INTO users (id, username, pw_salt, pw_hash, display_name, email, plan, plan_expires_at, is_blocked, last_login_at, created_at) "
+                "VALUES (11, 'u11', 's', 'h', 'U11', 'u11@x.com', 'free', 0, 0, ?, ?)",
+                (u11_crt + 3600, u11_crt),
+            )
+            conn.execute(
+                "INSERT INTO users (id, username, pw_salt, pw_hash, display_name, email, plan, plan_expires_at, is_blocked, last_login_at, created_at) "
+                "VALUES (12, 'u12', 's', 'h', 'U12', 'u12@x.com', 'free', 0, 0, ?, ?)",
+                (u12_crt + int(7.2 * day), u12_crt),
+            )
+            conn.execute(
+                "INSERT INTO users (id, username, pw_salt, pw_hash, display_name, email, plan, plan_expires_at, is_blocked, last_login_at, created_at) "
+                "VALUES (13, 'u13_blk', 's', 'h', 'U13', 'u13@x.com', 'free', 0, 1, ?, ?)",
+                (FIXED_NOW - 3600, u13_crt),
+            )
+            conn.execute(
+                "INSERT INTO users (id, username, pw_salt, pw_hash, display_name, email, plan, plan_expires_at, is_blocked, last_login_at, created_at) "
+                "VALUES (14, 'u14', 's', 'h', 'U14', 'u14@x.com', 'free', 0, 0, ?, ?)",
+                (u14_crt + 3600, u14_crt),
+            )
+            conn.execute(
+                "INSERT INTO user_state (user_id, data_json, updated_at) VALUES (10, ?, ?)",
+                (json.dumps({"hist": json.dumps([{"id": "1", "t": u10_crt + 7200}, {"id": "1", "t": u10_crt + day + 7200}])}), FIXED_NOW),
+            )
+            conn.execute(
+                "INSERT INTO user_state (user_id, data_json, updated_at) VALUES (11, ?, ?)",
+                (json.dumps({"hist": json.dumps([{"id": "1", "t": u11_crt + 3600}])}), FIXED_NOW),
+            )
+            conn.execute(
+                "INSERT INTO user_state (user_id, data_json, updated_at) VALUES (12, ?, ?)",
+                (json.dumps({"hist": json.dumps([{"id": "1", "t": u12_crt + 7 * day + 3600}])}), FIXED_NOW),
+            )
+            conn.execute(
+                "INSERT INTO user_state (user_id, data_json, updated_at) VALUES (14, ?, ?)",
+                (json.dumps({"hist": json.dumps([{"id": "1", "t": u14_crt + 2 * day + 3600}])}), FIXED_NOW),
+            )
+            conn.commit()
+
+        an = growth_metrics.compute_analytics(
+            server.DB_FILE,
+            server.db_lock,
+            site_dir=server.SITE,
+            content_dir=server.CONTENT,
+            days=30,
+            now_ts=FIXED_NOW,
+        )
+        # Blocked user 13 logged in 1h ago MUST NOT count in lastLoginActivity (only u10 & u12 in 7d)
+        self.assertEqual(an["engagement"]["lastLoginActivity"]["last24h"], 0)
+        self.assertEqual(an["engagement"]["lastLoginActivity"]["last7d"], 2)
+
+        wr = an["retention"]["workoutRetention"]
+        # D1 (minAge=2d): mature = {11, 12, 14} => cohortSize=3; u10 (1.5d) & u13 (0.5d) excluded as incomplete
+        self.assertEqual(wr["d1"]["cohortSize"], 3)
+        self.assertEqual(wr["d1"]["excludedIncompleteCount"], 2)
+        self.assertEqual(wr["d1"]["retainedCount"], 0)
+        self.assertEqual(wr["d1"]["ratePct"], 0.0)
+
+        # D7 (minAge=8d): mature = {12, 14} => cohortSize=2; u10, u11 (7.5d), u13 excluded; only u12 retained -> 50.0%
+        self.assertEqual(wr["d7"]["cohortSize"], 2)
+        self.assertEqual(wr["d7"]["excludedIncompleteCount"], 3)
+        self.assertEqual(wr["d7"]["retainedCount"], 1)
+        self.assertEqual(wr["d7"]["ratePct"], 50.0)
+
+        # D30 (minAge=31d): 0 mature users -> cohortSize=0, ratePct=None, status=insufficient_data (NOT 0.0)
+        self.assertEqual(wr["d30"]["cohortSize"], 0)
+        self.assertEqual(wr["d30"]["excludedIncompleteCount"], 5)
+        self.assertIsNone(wr["d30"]["ratePct"])
+        self.assertEqual(wr["d30"]["status"], "insufficient_data")
+
+        lr = an["retention"]["lastLoginReturnProxy"]
+        self.assertEqual(lr["d7"]["cohortSize"], 2)
+        self.assertEqual(lr["d7"]["excludedIncompleteCount"], 3)
+        self.assertEqual(lr["d7"]["retainedCount"], 1)
+        self.assertEqual(lr["d7"]["ratePct"], 50.0)
 
 
 if __name__ == "__main__":
