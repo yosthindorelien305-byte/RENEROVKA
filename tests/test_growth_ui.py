@@ -93,6 +93,54 @@ class TestGrowthFrontendUI(unittest.TestCase):
         assert(auditHtml.includes('Triggers ON'));
         assert(auditHtml.includes('BEFORE UPDATE'));
         assert(auditHtml.includes('BEFORE DELETE'));
+
+        // PR 4.2 Views: Tasks, SEO Audit, Proposals, Diff Review + XSS protection
+        const tasksHtml = growth.renderTasksHtml({
+          total: 1,
+          source: 'flexa.db:growth_tasks',
+          updatedAt: '2026-11-26T12:00:00Z',
+          tasks: [{ id: 1, title: '<script>xss</script>Fix H1', category: 'SEO', priority: 'high', status: 'open', targetUrl: '/', updatedAtIso: '2026-11-26T12:00:00Z' }]
+        }, {
+          task: { id: 1, title: '<script>xss</script>Fix H1', description: 'Desc', category: 'SEO', priority: 'high', status: 'open', allowedTransitions: ['in_progress'], createdAtIso: '2026-11-26T12:00:00Z', updatedAtIso: '2026-11-26T12:00:00Z' },
+          history: [{ field: 'created', oldValue: '', newValue: 'open/high/SEO', actor: 'admin', createdAtIso: '2026-11-26T12:00:00Z' }],
+          proposals: []
+        });
+        assert(tasksHtml.includes('&lt;script&gt;xss&lt;/script&gt;Fix H1'));
+        assert(!tasksHtml.includes('<script>'));
+        assert(tasksHtml.includes('Список задач (1)'));
+
+        const seoHtml = growth.renderSeoAuditHtml({
+          hasRun: true,
+          pagesChecked: 1,
+          checkedAtIso: '2026-11-26T12:00:00Z',
+          summary: { critical: 0, high: 1, medium: 0, low: 0, info: 0 },
+          pages: [{ pageUrl: '/', role: 'public', title: 'RizzaFit', titleLength: 8, h1Count: 0, inSitemap: true, indexable: true }],
+          issues: [{ pageUrl: '/', issueType: 'missing_h1', severity: 'high', description: 'No H1', recommendation: 'Add H1' }],
+          unknownChecks: [{ check: 'search_console_indexing', status: 'unknown', reason: 'Not connected' }]
+        });
+        assert(seoHtml.includes('missing_h1'));
+        assert(seoHtml.includes('search_console_indexing'));
+        assert(seoHtml.includes('unknown'));
+
+        const propHtml = growth.renderProposalsHtml({
+          total: 1,
+          proposals: [{ id: 5, targetObject: '/index.html', fieldName: 'title', status: 'pending', reason: 'SEO', createdAtIso: '2026-11-26T12:00:00Z' }]
+        }, {
+          proposal: { id: 5, targetObject: '/index.html', fieldName: 'title', status: 'pending', reason: 'SEO' },
+          diff: { targetObject: '/index.html', fieldName: 'title', stats: { addedCount: 1, removedCount: 1, originalLength: 3, proposedLength: 3 }, sideBySideLines: [{ type: 'replace', oldLineNum: 1, newLineNum: 1, oldText: 'Old', newText: '<b>New</b>' }], unifiedDiff: '-Old\n+<b>New</b>' },
+          history: []
+        });
+        assert(propHtml.includes('Предложение #5'));
+        assert(propHtml.includes('&lt;b&gt;New&lt;/b&gt;'));
+        assert(propHtml.includes('data-prop-approve="5"'));
+
+        const diffHtml = growth.renderDiffHtml({ proposals: [{ id: 5, targetObject: '/index.html', fieldName: 'title', status: 'pending' }] }, {
+          proposalId: 5,
+          status: 'pending',
+          diff: { targetObject: '/index.html', fieldName: 'title', stats: { addedCount: 1, removedCount: 1, originalLength: 3, proposedLength: 3 }, sideBySideLines: [{ type: 'insert', oldLineNum: null, newLineNum: 1, oldText: '', newText: 'New Line' }], unifiedDiff: '+New Line' }
+        });
+        assert(diffHtml.includes('Diff Review'));
+        assert(diffHtml.includes('New Line'));
         console.log('GROWTH_UI_OK');
         """
         res = subprocess.run(["node", "-e", script], cwd=ROOT, capture_output=True, text=True)

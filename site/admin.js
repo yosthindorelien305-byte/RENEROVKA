@@ -34,8 +34,12 @@
   }
 
   async function api(path, opt = {}) {
+    const extraHeaders = { 'X-Requested-With': 'XMLHttpRequest' };
+    if (typeof opt.body === 'string' && !(opt.headers && opt.headers['Content-Type'])) {
+      extraHeaders['Content-Type'] = 'application/json';
+    }
     const r = await fetch('/api/' + path, Object.assign({}, opt, {
-      headers: Object.assign({}, opt.headers || {}, token ? { Authorization: 'Bearer ' + token } : {})
+      headers: Object.assign(extraHeaders, opt.headers || {}, token ? { Authorization: 'Bearer ' + token } : {})
     }));
     let j = {};
     try { j = await r.json(); } catch (e) { }
