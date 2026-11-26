@@ -51,6 +51,92 @@ def init_growth_db(conn):
         '  SELECT RAISE(ABORT, "growth_audit_log is append-only: DELETE forbidden"); '
         'END;'
     )
+    conn.execute(
+        'CREATE TABLE IF NOT EXISTS growth_tasks ('
+        'id INTEGER PRIMARY KEY AUTOINCREMENT, '
+        'title TEXT NOT NULL, '
+        'description TEXT NOT NULL DEFAULT "", '
+        'category TEXT NOT NULL DEFAULT "Other", '
+        'priority TEXT NOT NULL DEFAULT "medium", '
+        'status TEXT NOT NULL DEFAULT "open", '
+        'seo_audit_run_id INTEGER, '
+        'seo_issue_id INTEGER, '
+        'target_url TEXT NOT NULL DEFAULT "", '
+        'created_by TEXT NOT NULL DEFAULT "admin", '
+        'created_at INTEGER NOT NULL, '
+        'updated_at INTEGER NOT NULL, '
+        'completed_at INTEGER)'
+    )
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_growth_tasks_status ON growth_tasks(status, priority, id DESC)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_growth_tasks_cat ON growth_tasks(category, id DESC)')
+    conn.execute(
+        'CREATE TABLE IF NOT EXISTS growth_task_history ('
+        'id INTEGER PRIMARY KEY AUTOINCREMENT, '
+        'task_id INTEGER NOT NULL, '
+        'field_name TEXT NOT NULL, '
+        'old_value TEXT NOT NULL DEFAULT "", '
+        'new_value TEXT NOT NULL DEFAULT "", '
+        'actor TEXT NOT NULL DEFAULT "admin", '
+        'note TEXT NOT NULL DEFAULT "", '
+        'created_at INTEGER NOT NULL)'
+    )
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_growth_task_history_tid ON growth_task_history(task_id, id DESC)')
+    conn.execute(
+        'CREATE TABLE IF NOT EXISTS growth_seo_audit_runs ('
+        'id INTEGER PRIMARY KEY AUTOINCREMENT, '
+        'created_at INTEGER NOT NULL, '
+        'pages_checked INTEGER NOT NULL DEFAULT 0, '
+        'issues_total INTEGER NOT NULL DEFAULT 0, '
+        'summary_json TEXT NOT NULL DEFAULT "{}", '
+        'checks_json TEXT NOT NULL DEFAULT "{}")'
+    )
+    conn.execute(
+        'CREATE TABLE IF NOT EXISTS growth_seo_issues ('
+        'id INTEGER PRIMARY KEY AUTOINCREMENT, '
+        'run_id INTEGER NOT NULL, '
+        'page_url TEXT NOT NULL, '
+        'issue_type TEXT NOT NULL, '
+        'severity TEXT NOT NULL, '
+        'status TEXT NOT NULL DEFAULT "open", '
+        'description TEXT NOT NULL, '
+        'recommendation TEXT NOT NULL, '
+        'field_name TEXT NOT NULL DEFAULT "", '
+        'current_value TEXT NOT NULL DEFAULT "", '
+        'checked_at INTEGER NOT NULL)'
+    )
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_growth_seo_issues_run ON growth_seo_issues(run_id, id ASC)')
+    conn.execute(
+        'CREATE TABLE IF NOT EXISTS growth_proposals ('
+        'id INTEGER PRIMARY KEY AUTOINCREMENT, '
+        'task_id INTEGER, '
+        'target_object TEXT NOT NULL, '
+        'field_name TEXT NOT NULL DEFAULT "content", '
+        'current_value TEXT NOT NULL DEFAULT "", '
+        'proposed_value TEXT NOT NULL, '
+        'reason TEXT NOT NULL, '
+        'status TEXT NOT NULL DEFAULT "pending", '
+        'reviewed_by TEXT NOT NULL DEFAULT "", '
+        'review_note TEXT NOT NULL DEFAULT "", '
+        'reviewed_at INTEGER, '
+        'applied_at INTEGER, '
+        'created_by TEXT NOT NULL DEFAULT "admin", '
+        'created_at INTEGER NOT NULL, '
+        'updated_at INTEGER NOT NULL)'
+    )
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_growth_proposals_status ON growth_proposals(status, id DESC)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_growth_proposals_task ON growth_proposals(task_id, id DESC)')
+    conn.execute(
+        'CREATE TABLE IF NOT EXISTS growth_proposal_history ('
+        'id INTEGER PRIMARY KEY AUTOINCREMENT, '
+        'proposal_id INTEGER NOT NULL, '
+        'action TEXT NOT NULL, '
+        'old_status TEXT NOT NULL DEFAULT "", '
+        'new_status TEXT NOT NULL DEFAULT "", '
+        'actor TEXT NOT NULL DEFAULT "admin", '
+        'note TEXT NOT NULL DEFAULT "", '
+        'created_at INTEGER NOT NULL)'
+    )
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_growth_prop_hist_pid ON growth_proposal_history(proposal_id, id DESC)')
 
 
 def _scrub_text(val, max_len=240):

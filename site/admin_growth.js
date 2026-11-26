@@ -474,6 +474,420 @@
     '</div>';
   }
 
+  var TASK_STATUS_LABELS = {
+    open: 'Открыта',
+    in_progress: 'В работе',
+    pending_approval: 'На одобрении',
+    approved: 'Одобрена',
+    rejected: 'Отклонена',
+    completed: 'Завершена',
+    cancelled: 'Отменена'
+  };
+
+  var TASK_STATUS_BADGE = {
+    open: 'draft',
+    in_progress: 'in_progress',
+    pending_approval: 'pending_approval',
+    approved: 'approved',
+    rejected: 'rejected',
+    completed: 'done',
+    cancelled: 'rejected'
+  };
+
+  var PROP_STATUS_LABELS = {
+    pending: 'Ожидает',
+    approved: 'Одобрено (без автодеплоя)',
+    rejected: 'Отклонено',
+    applied: 'Применено',
+    cancelled: 'Отменено'
+  };
+
+  var PROP_STATUS_BADGE = {
+    pending: 'pending_approval',
+    approved: 'approved',
+    rejected: 'rejected',
+    applied: 'published',
+    cancelled: 'draft'
+  };
+
+  var SEV_LABELS = {
+    critical: 'CRITICAL',
+    high: 'HIGH',
+    medium: 'MEDIUM',
+    low: 'LOW',
+    info: 'INFO'
+  };
+
+  var SEV_BADGE = {
+    critical: 'rejected',
+    high: 'rejected',
+    medium: 'pending_approval',
+    low: 'draft',
+    info: 'published'
+  };
+
+  function renderTasksHtml(tasksData, detailData, opts) {
+    var ui = (opts && opts.ui) || DefaultUI;
+    var f = (opts && opts.filters) || {};
+    var data = tasksData || {};
+    var tasks = Array.isArray(data.tasks) ? data.tasks : [];
+    var detail = detailData && detailData.task ? detailData : null;
+    var cats = ['SEO', 'Content', 'Technical', 'Performance', 'Analytics', 'Other'];
+    var prios = ['critical', 'high', 'medium', 'low'];
+    var sts = ['open', 'in_progress', 'pending_approval', 'approved', 'rejected', 'completed', 'cancelled'];
+
+    var listHtml = tasks.length
+      ? '<div class="growth-item-list">' + tasks.map(function (t) {
+          var isSel = detail && detail.task.id === t.id;
+          return '<div class="growth-item-row' + (isSel ? ' is-selected' : '') + '">' +
+            '<div class="growth-item-main">' +
+              '<div class="growth-item-top">' +
+                '<button type="button" class="growth-link-btn" data-task-select="' + esc(t.id) + '">#' + esc(t.id) + ' · ' + esc(t.title) + '</button>' +
+                '<div class="growth-item-badges">' +
+                  renderBadge(ui, SEV_BADGE[t.priority] || 'draft', t.priority) +
+                  renderBadge(ui, TASK_STATUS_BADGE[t.status] || 'draft', TASK_STATUS_LABELS[t.status] || t.status) +
+                '</div>' +
+              '</div>' +
+              '<div class="growth-item-meta">Категория: <b>' + esc(t.category) + '</b>' +
+                (t.targetUrl
+                  ? (' · URL (' + (t.targetUrlType === 'external' ? 'внешний, без перехода' : 'внутренний') + '): <code>' + esc(t.targetUrl) + '</code>')
+                  : '') +
+                (t.seoIssueId ? (' · SEO #' + esc(t.seoIssueId)) : '') +
+                ' · Обновлено: ' + esc(t.updatedAtIso || '—') +
+              '</div>' +
+            '</div>' +
+          '</div>';
+        }).join('') + '</div>'
+      : '<div class="rf-empty">Задачи по выбранным фильтрам не найдены. Создайте задачу вручную или из результатов SEO-аудита.</div>';
+
+    var detailHtml = '';
+    if (detail) {
+      var dt = detail.task;
+      var hist = Array.isArray(detail.history) ? detail.history : [];
+      var transitions = Array.isArray(dt.allowedTransitions) ? dt.allowedTransitions : [];
+      var linkedProps = Array.isArray(detail.proposals) ? detail.proposals : [];
+      detailHtml = '<div class="rf-card">' +
+        '<div class="growth-block-head">' +
+          '<div>' +
+            '<h3 class="growth-block-title">Задача #' + esc(dt.id) + ': ' + esc(dt.title) + '</h3>' +
+            '<div class="growth-block-def">' + esc(dt.description || 'Описание не заполнено.') + '</div>' +
+          '</div>' +
+          renderBadge(ui, TASK_STATUS_BADGE[dt.status] || 'draft', TASK_STATUS_LABELS[dt.status] || dt.status) +
+        '</div>' +
+        '<div class="growth-kv-list" style="margin-bottom:12px">' +
+          '<div class="growth-kv-line"><span>Категория / Приоритет</span><b>' + esc(dt.category) + ' / ' + esc(dt.priority) + '</b></div>' +
+          (dt.targetUrl
+            ? '<div class="growth-kv-line"><span>Целевой URL (' + (dt.targetUrlType === 'external' ? 'внешний · без перехода' : 'внутренний') + ')</span><b><code>' + esc(dt.targetUrl) + '</code></b></div>'
+            : '') +
+          (detail.seoIssue ? '<div class="growth-kv-line"><span>Связанная SEO-проблема</span><b>#' + esc(detail.seoIssue.id) + ' (' + esc(detail.seoIssue.issueType) + ' · ' + esc(detail.seoIssue.severity) + ')</b></div>' : '') +
+          '<div class="growth-kv-line"><span>Создана / Обновлена</span><b>' + esc(dt.createdAtIso) + ' / ' + esc(dt.updatedAtIso) + '</b></div>' +
+        '</div>' +
+        '<div class="growth-audit-filters">' +
+          '<label class="growth-filter-field"><span>Приоритет</span><select id="growth-task-edit-prio">' +
+            prios.map(function (p) { return '<option value="' + p + '"' + (dt.priority === p ? ' selected' : '') + '>' + p + '</option>'; }).join('') +
+          '</select></label>' +
+          '<label class="growth-filter-field" style="flex:1 1 180px"><span>Комментарий к изменению</span><input id="growth-task-edit-note" class="growth-input" type="text" placeholder="Причина изменения"></label>' +
+          '<button type="button" class="rf-btn rf-btn-alt" data-task-save-prio="' + esc(dt.id) + '">Сохранить приоритет</button>' +
+        '</div>' +
+        '<div class="growth-inline-actions" style="margin-bottom:12px">' +
+          transitions.map(function (st) {
+            return '<button type="button" class="rf-btn rf-btn-alt" data-task-status="' + esc(dt.id) + ':' + esc(st) + '">→ ' + esc(TASK_STATUS_LABELS[st] || st) + '</button>';
+          }).join('') +
+        '</div>' +
+        (linkedProps.length ? '<div class="growth-note" style="margin-bottom:10px"><b>Связанные предложения:</b> ' +
+          linkedProps.map(function (lp) {
+            return '<button type="button" class="growth-link-btn" data-prop-jump="' + esc(lp.id) + '">Proposal #' + esc(lp.id) + ' (' + esc(lp.status) + ')</button>';
+          }).join(' · ') + '</div>' : '') +
+        '<h4 style="margin:8px 0 6px;font-size:13px">История изменений задачи</h4>' +
+        (hist.length
+          ? '<div class="growth-history-list">' + hist.map(function (h) {
+              return '<div class="growth-history-row"><b>' + esc(h.field) + '</b>: <code>' + esc(h.oldValue || '—') + '</code> → <code>' + esc(h.newValue || '—') + '</code>' +
+                (h.note ? (' · ' + esc(h.note)) : '') + ' <span class="rf-source-meta">' + esc(h.actor) + ' · ' + esc(h.createdAtIso) + '</span></div>';
+            }).join('') + '</div>'
+          : '<div class="rf-empty">История пуста</div>') +
+      '</div>';
+    }
+
+    return '<div class="growth-stack">' +
+      '<div class="rf-card">' +
+        '<div class="growth-block-head">' +
+          '<div><h3 class="growth-block-title">Создать задачу развития</h3><div class="growth-block-def">Все изменения задач фиксируются в истории и append-only Audit Log.</div></div>' +
+        '</div>' +
+        '<div class="growth-form-grid">' +
+          '<label class="growth-filter-field growth-col-span2"><span>Заголовок *</span><input id="growth-new-task-title" class="growth-input" type="text" placeholder="Например: Добавить canonical и OG на новую статью"></label>' +
+          '<label class="growth-filter-field"><span>Категория</span><select id="growth-new-task-cat">' + cats.map(function (c) { return '<option value="' + c + '">' + c + '</option>'; }).join('') + '</select></label>' +
+          '<label class="growth-filter-field"><span>Приоритет</span><select id="growth-new-task-prio">' + prios.map(function (p) { return '<option value="' + p + '"' + (p === 'medium' ? ' selected' : '') + '>' + p + '</option>'; }).join('') + '</select></label>' +
+          '<label class="growth-filter-field"><span>Целевой URL</span><input id="growth-new-task-url" class="growth-input" type="text" placeholder="/ или /fitify/"></label>' +
+          '<label class="growth-filter-field" style="grid-column:1 / -1"><span>Описание</span><textarea id="growth-new-task-desc" class="growth-textarea" rows="2" placeholder="Подробности задачи и ожидаемый результат"></textarea></label>' +
+        '</div>' +
+        '<div class="growth-inline-actions" style="margin-top:10px"><button type="button" class="rf-btn rf-btn-primary" id="growth-create-task-btn">+ Создать задачу</button></div>' +
+      '</div>' +
+      '<div class="rf-card">' +
+        '<div class="growth-block-head">' +
+          '<div><h3 class="growth-block-title">Список задач (' + esc(data.total || tasks.length) + ')</h3></div>' +
+          '<button type="button" class="rf-btn rf-btn-alt" data-growth-refresh="tasks">↻ Обновить</button>' +
+        '</div>' +
+        '<div class="growth-audit-filters">' +
+          '<label class="growth-filter-field"><span>Статус</span><select id="growth-task-flt-st"><option value="">Все</option>' +
+            sts.map(function (s) { return '<option value="' + s + '"' + (f.status === s ? ' selected' : '') + '>' + esc(TASK_STATUS_LABELS[s] || s) + '</option>'; }).join('') +
+          '</select></label>' +
+          '<label class="growth-filter-field"><span>Категория</span><select id="growth-task-flt-cat"><option value="">Все</option>' +
+            cats.map(function (c) { return '<option value="' + c + '"' + (f.category === c ? ' selected' : '') + '>' + c + '</option>'; }).join('') +
+          '</select></label>' +
+          '<label class="growth-filter-field"><span>Приоритет</span><select id="growth-task-flt-prio"><option value="">Все</option>' +
+            prios.map(function (p) { return '<option value="' + p + '"' + (f.priority === p ? ' selected' : '') + '>' + p + '</option>'; }).join('') +
+          '</select></label>' +
+        '</div>' +
+        listHtml +
+        renderMeta(ui, data.source || 'flexa.db:growth_tasks', data.updatedAt || '—') +
+      '</div>' +
+      detailHtml +
+    '</div>';
+  }
+
+  function renderSeoAuditHtml(auditData, opts) {
+    var ui = (opts && opts.ui) || DefaultUI;
+    var sevFilter = (opts && opts.severity) || '';
+    var d = auditData || {};
+    var sum = d.summary || {};
+    var pages = Array.isArray(d.pages) ? d.pages : [];
+    var issues = Array.isArray(d.issues) ? d.issues : [];
+    var unknowns = Array.isArray(d.unknownChecks) ? d.unknownChecks : [];
+    var sevs = ['critical', 'high', 'medium', 'low', 'info'];
+
+    var summaryHtml = '<div class="growth-status-bar">' +
+      '<div class="growth-status-pill"><span>Страниц:</span> <b>' + esc(d.pagesChecked || 0) + '</b></div>' +
+      sevs.map(function (sv) {
+        return '<div class="growth-status-pill"><span>' + esc(SEV_LABELS[sv]) + ':</span> <b>' + esc(sum[sv] || 0) + '</b></div>';
+      }).join('') +
+    '</div>';
+
+    var pagesHtml = pages.length
+      ? '<div class="rf-table-wrap"><table class="growth-table"><thead><tr><th>URL</th><th>Роль</th><th>Title</th><th>H1</th><th>Sitemap</th><th>Индекс</th></tr></thead><tbody>' +
+        pages.map(function (p) {
+          return '<tr>' +
+            '<td><code>' + esc(p.pageUrl) + '</code></td>' +
+            '<td>' + esc(p.role) + '</td>' +
+            '<td>' + esc(p.title ? (p.titleLength + ' симв.') : 'нет') + '</td>' +
+            '<td>' + esc(p.h1Count) + '</td>' +
+            '<td>' + (p.inSitemap ? 'Да' : 'Нет') + '</td>' +
+            '<td>' + (p.indexable ? 'Да' : 'Нет') + '</td>' +
+          '</tr>';
+        }).join('') + '</tbody></table></div>'
+      : '<div class="rf-empty">Запустите SEO-аудит для инспекции HTML-страниц сайта.</div>';
+
+    var issuesHtml = issues.length
+      ? '<div class="growth-item-list">' + issues.map(function (it, idx) {
+          return '<div class="growth-item-row">' +
+            '<div class="growth-item-main">' +
+              '<div class="growth-item-top">' +
+                '<b><code>' + esc(it.pageUrl) + '</code> · ' + esc(it.issueType) + '</b>' +
+                renderBadge(ui, SEV_BADGE[it.severity] || 'info', SEV_LABELS[it.severity] || it.severity) +
+              '</div>' +
+              '<div class="growth-attention-desc">' + esc(it.description) + '</div>' +
+              '<div class="growth-note"><b>Рекомендация:</b> ' + esc(it.recommendation) + '</div>' +
+              '<div class="growth-inline-actions" style="margin-top:8px">' +
+                '<button type="button" class="rf-btn rf-btn-alt" data-seo-to-task="' + esc(idx) + '">+ Задача из проблемы</button>' +
+                '<button type="button" class="rf-btn rf-btn-alt" data-seo-to-prop="' + esc(idx) + '">+ Предложение изменения</button>' +
+              '</div>' +
+            '</div>' +
+          '</div>';
+        }).join('') + '</div>'
+      : (d.hasRun ? '<div class="rf-empty">Проблемы по выбранному уровню серьёзности отсутствуют.</div>' : '<div class="rf-empty">Аудит ещё не запускался.</div>');
+
+    return '<div class="growth-stack">' +
+      '<div class="rf-card growth-toolbar">' +
+        '<div>' +
+          '<h3 class="growth-block-title">Детерминированный SEO-аудит (без LLM)</h3>' +
+          '<div class="growth-block-def">Проверка фактических HTML-страниц, robots.txt и sitemap.xml. Дата последней проверки: <b>' + esc(d.checkedAtIso || 'не проводилась') + '</b></div>' +
+        '</div>' +
+        '<div class="growth-toolbar-right">' +
+          '<button type="button" class="rf-btn rf-btn-primary" id="growth-run-seo-btn">▶ Запустить SEO-аудит</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="rf-card">' +
+        summaryHtml +
+        pagesHtml +
+        renderMeta(ui, d.source || 'site/*.html + robots.txt + sitemap.xml', d.checkedAtIso || '—') +
+      '</div>' +
+      '<div class="rf-card">' +
+        '<div class="growth-block-head">' +
+          '<div><h3 class="growth-block-title">Найденные проблемы (' + esc(issues.length) + ')</h3></div>' +
+          '<label class="growth-filter-field"><span>Серьёзность</span><select id="growth-seo-sev-flt"><option value="">Все</option>' +
+            sevs.map(function (s) { return '<option value="' + s + '"' + (sevFilter === s ? ' selected' : '') + '>' + SEV_LABELS[s] + '</option>'; }).join('') +
+          '</select></label>' +
+        '</div>' +
+        issuesHtml +
+      '</div>' +
+      '<div class="rf-card">' +
+        '<div class="growth-block-head"><div><h3 class="growth-block-title">Проверки со статусом unknown (не оцениваются без источника)</h3></div>' + renderBadge(ui, 'draft', 'unknown') + '</div>' +
+        '<div class="growth-ext-list">' +
+          unknowns.map(function (u) {
+            return '<div class="growth-ext-row"><div class="growth-ext-main"><div class="growth-ext-title">' + esc(u.check) + '</div><div class="growth-ext-reason">' + esc(u.reason) + '</div></div><div>' + renderBadge(ui, 'draft', u.status || 'unknown') + '</div></div>';
+          }).join('') +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function renderDiffViewerBox(diff, ui) {
+    if (!diff) return '<div class="rf-empty">Выберите предложение для сравнения изменений.</div>';
+    var st = diff.stats || {};
+    var lines = Array.isArray(diff.sideBySideLines) ? diff.sideBySideLines : [];
+    var rowsHtml = lines.map(function (ln) {
+      var cls = ln.type === 'insert' ? 'rf-diff-add' : (ln.type === 'delete' ? 'rf-diff-del' : (ln.type === 'replace' ? 'is-replace' : ''));
+      return '<tr class="' + cls + '">' +
+        '<td class="growth-diff-ln">' + esc(ln.oldLineNum || '') + '</td>' +
+        '<td class="growth-diff-cell rf-diff-del">' + esc(ln.oldText) + '</td>' +
+        '<td class="growth-diff-ln">' + esc(ln.newLineNum || '') + '</td>' +
+        '<td class="growth-diff-cell rf-diff-add">' + esc(ln.newText) + '</td>' +
+      '</tr>';
+    }).join('');
+
+    return '<div class="growth-diff-box">' +
+      '<div class="growth-status-bar">' +
+        '<div class="growth-status-pill"><span>Объект:</span> <b>' + esc(diff.targetObject || '—') + '</b></div>' +
+        '<div class="growth-status-pill"><span>Поле:</span> <b>' + esc(diff.fieldName || 'content') + '</b></div>' +
+        '<div class="growth-status-pill"><span>+ строк:</span> <b>' + esc(st.addedCount || 0) + '</b></div>' +
+        '<div class="growth-status-pill"><span>- строк:</span> <b>' + esc(st.removedCount || 0) + '</b></div>' +
+        '<div class="growth-status-pill"><span>Длина:</span> <b>' + esc(st.originalLength || 0) + ' → ' + esc(st.proposedLength || 0) + '</b></div>' +
+      '</div>' +
+      (diff.seoFieldGuidance ? '<div class="growth-note" style="margin-bottom:8px"><b>Ориентир SEO:</b> ' + esc(diff.seoFieldGuidance.label) + '</div>' : '') +
+      '<div class="rf-table-wrap"><table class="growth-table growth-diff-table"><thead><tr><th>#</th><th>Текущее значение</th><th>#</th><th>Предлагаемое значение</th></tr></thead><tbody>' +
+      (rowsHtml || '<tr><td colspan="4" class="rf-empty">Строки совпадают</td></tr>') +
+      '</tbody></table></div>' +
+      (diff.unifiedDiff ? '<pre class="rf-card-inset rf-diff growth-diff-pre">' + esc(diff.unifiedDiff) + '</pre>' : '') +
+    '</div>';
+  }
+
+  function renderProposalsHtml(propsData, detailData, opts) {
+    var ui = (opts && opts.ui) || DefaultUI;
+    var f = (opts && opts.filters) || {};
+    var data = propsData || {};
+    var props = Array.isArray(data.proposals) ? data.proposals : [];
+    var detail = detailData && detailData.proposal ? detailData : null;
+    var fields = ['title', 'meta_description', 'h1', 'canonical', 'robots_meta', 'og_title', 'og_description', 'alt', 'sitemap_xml', 'robots_txt', 'content', 'other'];
+    var sts = ['pending', 'approved', 'rejected', 'applied', 'cancelled'];
+
+    var listHtml = props.length
+      ? '<div class="growth-item-list">' + props.map(function (p) {
+          var isSel = detail && detail.proposal.id === p.id;
+          return '<div class="growth-item-row' + (isSel ? ' is-selected' : '') + '">' +
+            '<div class="growth-item-main">' +
+              '<div class="growth-item-top">' +
+                '<button type="button" class="growth-link-btn" data-prop-select="' + esc(p.id) + '">#' + esc(p.id) + ' · ' + esc(p.targetObject) + ' [' + esc(p.fieldName) + ']</button>' +
+                renderBadge(ui, PROP_STATUS_BADGE[p.status] || 'draft', PROP_STATUS_LABELS[p.status] || p.status) +
+              '</div>' +
+              '<div class="growth-item-meta">' + esc(p.reason) +
+                (p.taskId ? (' · Задача #' + esc(p.taskId)) : '') +
+                ' · Создано: ' + esc(p.createdAtIso || '—') +
+              '</div>' +
+            '</div>' +
+          '</div>';
+        }).join('') + '</div>'
+      : '<div class="rf-empty">Предложений пока нет. Создайте предложение на основе SEO-аудита или вручную.</div>';
+
+    var detailHtml = '';
+    if (detail) {
+      var pr = detail.proposal;
+      var hist = Array.isArray(detail.history) ? detail.history : [];
+      detailHtml = '<div class="rf-card">' +
+        '<div class="growth-block-head">' +
+          '<div>' +
+            '<h3 class="growth-block-title">Предложение #' + esc(pr.id) + ': ' + esc(pr.targetObject) + ' (' + esc(pr.fieldName) + ')</h3>' +
+            '<div class="growth-block-def">' + esc(pr.reason) + '</div>' +
+          '</div>' +
+          renderBadge(ui, PROP_STATUS_BADGE[pr.status] || 'draft', PROP_STATUS_LABELS[pr.status] || pr.status) +
+        '</div>' +
+        '<div class="growth-note" style="margin-bottom:10px"><b>Политика безопасности:</b> одобрение предложения фиксирует решение администратора в БД и журнале аудита, но <u>не</u> изменяет файлы production-сайта автоматически.</div>' +
+        renderDiffViewerBox(detail.diff, ui) +
+        '<div class="growth-inline-actions" style="margin-top:12px">' +
+          '<button type="button" class="rf-btn rf-btn-alt" data-diff-open="' + esc(pr.id) + '">Открыть в Diff Review</button>' +
+          (pr.status === 'pending'
+            ? '<button type="button" class="rf-btn rf-btn-green" data-prop-approve="' + esc(pr.id) + '">✓ Одобрить</button>' +
+              '<button type="button" class="rf-btn rf-btn-danger" data-prop-reject="' + esc(pr.id) + '">✕ Отклонить</button>'
+            : '') +
+        '</div>' +
+        '<h4 style="margin:12px 0 6px;font-size:13px">История согласования</h4>' +
+        (hist.length
+          ? '<div class="growth-history-list">' + hist.map(function (h) {
+              return '<div class="growth-history-row"><b>' + esc(h.action) + '</b>: <code>' + esc(h.oldStatus || '—') + '</code> → <code>' + esc(h.newStatus || '—') + '</code>' +
+                (h.note ? (' · ' + esc(h.note)) : '') + ' <span class="rf-source-meta">' + esc(h.actor) + ' · ' + esc(h.createdAtIso) + '</span></div>';
+            }).join('') + '</div>'
+          : '<div class="rf-empty">История пуста</div>') +
+      '</div>';
+    }
+
+    return '<div class="growth-stack">' +
+      '<div class="rf-card">' +
+        '<div class="growth-block-head">' +
+          '<div><h3 class="growth-block-title">Создать предложение изменения (Approval Engine)</h3><div class="growth-block-def">Изменения сохраняются как <code>pending</code> и не применяются к файлам сайта автоматически.</div></div>' +
+        '</div>' +
+        '<div class="growth-form-grid">' +
+          '<label class="growth-filter-field"><span>Объект изменения *</span><input id="growth-new-prop-target" class="growth-input" type="text" placeholder="site/index.html или site/fitify/index.html" value="' + esc((opts && opts.draftTarget) || '') + '"></label>' +
+          '<label class="growth-filter-field"><span>Поле</span><select id="growth-new-prop-field">' +
+            fields.map(function (fn) { return '<option value="' + fn + '"' + ((opts && opts.draftField) === fn ? ' selected' : '') + '>' + fn + '</option>'; }).join('') +
+          '</select></label>' +
+          '<label class="growth-filter-field"><span>ID задачи (опц.)</span><input id="growth-new-prop-task" class="growth-input" type="number" min="1" placeholder="1"></label>' +
+          '<label class="growth-filter-field" style="grid-column:1 / -1"><span>Причина / обоснование *</span><input id="growth-new-prop-reason" class="growth-input" type="text" placeholder="Почему нужно это изменение"></label>' +
+          '<label class="growth-filter-field"><span>Текущее значение</span><textarea id="growth-new-prop-curr" class="growth-textarea" rows="3">' + esc((opts && opts.draftCurr) || '') + '</textarea></label>' +
+          '<label class="growth-filter-field"><span>Предлагаемое значение *</span><textarea id="growth-new-prop-next" class="growth-textarea" rows="3" placeholder="Новый текст или разметка"></textarea></label>' +
+        '</div>' +
+        '<div class="growth-inline-actions" style="margin-top:10px"><button type="button" class="rf-btn rf-btn-primary" id="growth-create-prop-btn">+ Отправить на согласование</button></div>' +
+      '</div>' +
+      '<div class="rf-card">' +
+        '<div class="growth-block-head">' +
+          '<div><h3 class="growth-block-title">Очередь предложений (' + esc(data.total || props.length) + ')</h3></div>' +
+          '<div class="growth-toolbar-right">' +
+            '<select id="growth-prop-flt-st" class="growth-input"><option value="">Все статусы</option>' +
+              sts.map(function (s) { return '<option value="' + s + '"' + (f.status === s ? ' selected' : '') + '>' + esc(PROP_STATUS_LABELS[s] || s) + '</option>'; }).join('') +
+            '</select>' +
+            '<button type="button" class="rf-btn rf-btn-alt" data-growth-refresh="proposals">↻ Обновить</button>' +
+          '</div>' +
+        '</div>' +
+        listHtml +
+        renderMeta(ui, data.source || 'flexa.db:growth_proposals', data.updatedAt || '—') +
+      '</div>' +
+      detailHtml +
+    '</div>';
+  }
+
+  function renderDiffHtml(proposalsData, diffPayload, opts) {
+    var ui = (opts && opts.ui) || DefaultUI;
+    var props = Array.isArray((proposalsData || {}).proposals) ? proposalsData.proposals : [];
+    var selId = diffPayload ? Number(diffPayload.proposalId) : null;
+    var diff = diffPayload && diffPayload.diff ? diffPayload.diff : null;
+    var st = diffPayload ? diffPayload.status : '';
+
+    return '<div class="growth-stack">' +
+      '<div class="rf-card">' +
+        '<div class="growth-block-head">' +
+          '<div><h3 class="growth-block-title">Diff Review — безопасное сравнение версий</h3><div class="growth-block-def">Изолированный текстовый diff без выполнения кода, SQL или shell-команд.</div></div>' +
+          (st ? renderBadge(ui, PROP_STATUS_BADGE[st] || 'draft', PROP_STATUS_LABELS[st] || st) : '') +
+        '</div>' +
+        '<div class="growth-audit-filters">' +
+          '<label class="growth-filter-field" style="flex:1 1 260px"><span>Предложение</span><select id="growth-diff-prop-sel">' +
+            (props.length
+              ? props.map(function (p) {
+                  return '<option value="' + esc(p.id) + '"' + (selId === p.id ? ' selected' : '') + '>#' + esc(p.id) + ' · ' + esc(p.targetObject) + ' [' + esc(p.fieldName) + '] (' + esc(p.status) + ')</option>';
+                }).join('')
+              : '<option value="">Нет доступных предложений</option>') +
+          '</select></label>' +
+          '<button type="button" class="rf-btn rf-btn-alt" data-growth-refresh="diff">↻ Обновить Diff</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="rf-card">' +
+        renderDiffViewerBox(diff, ui) +
+        (selId && st === 'pending'
+          ? '<div class="growth-inline-actions" style="margin-top:12px">' +
+              '<button type="button" class="rf-btn rf-btn-green" data-prop-approve="' + esc(selId) + '">✓ Одобрить предложение #' + esc(selId) + '</button>' +
+              '<button type="button" class="rf-btn rf-btn-danger" data-prop-reject="' + esc(selId) + '">✕ Отклонить #' + esc(selId) + '</button>' +
+            '</div>'
+          : '') +
+      '</div>' +
+    '</div>';
+  }
+
   function renderAuditHtml(audit, opts) {
     var ui = (opts && opts.ui) || DefaultUI;
     var f = (opts && opts.filters) || {};
@@ -538,6 +952,7 @@
     if (!el) return;
     var d = deps || {};
     var api = d.api;
+    var toast = typeof d.toast === 'function' ? d.toast : function () {};
     var ui = d.ui || DefaultUI;
     var state = {
       subTab: d.initialSubTab || 'dashboard',
@@ -546,17 +961,54 @@
       auditOffset: 0,
       auditModule: '',
       auditStatus: '',
+      taskStatus: '',
+      taskCategory: '',
+      taskPriority: '',
+      selectedTaskId: null,
+      taskDetail: null,
+      seoSeverity: '',
+      seoAudit: null,
+      propStatus: '',
+      selectedPropId: null,
+      propDetail: null,
+      diffPropId: null,
+      diffPayload: null,
+      draftProp: null,
       loading: false,
       error: '',
       overview: null,
       analytics: null,
+      tasks: null,
+      proposals: null,
       audit: null
     };
+
+    function confirmAction(title, msg, fn, label) {
+      if (ui && typeof ui.openConfirmModal === 'function') {
+        ui.openConfirmModal({
+          title: title,
+          bodyHtml: '<p style="margin:0;color:var(--tx-sub);font-size:13.5px;line-height:1.5">' + esc(msg) + '</p>',
+          confirmLabel: label || 'Подтвердить',
+          cancelLabel: 'Отмена',
+          danger: false,
+          onConfirm: async function (close) {
+            close();
+            await fn();
+          }
+        });
+      } else {
+        fn();
+      }
+    }
 
     function renderFrame(bodyHtml) {
       var navTabs = [
         { id: 'dashboard', label: '📊 Dashboard' },
         { id: 'analytics', label: '📈 Analytics' },
+        { id: 'tasks', label: '✅ Задачи' },
+        { id: 'seo', label: '🔎 SEO-аудит' },
+        { id: 'proposals', label: '📝 Предложения' },
+        { id: 'diff', label: '⚖️ Diff Review' },
         { id: 'audit', label: '🛡️ Audit Log' }
       ];
       el.innerHTML =
@@ -564,9 +1016,9 @@
           '<div class="growth-hub-banner">' +
             '<div>' +
               '<h2 style="margin:0;font-size:18px">RizzaFit AI Growth</h2>' +
-              '<p style="margin:4px 0 0;color:var(--mut);font-size:13px">PR 4.1 Foundation: детерминированная аналитика SQLite и неизменяемый серверный аудит.</p>' +
+              '<p style="margin:4px 0 0;color:var(--mut);font-size:13px">PR 4.2: Task Manager, детерминированный SEO-аудит, Approval Engine и Diff Review (без автоприменения в production).</p>' +
             '</div>' +
-            renderBadge(ui, 'done', 'PR 4.1: Foundation') +
+            renderBadge(ui, 'done', 'PR 4.2') +
           '</div>' +
           '<div class="growth-subnav" role="tablist">' +
             navTabs.map(function (t) {
@@ -628,6 +1080,217 @@
           loadCurrent(true);
         };
       }
+
+      // Tasks handlers
+      var createTaskBtn = el.querySelector('#growth-create-task-btn');
+      if (createTaskBtn) {
+        createTaskBtn.onclick = async function () {
+          try {
+            var res = await api('admin/growth/tasks', {
+              method: 'POST',
+              body: JSON.stringify({
+                title: (el.querySelector('#growth-new-task-title') || {}).value || '',
+                category: (el.querySelector('#growth-new-task-cat') || {}).value || 'SEO',
+                priority: (el.querySelector('#growth-new-task-prio') || {}).value || 'medium',
+                targetUrl: (el.querySelector('#growth-new-task-url') || {}).value || '',
+                description: (el.querySelector('#growth-new-task-desc') || {}).value || ''
+              })
+            });
+            state.selectedTaskId = res.task && res.task.id;
+            toast('Задача создана ✓');
+            loadCurrent(true);
+          } catch (e) { toast(e.message, 1); }
+        };
+      }
+      var fltTSt = el.querySelector('#growth-task-flt-st');
+      var fltTCat = el.querySelector('#growth-task-flt-cat');
+      var fltTPrio = el.querySelector('#growth-task-flt-prio');
+      if (fltTSt) fltTSt.onchange = function () { state.taskStatus = fltTSt.value || ''; loadCurrent(true); };
+      if (fltTCat) fltTCat.onchange = function () { state.taskCategory = fltTCat.value || ''; loadCurrent(true); };
+      if (fltTPrio) fltTPrio.onchange = function () { state.taskPriority = fltTPrio.value || ''; loadCurrent(true); };
+
+      el.querySelectorAll('[data-task-select]').forEach(function (btn) {
+        btn.onclick = function () {
+          state.selectedTaskId = Number(btn.getAttribute('data-task-select'));
+          loadCurrent(true);
+        };
+      });
+      el.querySelectorAll('[data-task-status]').forEach(function (btn) {
+        btn.onclick = async function () {
+          var parts = (btn.getAttribute('data-task-status') || '').split(':');
+          try {
+            var noteEl = el.querySelector('#growth-task-edit-note');
+            await api('admin/growth/tasks/' + parts[0], {
+              method: 'PATCH',
+              body: JSON.stringify({ status: parts[1], note: noteEl ? noteEl.value : '' })
+            });
+            toast('Статус задачи обновлён ✓');
+            loadCurrent(true);
+          } catch (e) { toast(e.message, 1); }
+        };
+      });
+      el.querySelectorAll('[data-task-save-prio]').forEach(function (btn) {
+        btn.onclick = async function () {
+          var tid = btn.getAttribute('data-task-save-prio');
+          var pSel = el.querySelector('#growth-task-edit-prio');
+          var noteEl = el.querySelector('#growth-task-edit-note');
+          try {
+            await api('admin/growth/tasks/' + tid, {
+              method: 'PATCH',
+              body: JSON.stringify({ priority: pSel ? pSel.value : 'medium', note: noteEl ? noteEl.value : '' })
+            });
+            toast('Приоритет обновлён ✓');
+            loadCurrent(true);
+          } catch (e) { toast(e.message, 1); }
+        };
+      });
+
+      // SEO Audit handlers
+      var runSeoBtn = el.querySelector('#growth-run-seo-btn');
+      if (runSeoBtn) {
+        runSeoBtn.onclick = async function () {
+          try {
+            runSeoBtn.disabled = true;
+            state.seoAudit = await api('admin/growth/seo-audit/run', { method: 'POST', body: '{}' });
+            toast('SEO-аудит завершён ✓');
+            loadCurrent(true);
+          } catch (e) { toast(e.message, 1); }
+        };
+      }
+      var seoSevFlt = el.querySelector('#growth-seo-sev-flt');
+      if (seoSevFlt) {
+        seoSevFlt.onchange = function () { state.seoSeverity = seoSevFlt.value || ''; loadCurrent(true); };
+      }
+      el.querySelectorAll('[data-seo-to-task]').forEach(function (btn) {
+        btn.onclick = async function () {
+          var idx = Number(btn.getAttribute('data-seo-to-task'));
+          var iss = state.seoAudit && state.seoAudit.issues && state.seoAudit.issues[idx];
+          if (!iss) return;
+          try {
+            var res = await api('admin/growth/tasks', {
+              method: 'POST',
+              body: JSON.stringify({
+                title: ('SEO [' + iss.severity + ']: ' + iss.issueType + ' (' + iss.pageUrl + ')').slice(0, 150),
+                description: iss.description + '\nРекомендация: ' + iss.recommendation,
+                category: 'SEO',
+                priority: iss.severity === 'info' ? 'low' : iss.severity,
+                seoAuditRunId: state.seoAudit.runId,
+                seoIssueId: iss.id,
+                targetUrl: iss.pageUrl
+              })
+            });
+            state.selectedTaskId = res.task && res.task.id;
+            state.subTab = 'tasks';
+            toast('Задача создана из SEO-аудита ✓');
+            loadCurrent(true);
+          } catch (e) { toast(e.message, 1); }
+        };
+      });
+      el.querySelectorAll('[data-seo-to-prop]').forEach(function (btn) {
+        btn.onclick = function () {
+          var idx = Number(btn.getAttribute('data-seo-to-prop'));
+          var iss = state.seoAudit && state.seoAudit.issues && state.seoAudit.issues[idx];
+          if (!iss) return;
+          var rawUrl = String(iss.pageUrl || '/').split(',')[0].trim();
+          var targetObj = 'site/index.html';
+          if (rawUrl === '/' || rawUrl === '') targetObj = 'site/index.html';
+          else if (rawUrl.endsWith('/')) targetObj = 'site/' + rawUrl.replace(/^\/+/, '') + 'index.html';
+          else targetObj = 'site/' + rawUrl.replace(/^\/+/, '');
+          state.draftProp = {
+            draftTarget: targetObj,
+            draftField: iss.fieldName || 'content',
+            draftCurr: iss.currentValue || ''
+          };
+          state.subTab = 'proposals';
+          loadCurrent(true);
+        };
+      });
+
+      // Proposals handlers
+      var createPropBtn = el.querySelector('#growth-create-prop-btn');
+      if (createPropBtn) {
+        createPropBtn.onclick = async function () {
+          var tidVal = (el.querySelector('#growth-new-prop-task') || {}).value;
+          try {
+            var res = await api('admin/growth/proposals', {
+              method: 'POST',
+              body: JSON.stringify({
+                targetObject: (el.querySelector('#growth-new-prop-target') || {}).value || '',
+                fieldName: (el.querySelector('#growth-new-prop-field') || {}).value || 'content',
+                taskId: tidVal ? Number(tidVal) : null,
+                reason: (el.querySelector('#growth-new-prop-reason') || {}).value || '',
+                currentValue: (el.querySelector('#growth-new-prop-curr') || {}).value || '',
+                proposedValue: (el.querySelector('#growth-new-prop-next') || {}).value || ''
+              })
+            });
+            state.draftProp = null;
+            state.selectedPropId = res.proposal && res.proposal.id;
+            toast('Предложение создано ✓');
+            loadCurrent(true);
+          } catch (e) { toast(e.message, 1); }
+        };
+      }
+      var propFlt = el.querySelector('#growth-prop-flt-st');
+      if (propFlt) propFlt.onchange = function () { state.propStatus = propFlt.value || ''; loadCurrent(true); };
+      el.querySelectorAll('[data-prop-select]').forEach(function (btn) {
+        btn.onclick = function () { state.selectedPropId = Number(btn.getAttribute('data-prop-select')); loadCurrent(true); };
+      });
+      el.querySelectorAll('[data-prop-jump]').forEach(function (btn) {
+        btn.onclick = function () {
+          state.selectedPropId = Number(btn.getAttribute('data-prop-jump'));
+          state.subTab = 'proposals';
+          loadCurrent(true);
+        };
+      });
+      el.querySelectorAll('[data-diff-open]').forEach(function (btn) {
+        btn.onclick = function () {
+          state.diffPropId = Number(btn.getAttribute('data-diff-open'));
+          state.subTab = 'diff';
+          loadCurrent(true);
+        };
+      });
+      el.querySelectorAll('[data-prop-approve]').forEach(function (btn) {
+        btn.onclick = function () {
+          var pid = btn.getAttribute('data-prop-approve');
+          confirmAction(
+            'Одобрить предложение #' + pid + '?',
+            'Статус изменится на approved, запись попадёт в Audit Log. Production-файлы сайта НЕ будут изменены автоматически.',
+            async function () {
+              try {
+                await api('admin/growth/proposals/' + pid + '/approve', { method: 'POST', body: JSON.stringify({ note: 'Одобрено в админ-панели' }) });
+                toast('Предложение одобрено ✓');
+                loadCurrent(true);
+              } catch (e) { toast(e.message, 1); }
+            },
+            'Одобрить'
+          );
+        };
+      });
+      el.querySelectorAll('[data-prop-reject]').forEach(function (btn) {
+        btn.onclick = function () {
+          var pid = btn.getAttribute('data-prop-reject');
+          confirmAction(
+            'Отклонить предложение #' + pid + '?',
+            'Предложение будет переведено в статус rejected и зафиксировано в Audit Log.',
+            async function () {
+              try {
+                await api('admin/growth/proposals/' + pid + '/reject', { method: 'POST', body: JSON.stringify({ note: 'Отклонено администратором' }) });
+                toast('Предложение отклонено');
+                loadCurrent(true);
+              } catch (e) { toast(e.message, 1); }
+            },
+            'Отклонить'
+          );
+        };
+      });
+
+      var diffSel = el.querySelector('#growth-diff-prop-sel');
+      if (diffSel) {
+        diffSel.onchange = function () {
+          state.diffPropId = diffSel.value ? Number(diffSel.value) : null;
+          loadCurrent(true);
+        };
+      }
     }
 
     async function loadCurrent(forceRefresh) {
@@ -646,6 +1309,31 @@
         } else if (state.subTab === 'analytics') {
           state.analytics = await api('admin/growth/analytics?days=' + state.days);
           renderFrame(renderAnalyticsHtml(state.analytics, { ui: ui, days: state.days }));
+        } else if (state.subTab === 'tasks') {
+          var tq = 'admin/growth/tasks?limit=50&offset=0';
+          if (state.taskStatus) tq += '&status=' + encodeURIComponent(state.taskStatus);
+          if (state.taskCategory) tq += '&category=' + encodeURIComponent(state.taskCategory);
+          if (state.taskPriority) tq += '&priority=' + encodeURIComponent(state.taskPriority);
+          state.tasks = await api(tq);
+          state.taskDetail = state.selectedTaskId ? await api('admin/growth/tasks/' + state.selectedTaskId).catch(function () { return null; }) : null;
+          renderFrame(renderTasksHtml(state.tasks, state.taskDetail, { ui: ui, filters: { status: state.taskStatus, category: state.taskCategory, priority: state.taskPriority } }));
+        } else if (state.subTab === 'seo') {
+          var sq = 'admin/growth/seo-audit';
+          if (state.seoSeverity) sq += '?severity=' + encodeURIComponent(state.seoSeverity);
+          state.seoAudit = await api(sq);
+          renderFrame(renderSeoAuditHtml(state.seoAudit, { ui: ui, severity: state.seoSeverity }));
+        } else if (state.subTab === 'proposals') {
+          var pq = 'admin/growth/proposals?limit=50&offset=0';
+          if (state.propStatus) pq += '&status=' + encodeURIComponent(state.propStatus);
+          state.proposals = await api(pq);
+          state.propDetail = state.selectedPropId ? await api('admin/growth/proposals/' + state.selectedPropId).catch(function () { return null; }) : null;
+          renderFrame(renderProposalsHtml(state.proposals, state.propDetail, Object.assign({ ui: ui, filters: { status: state.propStatus } }, state.draftProp || {})));
+        } else if (state.subTab === 'diff') {
+          state.proposals = await api('admin/growth/proposals?limit=50&offset=0');
+          var plist = (state.proposals && state.proposals.proposals) || [];
+          if (!state.diffPropId && plist.length) state.diffPropId = plist[0].id;
+          state.diffPayload = state.diffPropId ? await api('admin/growth/proposals/' + state.diffPropId + '/diff').catch(function () { return null; }) : null;
+          renderFrame(renderDiffHtml(state.proposals, state.diffPayload, { ui: ui }));
         } else if (state.subTab === 'audit') {
           var q = 'admin/growth/audit?limit=' + state.auditLimit + '&offset=' + state.auditOffset;
           if (state.auditModule) q += '&module=' + encodeURIComponent(state.auditModule);
@@ -668,6 +1356,10 @@
     render: render,
     renderDashboardHtml: renderDashboardHtml,
     renderAnalyticsHtml: renderAnalyticsHtml,
+    renderTasksHtml: renderTasksHtml,
+    renderSeoAuditHtml: renderSeoAuditHtml,
+    renderProposalsHtml: renderProposalsHtml,
+    renderDiffHtml: renderDiffHtml,
     renderAuditHtml: renderAuditHtml,
     _renderBarSeries: renderBarSeries
   };

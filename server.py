@@ -2854,7 +2854,17 @@ class H(SimpleHTTPRequestHandler):
         return self._reject_growth_mutation()
 
     def do_PATCH(self):
-        return self._reject_growth_mutation()
+        p = urlparse(self.path).path
+        if p == '/api/admin/growth' or p.startswith('/api/admin/growth/'):
+            return growth_routes.handle_growth_patch(
+                self,
+                p,
+                db_file=DB_FILE,
+                db_lock=db_lock,
+                site_dir=SITE,
+                client_ip=get_client_ip(self),
+            )
+        return self.send_j(501, {'error': 'unsupported method'})
 
     def do_POST(self):
         u = urlparse(self.path); p = u.path
@@ -3999,7 +4009,14 @@ class H(SimpleHTTPRequestHandler):
         if not self.authed():
             return self.send_j(401, {'error': 'unauthorized'})
         if p == '/api/admin/growth' or p.startswith('/api/admin/growth/'):
-            return growth_routes.handle_growth_write_attempt(self, p)
+            return growth_routes.handle_growth_post(
+                self,
+                p,
+                db_file=DB_FILE,
+                db_lock=db_lock,
+                site_dir=SITE,
+                client_ip=get_client_ip(self),
+            )
         if p == '/api/ai/settings':
             try:
                 j = json.loads(self.body(16 * 1024))
