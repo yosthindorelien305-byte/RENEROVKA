@@ -584,7 +584,7 @@
   const lvlLbl = v => t(v) === v ? v : t(v);
   const diffLbl = v => ui('wt_difficulty_' + v);
   const tempLbl = v => ui('wt_temp_' + v);
-  const exImg = (e, c) => e.img ? `<img src="img/ex/svg_norm_${e.id}.svg" alt="">` : '';
+  const exImg = (e, c) => e.img ? `<img src="img/ex/svg_norm_${e.id}.svg" alt="" decoding="async">` : '';
 
   const getExVideo = e => {
     if (!e) return null;
@@ -3359,7 +3359,7 @@
           <span>${L == 'ru' ? 'Готовые долгосрочные программы тренировок с прогрессией по дням:' : 'Structured training programs with day-by-day progression:'}</span>
           <span class="rf-pill">${D.programs.length}</span>
         </div>
-        <div class="grid rf-programs-grid">${D.programs.map(programCard).join('')}</div>
+        <div id="programs-list" class="grid rf-programs-grid">${isProg ? D.programs.map(programCard).join('') : ''}</div>
       </div>`;
     },
     builder(editId) {
@@ -4048,7 +4048,7 @@
     const logs = Array.isArray(ps.logs[p.id]) ? ps.logs[p.id] : [];
     const isAct = String(ps.activeId) === String(p.id);
     const isPro = isUserPro();
-    return `<a class="card" href="#/program/${p.id}">${p.img ? `<img class="cover" src="${pImg(p)}">` : ''}<div class="b"><h3>${esc(pName(p))}</h3><div class="tags"><span class="tag">${logs.length ? `${logs.length}/${p.days}` : p.days} ${t('days')}</span><span class="tag">${tempLbl(p.temp)}</span>${isAct ? `<span class="tag pro">${uiSvg('pin', 11)} ${L == 'ru' ? 'Активна' : 'Active'}</span>` : (isPro ? '<span class="tag pro">PRO</span>' : '<span class="tag pro" style="background:rgba(245,158,11,0.18);color:var(--acc);border:1px solid rgba(245,158,11,0.35);">🔒 PRO</span>')}</div></div></a>`;
+    return `<a class="card" href="#/program/${p.id}">${p.img ? `<img class="cover" src="${pImg(p)}" alt="${esc(pName(p))}" decoding="async">` : ''}<div class="b"><h3>${esc(pName(p))}</h3><div class="tags"><span class="tag">${logs.length ? `${logs.length}/${p.days}` : p.days} ${t('days')}</span><span class="tag">${tempLbl(p.temp)}</span>${isAct ? `<span class="tag pro">${uiSvg('pin', 11)} ${L == 'ru' ? 'Активна' : 'Active'}</span>` : (isPro ? '<span class="tag pro">PRO</span>' : '<span class="tag pro" style="background:rgba(245,158,11,0.18);color:var(--acc);border:1px solid rgba(245,158,11,0.35);">🔒 PRO</span>')}</div></div></a>`;
   }
   function workoutCard(w) {
     const first = w.s[0] && w.s[0][1] && exMap[w.s[0][1][0]];
@@ -4063,7 +4063,7 @@
         ? '<span class="tag pro">PRO</span>'
         : '<span class="tag pro" style="background:rgba(245,158,11,0.18);color:var(--acc);border:1px solid rgba(245,158,11,0.35);font-weight:800;">🔒 PRO</span>';
     }
-    return `<a class="card" href="#/workout/${w.id}">${first && first.img ? `<div class="ex-img" style="aspect-ratio:16/9">${exImg(first)}</div>` : ''}<div class="b"><h3>${esc(woName(w))}</h3><div class="tags">${proTag}<span class="tag">${diffLbl(w.diff)}</span>${w.eq ? `<span class="tag">${eqLbl(w.eq)}</span>` : ''}${w.rating ? `<span class="tag star">★ ${w.rating}</span>` : ''}${isFav ? `<span class="tag pro">${uiSvg('heartFill', 11)}</span>` : ''}</div></div></a>`;
+    return `<a class="card" href="#/workout/${w.id}">${first && first.img ? `<div class="ex-img">${exImg(first)}</div>` : ''}<div class="b"><h3>${esc(woName(w))}</h3><div class="tags">${proTag}<span class="tag">${diffLbl(w.diff)}</span>${w.eq ? `<span class="tag">${eqLbl(w.eq)}</span>` : ''}${w.rating ? `<span class="tag star">★ ${w.rating}</span>` : ''}${isFav ? `<span class="tag pro">${uiSvg('heartFill', 11)}</span>` : ''}</div></div></a>`;
   }
   function exerciseCard(e) {
     const hasVid = !!getExVideo(e);
@@ -4162,10 +4162,63 @@
       const secWorkouts = document.getElementById('wo-sec-workouts');
       const secPrograms = document.getElementById('wo-sec-programs');
       const buildBtn = document.getElementById('wo-builder-btn');
+      const isProgInit = name == 'programs' || arg === 'programs';
+      let programsRendered = isProgInit;
+      let workoutsInitialized = false;
+
+      const ensurePrograms = () => {
+        if (programsRendered) return;
+        const pList = document.getElementById('programs-list');
+        if (pList) pList.innerHTML = D.programs.map(programCard).join('');
+        programsRendered = true;
+      };
+
+      const ensureWorkouts = () => {
+        if (workoutsInitialized) return;
+        workoutsInitialized = true;
+        let curMuscle = '';
+        const fullRx = /все тел|full body|кругов|hannibal|medrano|комплекс/i;
+        const qEl = document.getElementById('q');
+        if (qEl) {
+          const redraw = pagedList(() => {
+            const q = norm(document.getElementById('q').value), eq = document.getElementById('f-eq').value, d = document.getElementById('f-d').value, named = document.getElementById('f-t').checked;
+            return D.workouts.filter(w => {
+              if (named && !w._custom && !w.t.ru && !w.t.en) return false;
+              if (eq && w.eq != eq) return false;
+              if (d && w.diff != d) return false;
+              if (q && !norm(woFullText(w)).includes(q)) return false;
+              if (curMuscle == 'mine') {
+                if (!w._custom) return false;
+              } else if (curMuscle == 'fav') {
+                if (!getFavs().has(w.id)) return false;
+              } else if (curMuscle == 'full') {
+                const txt = woFullText(w);
+                const mf = detectMuscles(txt);
+                const cnt = Object.values(mf).filter(Boolean).length;
+                if (cnt < 3 && !fullRx.test(txt)) return false;
+              } else if (curMuscle && MUSCLE_RULES[curMuscle]) {
+                const txt = woFullText(w);
+                if (!MUSCLE_RULES[curMuscle].test(txt)) return false;
+              }
+              return true;
+            });
+          }, workoutCard);
+          const pills = document.querySelectorAll('#m-pills .mpill');
+          pills.forEach(b => {
+            b.onclick = () => {
+              vib(25);
+              curMuscle = b.dataset.m;
+              pills.forEach(x => x.classList.toggle('on', x == b));
+              redraw(true);
+            };
+          });
+        }
+      };
 
       if (tabWorkouts && tabPrograms) {
         tabWorkouts.onclick = () => {
           vib(20);
+          ensureWorkouts();
           tabWorkouts.classList.add('on');
           tabPrograms.classList.remove('on');
           if (secWorkouts) secWorkouts.style.display = '';
@@ -4175,6 +4228,7 @@
         };
         tabPrograms.onclick = () => {
           vib(20);
+          ensurePrograms();
           tabPrograms.classList.add('on');
           tabWorkouts.classList.remove('on');
           if (secWorkouts) secWorkouts.style.display = 'none';
@@ -4184,43 +4238,8 @@
         };
       }
 
-      let curMuscle = '';
-      const fullRx = /все тел|full body|кругов|hannibal|medrano|комплекс/i;
-      const qEl = document.getElementById('q');
-      if (qEl) {
-        const redraw = pagedList(() => {
-          const q = norm(document.getElementById('q').value), eq = document.getElementById('f-eq').value, d = document.getElementById('f-d').value, named = document.getElementById('f-t').checked;
-          return D.workouts.filter(w => {
-            if (named && !w._custom && !w.t.ru && !w.t.en) return false;
-            if (eq && w.eq != eq) return false;
-            if (d && w.diff != d) return false;
-            if (q && !norm(woFullText(w)).includes(q)) return false;
-            if (curMuscle == 'mine') {
-              if (!w._custom) return false;
-            } else if (curMuscle == 'fav') {
-              if (!getFavs().has(w.id)) return false;
-            } else if (curMuscle == 'full') {
-              const txt = woFullText(w);
-              const mf = detectMuscles(txt);
-              const cnt = Object.values(mf).filter(Boolean).length;
-              if (cnt < 3 && !fullRx.test(txt)) return false;
-            } else if (curMuscle && MUSCLE_RULES[curMuscle]) {
-              const txt = woFullText(w);
-              if (!MUSCLE_RULES[curMuscle].test(txt)) return false;
-            }
-            return true;
-          });
-        }, workoutCard);
-        const pills = document.querySelectorAll('#m-pills .mpill');
-        pills.forEach(b => {
-          b.onclick = () => {
-            vib(25);
-            curMuscle = b.dataset.m;
-            pills.forEach(x => x.classList.toggle('on', x == b));
-            redraw(true);
-          };
-        });
-      }
+      if (isProgInit) ensurePrograms();
+      else ensureWorkouts();
     }
     if (name == 'builder') {
       const isDup = arg && String(arg).startsWith('dup-');
@@ -7135,6 +7154,21 @@
   }
   setInterval(checkUnreadMessages, 12000);
   setTimeout(checkUnreadMessages, 2000);
+
+  document.addEventListener('error', ev => {
+    const img = ev.target;
+    if (!img || img.tagName !== 'IMG' || !app || !app.contains(img)) return;
+    if (img.dataset.rfRetried) return;
+    const rawSrc = img.getAttribute('src') || '';
+    if (!rawSrc || rawSrc.startsWith('data:')) return;
+    try {
+      const u = new URL(rawSrc, location.href);
+      if (u.origin !== location.origin) return;
+      img.dataset.rfRetried = '1';
+      u.searchParams.set('rf_r', String(Date.now()));
+      img.src = u.pathname + u.search;
+    } catch (_) {}
+  }, true);
 
   window.addEventListener('hashchange', () => { checkPendingPayment(); render(); });
   checkPendingPayment();
