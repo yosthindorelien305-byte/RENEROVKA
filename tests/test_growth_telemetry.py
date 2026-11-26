@@ -3,6 +3,7 @@
 import contextlib
 import sqlite3
 import subprocess
+import threading
 import unittest
 
 import server
@@ -137,6 +138,147 @@ class TestGrowthTelemetry(IsolatedServerTestCase):
         res2 = subprocess.run(["node", "-e", resilient_script], cwd=server.ROOT, capture_output=True, text=True)
         self.assertEqual(res2.returncode, 0, msg=res2.stderr or res2.stdout)
         self.assertIn("ANALYTICS_RESILIENCE_OK", res2.stdout)
+
+    def test_ip_spoofing_blocked_and_trusted_proxy_respected(self):
+        # 1. Direct untrusted socket IP rotating forged X-Real-IP and X-Forwarded-For headers cannot bypass 30/60s cap
+        for idx in range(telemetry.TELEMETRY_RATE_LIMIT_MAX):
+            c_ok, _ = invoke_http(
+                "POST",
+                "/api/telemetry/event",
+                {"event": "coach_open"},
+                headers={
+                    "X-Real-IP": f"10.1.0.{idx + 1}",
+                    "X-Forwarded-For": f"172.16.0.{idx + 1}",
+                },
+                client_ip="198.51.100.10",
+            )
+            self.assertEqual(c_ok, 202)
+        c_spoof_blk, b_blk = invoke_http(
+            "POST",
+            "/api/telemetry/event",
+            {"event": "coach_open"},
+            headers={"X-Real-IP": "10.99.99.99", "X-Forwarded-For": "8.8.8.8"},
+            client_ip="198.51.100.10",
+        )
+        self.assertEqual(c_spoof_blk, 429)
+        self.assertEqual(b_blk["error"], "rate_limit_exceeded")
+
+        # 2. Trusted Nginx reverse proxy (127.0.0.1 / ::1) uses validated X-Real-IP and ignores X-Forwarded-For
+        for idx in range(telemetry.TELEMETRY_RATE_LIMIT_MAX):
+            c_prx, _ = invoke_http(
+                "POST",
+                "/api/telemetry/event",
+                {"event": "program_select"},
+                headers={
+                    "X-Real-IP": "203.0.113.5",
+                    "X-Forwarded-For": f"192.0.2.{idx + 1}",
+                },
+                client_ip="127.0.0.1",
+            )
+            self.assertEqual(c_prx, 202)
+        # 31st request for 203.0.113.5 even with a new X-Forwarded-For is blocked (429)
+        c_prx_blk, _ = invoke_http(
+            "POST",
+            "/api/telemetry/event",
+            {"event": "program_select"},
+            headers={"X-Real-IP": "203.0.113.5", "X-Forwarded-For": "1.1.1.1"},
+            client_ip="::1",
+        )
+        self.assertEqual(c_prx_blk, 429)
+        # Different real client behind Nginx proxy is NOT blocked
+        c_other, _ = invoke_http(
+            "POST",
+            "/api/telemetry/event",
+            {"event": "program_select"},
+            headers={"X-Real-IP": "203.0.113.6", "X-Forwarded-For": "1.1.1.1"},
+            client_ip="127.0.0.1",
+        )
+        self.assertEqual(c_other, 202)
+        # Invalid X-Real-IP behind trusted proxy safely falls back to proxy socket IP
+        c_bad_hdr, _ = invoke_http(
+            "POST",
+            "/api/telemetry/event",
+            {"event": "workout_start"},
+            headers={"X-Real-IP": "not-an-ip, 1.2.3.4"},
+            client_ip="127.0.0.1",
+        )
+        self.assertEqual(c_bad_hdr, 202)
+
+    def test_rate_limit_capacity_flood_cannot_reset_existing_clients_and_recovers_after_window(self):
+        t0 = 1000.0
+        for _ in range(telemetry.TELEMETRY_RATE_LIMIT_MAX):
+            self.assertTrue(telemetry._check_rate_limit("203.0.113.10", now_ts=t0))
+        self.assertFalse(telemetry._check_rate_limit("203.0.113.10", now_ts=t0 + 1.0))
+
+        for _ in range(25):
+            self.assertTrue(telemetry._check_rate_limit("203.0.113.11", now_ts=t0))
+
+        # Attacker floods 600 distinct source IPs within the same 60s window
+        flood_allowed = 0
+        flood_blocked = 0
+        for i in range(600):
+            ip = f"198.18.{i // 250}.{(i % 250) + 1}"
+            if telemetry._check_rate_limit(ip, now_ts=t0 + 5.0):
+                flood_allowed += 1
+            else:
+                flood_blocked += 1
+
+        self.assertEqual(flood_allowed, telemetry.MAX_RL_CAPACITY - 2)
+        self.assertEqual(flood_blocked, 600 - (telemetry.MAX_RL_CAPACITY - 2))
+        self.assertEqual(len(telemetry._rl_hits), telemetry.MAX_RL_CAPACITY)
+
+        # Existing clients' counters MUST NOT be cleared or reset by the flood
+        self.assertFalse(telemetry._check_rate_limit("203.0.113.10", now_ts=t0 + 6.0))
+        for _ in range(5):
+            self.assertTrue(telemetry._check_rate_limit("203.0.113.11", now_ts=t0 + 6.0))
+        self.assertFalse(telemetry._check_rate_limit("203.0.113.11", now_ts=t0 + 6.0))
+
+        # After 60s window passes, expired entries are evicted and clients recover cleanly
+        self.assertTrue(telemetry._check_rate_limit("203.0.113.99", now_ts=t0 + 66.0))
+        self.assertTrue(telemetry._check_rate_limit("203.0.113.10", now_ts=t0 + 66.0))
+
+    def test_sliding_window_exact_30_per_60s(self):
+        t0 = 2000.0
+        for _ in range(telemetry.TELEMETRY_RATE_LIMIT_MAX):
+            self.assertTrue(telemetry._check_rate_limit("203.0.113.50", now_ts=t0))
+        self.assertFalse(telemetry._check_rate_limit("203.0.113.50", now_ts=t0 + 59.0))
+        self.assertTrue(telemetry._check_rate_limit("203.0.113.50", now_ts=t0 + 60.1))
+
+    def test_concurrent_requests_thread_safety(self):
+        total_threads = 60
+        barrier = threading.Barrier(total_threads)
+        results = []
+        res_lock = threading.Lock()
+        errors = []
+
+        def worker():
+            try:
+                barrier.wait(timeout=5)
+                code, _body = invoke_http(
+                    "POST",
+                    "/api/telemetry/event",
+                    {"event": "workout_complete"},
+                    client_ip="198.51.100.77",
+                )
+                with res_lock:
+                    results.append(code)
+            except Exception as e:
+                with res_lock:
+                    errors.append(e)
+
+        threads = [threading.Thread(target=worker) for _ in range(total_threads)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join(timeout=15)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(len(results), total_threads)
+        self.assertEqual(results.count(202), telemetry.TELEMETRY_RATE_LIMIT_MAX)
+        self.assertEqual(results.count(429), total_threads - telemetry.TELEMETRY_RATE_LIMIT_MAX)
+        an = growth_metrics.compute_analytics(server.DB_FILE, server.db_lock, days=30)
+        counts = {item["key"]: item["countPeriod"] for item in an["featureUsage"]["byEvent"]}
+        self.assertEqual(counts["workout_complete"], telemetry.TELEMETRY_RATE_LIMIT_MAX)
 
 
 if __name__ == "__main__":

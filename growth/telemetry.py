@@ -39,23 +39,29 @@ def reset_rate_limiter():
 
 
 def _check_rate_limit(client_ip, *, now_ts=None):
-    """Volatile per-IP sliding window limit; never stores IPs on disk."""
+    """Volatile per-IP sliding window limit; never stores IPs on disk. Fail-closed at capacity."""
     key = str(client_ip or 'unknown')[:64]
     now = float(now_ts if now_ts is not None else time.time())
     cutoff = now - TELEMETRY_RATE_LIMIT_WINDOW
     with _rl_lock:
-        if len(_rl_hits) > MAX_RL_CAPACITY:
-            stale = [k for k, ts_list in _rl_hits.items() if not ts_list or ts_list[-1] < cutoff]
+        if key in _rl_hits:
+            recent = [t for t in _rl_hits[key] if t > cutoff]
+            if len(recent) >= TELEMETRY_RATE_LIMIT_MAX:
+                _rl_hits[key] = recent
+                return False
+            recent.append(now)
+            _rl_hits[key] = recent
+            return True
+
+        if len(_rl_hits) >= MAX_RL_CAPACITY:
+            stale = [k for k, ts_list in _rl_hits.items() if not ts_list or ts_list[-1] <= cutoff]
             for k in stale:
                 _rl_hits.pop(k, None)
-            if len(_rl_hits) > MAX_RL_CAPACITY:
-                _rl_hits.clear()
-        recent = [t for t in _rl_hits.get(key, ()) if t >= cutoff]
-        if len(recent) >= TELEMETRY_RATE_LIMIT_MAX:
-            _rl_hits[key] = recent
-            return False
-        recent.append(now)
-        _rl_hits[key] = recent
+            if len(_rl_hits) >= MAX_RL_CAPACITY:
+                # Fail-closed for excess new IPs: never clear or evict active client counters
+                return False
+
+        _rl_hits[key] = [now]
         return True
 
 
