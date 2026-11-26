@@ -166,10 +166,10 @@ def _discover_html_files(site_dir):
     site_real = os.path.realpath(site_dir)
     found = []
     for root, dirs, files in os.walk(site_real):
-        # Skip heavy asset subdirectories that hold static thumbnails/audio, keeping fitify root & articles
+        # Skip heavy asset subdirectories and excluded legacy fitify directory
         dirs[:] = sorted(
             d for d in dirs
-            if d not in ('uploads', 'audio', 'anatomy', 'thumbs', 'muscles', 'data', 'img', 'content')
+            if d not in ('uploads', 'audio', 'anatomy', 'thumbs', 'muscles', 'data', 'img', 'content', 'fitify')
         )
         for fn in sorted(files):
             if not fn.lower().endswith('.html'):
@@ -702,6 +702,17 @@ def scan_site_seo(site_dir, *, checked_at=None):
                     field_name='robots_txt',
                     current_value='',
                 )
+        if '/' not in robots['disallows'] and '/fitify/' not in robots['disallows']:
+            _add_issue(
+                issues,
+                page_url='/robots.txt',
+                issue_type='robots_missing_fitify_disallow',
+                severity='medium',
+                description='В robots.txt отсутствует Disallow: /fitify/ для исключения стороннего каталога из индексации RizzaFit.',
+                recommendation='Добавьте Disallow: /fitify/ в секцию User-agent: *.',
+                field_name='robots_txt',
+                current_value='',
+            )
 
     # Global sitemap.xml checks
     if not sitemap['exists']:
@@ -729,6 +740,18 @@ def scan_site_seo(site_dir, *, checked_at=None):
     else:
         for sm_url in sitemap['urls']:
             checkable, exists, sm_path = _resolve_local_target(site_real, 'index.html', sm_url)
+            sm_clean_path = (sm_path or urllib.parse.urlparse(sm_url).path or '').lower()
+            if sm_clean_path == '/fitify' or sm_clean_path.startswith('/fitify/'):
+                _add_issue(
+                    issues,
+                    page_url=sm_path or sm_url,
+                    issue_type='sitemap_excluded_fitify_url',
+                    severity='high',
+                    description=f'URL Fitify ({sm_url}) не должен включаться в sitemap.xml RizzaFit.',
+                    recommendation='Удалите все URL /fitify/ из sitemap.xml — развивается только RizzaFit.',
+                    field_name='sitemap_xml',
+                    current_value=sm_url,
+                )
             if checkable and not exists:
                 _add_issue(
                     issues,

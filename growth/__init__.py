@@ -14,6 +14,13 @@ from .proposals import (
 from .routes import handle_growth_get, handle_growth_patch, handle_growth_post, handle_growth_write_attempt
 from .seo_audit import get_latest_seo_audit, run_seo_audit, scan_site_seo
 from .tasks import create_task, get_task_detail, list_tasks, update_task
+from .telemetry import (
+    ALLOWED_TELEMETRY_EVENTS,
+    handle_telemetry_post,
+    query_feature_usage,
+    record_feature_event,
+    reset_rate_limiter,
+)
 
 __all__ = [
     'init_growth_db',
@@ -40,4 +47,9 @@ __all__ = [
     'handle_growth_post',
     'handle_growth_patch',
     'handle_growth_write_attempt',
+    'ALLOWED_TELEMETRY_EVENTS',
+    'handle_telemetry_post',
+    'query_feature_usage',
+    'record_feature_event',
+    'reset_rate_limiter',
 ]

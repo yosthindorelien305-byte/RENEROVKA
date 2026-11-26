@@ -67,6 +67,7 @@ class TestGrowthFrontendUI(unittest.TestCase):
           rpeDistribution: { status: 'ok', period: { easy: { count: 1 }, good: { count: 1 }, hard: { count: 1 }, unrated: { count: 0 } } },
           userProfiles: { status: 'ok', goals: { strength: 1 }, levels: { beginner: 1 } },
           aiCoach: { status: 'ok', windowDays: 14, activeSessions14d: 2, userSessions14d: 1, guestSessions14d: 1, totalMessages14d: 3, avgMessagesPerSession: 1.5, adoptionRatePct: 25.0 },
+          featureUsage: { status: 'ok', source: 'flexa.db:growth_feature_daily', updatedAt: '2026-11-26T12:00:00Z', piiStored: false, totalInPeriod: 7, totalAllTime: 7, byEvent: [{ key: 'coach_open', label: 'Открытие AI Coach', countPeriod: 7, countAllTime: 7 }], dailySeries: [{ date: '2026-11-26', count: 7 }] },
           monetization: { status: 'ok', freeAccessMode: true, realProUsersActive: 1, paymentsInPeriodByStatus: { paid: 1, pending: 0 }, paidRevenueInPeriod: 1990 },
           moderation: { status: 'ok', reportsByStatus: { new: 1, reviewed: 1, closed: 0 }, avgReviewTimeHours: 2.0, acceptedFriendships: 1, activeBlocks: 1 },
           externalSources: { status: 'unavailable', updatedAt: '2026-11-26T12:00:00Z', items: [{ id: 'ga4', label: 'Google Analytics 4', status: 'unavailable', source: 'GA4', reason: 'Not connected' }] }
@@ -78,6 +79,8 @@ class TestGrowthFrontendUI(unittest.TestCase):
         assert(anHtml.includes('исключено неполн.: 2'));
         assert(anHtml.includes('Недостаточно данных'));
         assert(anHtml.includes('unavailable'));
+        assert(anHtml.includes('Использование функций (агрегировано, без PII)'));
+        assert(anHtml.includes('Открытие AI Coach'));
 
         const auditHtml = growth.renderAuditHtml({
           appendOnlyEnforced: true,
@@ -129,12 +132,15 @@ class TestGrowthFrontendUI(unittest.TestCase):
         assert(seoHtml.includes('search_console_indexing'));
         assert(seoHtml.includes('unknown'));
 
+        const adminGrowthSrc = require('fs').readFileSync('./site/admin_growth.js', 'utf8');
+        assert(!adminGrowthSrc.includes('site/fitify/'));
+
         const propHtml = growth.renderProposalsHtml({
           total: 1,
-          proposals: [{ id: 5, targetObject: '/index.html', fieldName: 'title', status: 'pending', reason: 'SEO', createdAtIso: '2026-11-26T12:00:00Z' }]
+          proposals: [{ id: 5, targetObject: 'site/index.html', fieldName: 'title', status: 'pending', reason: 'SEO', createdAtIso: '2026-11-26T12:00:00Z' }]
         }, {
-          proposal: { id: 5, targetObject: '/index.html', fieldName: 'title', status: 'pending', reason: 'SEO' },
-          diff: { targetObject: '/index.html', fieldName: 'title', stats: { addedCount: 1, removedCount: 1, originalLength: 3, proposedLength: 3 }, sideBySideLines: [{ type: 'replace', oldLineNum: 1, newLineNum: 1, oldText: 'Old', newText: '<b>New</b>' }], unifiedDiff: '-Old\n+<b>New</b>' },
+          proposal: { id: 5, targetObject: 'site/index.html', fieldName: 'title', status: 'pending', reason: 'SEO' },
+          diff: { targetObject: 'site/index.html', fieldName: 'title', stats: { addedCount: 1, removedCount: 1, originalLength: 3, proposedLength: 3 }, sideBySideLines: [{ type: 'replace', oldLineNum: 1, newLineNum: 1, oldText: 'Old', newText: '<b>New</b>' }], unifiedDiff: '-Old\n+<b>New</b>' },
           history: []
         });
         assert(propHtml.includes('Предложение #5'));

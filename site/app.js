@@ -875,6 +875,9 @@
       clean.injuries = src.injuries.replace(/[<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 160);
     }
     localStorage.fitnessProfile = JSON.stringify(clean);
+    if (Object.keys(clean).length > 0 && window.RizzaAnalytics && typeof window.RizzaAnalytics.trackProfileCompleted === 'function') {
+      window.RizzaAnalytics.trackProfileCompleted();
+    }
     if (typeof scheduleCloudSync === 'function') scheduleCloudSync();
     return clean;
   }
@@ -4430,6 +4433,9 @@
       return D.exercises.filter(e => (!im || e.img) && (!eq || e.eq == eq) && (!l || e.lvl == l) && (!q || norm(exName(e)).includes(q)));
     }, exerciseCard);
     if (name == 'coach' && COACH.enabled) {
+      if (window.RizzaAnalytics && typeof window.RizzaAnalytics.trackCoachOpen === 'function') {
+        window.RizzaAnalytics.trackCoachOpen();
+      }
       const box = document.getElementById('msgs'), inp = document.getElementById('cin');
       const form = document.getElementById('cform');
       const sendBtn = (form && typeof form.querySelector === 'function') ? form.querySelector('.send') : null;
@@ -4606,6 +4612,9 @@
             hist2.push({ role: 'model', text: String(j.reply) });
             hist2 = hist2.slice(-30);
             saveCoachHist(hist2);
+            if (window.RizzaAnalytics && typeof window.RizzaAnalytics.trackCoachMessage === 'function') {
+              window.RizzaAnalytics.trackCoachMessage();
+            }
           } else {
             const errMsg = (j && j.error) ? String(j.error) : (L == 'ru' ? `Ошибка сервера (${r.status})` : `Server error (${r.status})`);
             lastError = {
@@ -4630,6 +4639,13 @@
           }
         }
       };
+      if (box && typeof box.addEventListener === 'function') box.addEventListener('click', ev => {
+        const refLink = ev.target && ev.target.closest ? ev.target.closest('a.ref') : null;
+        if (refLink && window.RizzaAnalytics && typeof window.RizzaAnalytics.trackCoachRefClick === 'function') {
+          const m = (refLink.getAttribute('href') || '').match(/^#\/(program|workout|exercise)\//);
+          window.RizzaAnalytics.trackCoachRefClick(m ? m[1] : 'item');
+        }
+      });
       if (form) form.onsubmit = e => { e.preventDefault(); send(inp ? inp.value : ''); };
       document.querySelectorAll('.chip2').forEach(b => b.onclick = () => send(b.dataset.q));
       if (clrBtn) clrBtn.onclick = async () => {
@@ -4696,8 +4712,12 @@
         vib(25);
         const ps = getProgState();
         const pid = pinBtn.dataset.pid;
-        ps.activeId = String(ps.activeId) === String(pid) ? null : pid;
+        const pinning = String(ps.activeId) !== String(pid);
+        ps.activeId = pinning ? pid : null;
         saveProgState(ps);
+        if (pinning && window.RizzaAnalytics && typeof window.RizzaAnalytics.trackProgramSelect === 'function') {
+          window.RizzaAnalytics.trackProgramSelect(pid);
+        }
         render();
       };
       const tickBtn = document.getElementById('prog-tick');
@@ -4713,6 +4733,9 @@
         ps.logs[pid].push(new Date().toISOString().slice(0, 10));
         if (!ps.activeId) ps.activeId = pid;
         saveProgState(ps);
+        if (window.RizzaAnalytics && typeof window.RizzaAnalytics.trackProgramDayComplete === 'function') {
+          window.RizzaAnalytics.trackProgramDayComplete(pid);
+        }
         render();
       };
       const undoBtn = document.getElementById('prog-undo');
@@ -5142,6 +5165,9 @@
                 vib(20);
                 const enabled = enEl.checked;
                 AP.saveNotifPrefs({ enabled, lastFiredDate: '' });
+                if (window.RizzaAnalytics && typeof window.RizzaAnalytics.trackReminderToggle === 'function') {
+                  window.RizzaAnalytics.trackReminderToggle(enabled);
+                }
                 if (enabled && typeof Notification !== 'undefined' && Notification.permission === 'default') {
                   Notification.requestPermission().then(() => renderNotifyModal()).catch(() => {});
                 } else {

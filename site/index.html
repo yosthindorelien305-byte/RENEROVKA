@@ -12,7 +12,7 @@
     send_page_view: false
   });
 </script>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#0F1218">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -97,7 +97,17 @@
     </button>
   </div>
 </header>
-<main id="app"></main>
+<main id="app">
+  <section class="rf-seo-fallback" style="max-width:760px;margin:28px auto;padding:24px 20px;border-radius:18px;background:var(--card,#161B24);border:1px solid var(--card-border,rgba(255,255,255,.08))">
+    <h1 style="margin:0 0 10px;font-size:26px;line-height:1.2">RizzaFit — программы тренировок, база упражнений и AI-тренер</h1>
+    <p style="margin:0 0 16px;color:var(--tx-sub,#A9B1BD);font-size:15px;line-height:1.55">Персональная фитнес-платформа для тренировок дома и в зале: 15 готовых программ, более 1400 упражнений с анатомией целевых мышц, трекинг рекордов и AI Coach на базе Gemini.</p>
+    <nav aria-label="Разделы RizzaFit" style="display:flex;flex-wrap:wrap;gap:10px">
+      <a href="/programs.html" class="btn alt" style="display:inline-flex;align-items:center;padding:10px 14px;border-radius:10px;text-decoration:none;font-weight:700">Программы тренировок</a>
+      <a href="/exercises.html" class="btn alt" style="display:inline-flex;align-items:center;padding:10px 14px;border-radius:10px;text-decoration:none;font-weight:700">Каталог упражнений</a>
+      <a href="/ai-coach.html" class="btn alt" style="display:inline-flex;align-items:center;padding:10px 14px;border-radius:10px;text-decoration:none;font-weight:700">AI-тренер RizzaFit</a>
+    </nav>
+  </section>
+</main>
 <nav id="nav">
   <a href="#/" data-k="home" data-i="home">
     <i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">

@@ -5,7 +5,7 @@ import base64, hashlib, hmac, html, ipaddress, json, os, re, secrets, socket, sq
 from http.cookies import SimpleCookie
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, parse_qsl
-from growth import db as growth_db, routes as growth_routes
+from growth import db as growth_db, routes as growth_routes, telemetry as growth_telemetry
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SITE = os.path.join(ROOT, 'site')
@@ -2868,6 +2868,10 @@ class H(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         u = urlparse(self.path); p = u.path
+        if p == '/api/telemetry/event':
+            return growth_telemetry.handle_telemetry_post(
+                self, db_file=DB_FILE, db_lock=db_lock, client_ip=get_client_ip(self)
+            )
         if p == '/api/coach':
             ip = get_client_ip(self)
             now = time.time()

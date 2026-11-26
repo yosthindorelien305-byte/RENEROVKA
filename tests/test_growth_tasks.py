@@ -3,7 +3,9 @@
 import contextlib
 import io
 import json
+import os
 import sqlite3
+import tempfile
 import time
 import unittest
 from email.message import Message
@@ -176,6 +178,8 @@ class TestGrowthTasks(IsolatedServerTestCase):
             "/null\x00byte",
             "https://user@evil.example/test",
             "/server_data/ai.json",
+            "/fitify/",
+            "/fitify/muscles.html",
             "relative-without-leading-slash",
         )
         for bad in bad_urls:
@@ -191,7 +195,7 @@ class TestGrowthTasks(IsolatedServerTestCase):
         c_int, b_int = invoke_http(
             "POST",
             "/api/admin/growth/tasks",
-            {"title": "Internal URL", "category": "SEO", "targetUrl": "/fitify/muscles.html?view=1#map"},
+            {"title": "Internal URL", "category": "SEO", "targetUrl": "/exercises.html?view=1#map"},
             headers=self.admin_hdrs,
         )
         self.assertEqual(c_int, 201)
@@ -210,7 +214,10 @@ class TestGrowthTasks(IsolatedServerTestCase):
         self.assertTrue(b_ext["task"]["externalNavigationDisabled"])
 
     def test_task_crud_filters_transitions_seo_link_and_audit(self):
-        run = seo_audit.run_seo_audit(server.DB_FILE, server.db_lock, site_dir=server.SITE)
+        with tempfile.TemporaryDirectory(prefix="flexa_task_seo_") as tmp_site:
+            with open(os.path.join(tmp_site, "index.html"), "w", encoding="utf-8") as f:
+                f.write("<html><head><title>RizzaFit Test</title></head><body>Hi</body></html>")
+            run = seo_audit.run_seo_audit(server.DB_FILE, server.db_lock, site_dir=tmp_site)
         self.assertGreaterEqual(len(run["issues"]), 1)
         first_issue = run["issues"][0]
 

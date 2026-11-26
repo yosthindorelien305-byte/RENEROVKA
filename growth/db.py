@@ -137,6 +137,15 @@ def init_growth_db(conn):
         'created_at INTEGER NOT NULL)'
     )
     conn.execute('CREATE INDEX IF NOT EXISTS idx_growth_prop_hist_pid ON growth_proposal_history(proposal_id, id DESC)')
+    conn.execute(
+        'CREATE TABLE IF NOT EXISTS growth_feature_daily ('
+        'date_utc TEXT NOT NULL, '
+        'event_key TEXT NOT NULL, '
+        'event_count INTEGER NOT NULL DEFAULT 0, '
+        'updated_at INTEGER NOT NULL, '
+        'PRIMARY KEY (date_utc, event_key))'
+    )
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_growth_feature_daily_date ON growth_feature_daily(date_utc DESC)')
 
 
 def _scrub_text(val, max_len=240):

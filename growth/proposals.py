@@ -31,7 +31,7 @@ REL_TARGET_PATH_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.-]*(?:/[A-Za-z0-9][A-Z
 FRAGMENT_RE = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
 FORBIDDEN_TARGET_SEGMENTS = {
     '.', '..', 'server_data', '.git', '.env', 'etc', 'proc', 'sys', 'var',
-    'root', 'home', 'windows', 'system32', 'secrets', 'backups', 'tests',
+    'root', 'home', 'windows', 'system32', 'secrets', 'backups', 'tests', 'fitify',
 }
 FORBIDDEN_TARGET_FILENAMES = {
     'admin.json', 'ai.json', 'telegram.json', 'yookassa.json', 'flexa.db',
