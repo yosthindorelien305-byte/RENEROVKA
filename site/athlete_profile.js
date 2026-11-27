@@ -644,9 +644,15 @@
 
   function merge(cfgAthlete, live) {
     const a = Object.assign({ duelReward: 500, questReward: 500 }, DEFAULTS, cfgAthlete || {});
+    if (a.avatar && /athlete_avatar\.jpg/i.test(String(a.avatar))) {
+      a.avatar = '';
+    }
     const uName = (localStorage.getItem('userName') || '').trim();
     let locProf = {};
     try { locProf = JSON.parse(localStorage.getItem('athleteProfile') || '{}'); } catch (e) {}
+    if (locProf.avatar && !/athlete_avatar\.jpg/i.test(String(locProf.avatar))) {
+      a.avatar = locProf.avatar;
+    }
     if (uName) {
       if (!locProf.name || locProf.name === 'Mr.Bobrovsky' || locProf.name === 'Атлет') {
         a.name = uName;
@@ -714,21 +720,19 @@
   function defaultAvatarSvg() {
     return `<svg viewBox="0 0 80 80" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
       <defs>
-        <radialGradient id="avBg" cx="50%" cy="35%" r="65%">
-          <stop offset="0%" stop-color="#263042"/>
-          <stop offset="100%" stop-color="#11151E"/>
+        <radialGradient id="avBg" cx="50%" cy="35%" r="70%">
+          <stop offset="0%" stop-color="#29241B"/>
+          <stop offset="100%" stop-color="#101010"/>
         </radialGradient>
+        <linearGradient id="avGold" x1="16" y1="14" x2="64" y2="66" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="#E8CA86"/>
+          <stop offset="100%" stop-color="#B49048"/>
+        </linearGradient>
       </defs>
       <rect width="80" height="80" fill="url(#avBg)"/>
-      <circle cx="40" cy="31" r="14" fill="#d9d5c0"/>
-      <circle cx="28" cy="22" r="4.5" fill="#b4b19d"/>
-      <circle cx="52" cy="22" r="4.5" fill="#b4b19d"/>
-      <ellipse cx="40" cy="34" rx="7" ry="5" fill="#ece9d8"/>
-      <circle cx="35" cy="29" r="2" fill="#11151E"/>
-      <circle cx="45" cy="29" r="2" fill="#11151E"/>
-      <path d="M37 33h6l-3 3z" fill="#1C222E"/>
-      <path d="M18 74c2-15 11-22 22-22s20 7 22 22" fill="#6d4b23"/>
-      <path d="M31 52c3 4 6 6 9 6s6-2 9-6" fill="#1C222E"/>
+      <polygon points="40,12 64,26 64,54 40,68 16,54 16,26" fill="none" stroke="url(#avGold)" stroke-width="2.2"/>
+      <polygon points="40,20 57,30 57,50 40,60 23,50 23,30" fill="rgba(214,179,106,0.08)" stroke="rgba(214,179,106,0.35)" stroke-width="1"/>
+      <path d="M31 50V28h11c4.5 0 7.2 2.4 7.2 6.2 0 2.9-1.6 4.9-4.3 5.8l5 10h-5.3l-4.4-9.1H35.8V50H31zm4.8-12.5h5.7c2 0 3.2-1 3.2-2.8s-1.2-2.7-3.2-2.7h-5.7v5.5z" fill="url(#avGold)"/>
     </svg>`;
   }
 
@@ -771,8 +775,8 @@
           <stop offset="100%" stop-color="#6b4815"/>
         </linearGradient>
         <linearGradient id="discSm" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stop-color="#5EEAD4"/>
-          <stop offset="100%" stop-color="#0F766E"/>
+          <stop offset="0%" stop-color="#E8CA86"/>
+          <stop offset="100%" stop-color="#B49048"/>
         </linearGradient>
       </defs>
       <circle cx="90" cy="26" r="16" fill="url(#discSm)" opacity="0.92"/>
@@ -790,12 +794,12 @@
   }
 
   function miniAvatar(bg, shirt, avatarUrl) {
-    const safeBg = safeColor(bg, '#283327');
-    const safeShirt = safeColor(shirt, '#5b8a47');
-    if (avatarUrl) {
+    const safeBg = safeColor(bg, '#241F16');
+    const safeAccent = safeColor(shirt, '#D6B36A');
+    if (avatarUrl && !/athlete_avatar\.jpg/i.test(String(avatarUrl))) {
       return `<span class="ap-mini-av" style="background:${safeBg}"><img src="${esc(avatarUrl)}" alt="" style="width:100%;height:100%;object-fit:cover;"></span>`;
     }
-    return `<span class="ap-mini-av" style="background:${safeBg}"><svg viewBox="0 0 32 32"><circle cx="16" cy="12" r="5.5" fill="#e2e5dd"/><path d="M6 30c1-7 5-10 10-10s9 3 10 10" fill="${safeShirt}"/></svg></span>`;
+    return `<span class="ap-mini-av" style="background:${safeBg}"><svg viewBox="0 0 32 32"><polygon points="16,4 26,10 26,22 16,28 6,22 6,10" fill="none" stroke="${safeAccent}" stroke-width="2.4"/><polygon points="16,10 21,16 16,22 11,16" fill="${safeAccent}"/></svg></span>`;
   }
 
   function syncServerFriends(serverFriends) {
@@ -919,7 +923,7 @@
       <div class="ap-bento">
         <div class="ap-bento-card ap-friends-card" data-ap-action="friends">
           <div class="ap-av-stack">
-            ${friendsList.length ? friendsList.slice(0, 3).map(f => miniAvatar(f.color, f.shirt, f.avatar)).join('') : '<span style="font-size:17px;line-height:26px;">👥</span>'}
+            ${friendsList.length ? friendsList.slice(0, 3).map(f => miniAvatar(f.color, f.shirt, f.avatar)).join('') : '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#D6B36A" stroke-width="2"><polygon points="12 3 20 8 20 16 12 21 4 16 4 8 12 3"/><circle cx="12" cy="12" r="2.5"/></svg>'}
           </div>
           <div class="ap-bento-title">${esc(friendsTitle)}</div>
           <div class="ap-bento-green">${esc(onlineTxt)}</div>

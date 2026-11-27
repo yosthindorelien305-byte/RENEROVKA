@@ -45,7 +45,7 @@ class TestMobileImagesFix(unittest.TestCase):
         with open(os.path.join(SITE, "sw.js"), encoding="utf-8") as f:
             sw_js = f.read()
 
-        self.assertIn("flexa-shell-v68", sw_js)
+        self.assertIn("flexa-shell-v69", sw_js)
         self.assertIn("MEDIA_CACHE_NAME = 'flexa-media-v1'", sw_js)
         self.assertNotIn("./content/texts.json", sw_js)
         self.assertIn("/content/uploads/", sw_js)

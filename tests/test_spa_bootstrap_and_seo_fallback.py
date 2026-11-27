@@ -51,7 +51,7 @@ class TestSpaBootstrapAndSeoFallback(unittest.TestCase):
 
         with open(os.path.join(SITE, "sw.js"), encoding="utf-8") as f:
             sw_js = f.read()
-        self.assertIn("flexa-shell-v68", sw_js)
+        self.assertIn("flexa-shell-v69", sw_js)
         self.assertIn("hit || Response.error()", sw_js)
 
     def test_deterministic_seo_audit_remains_clean_on_site(self):

@@ -31,10 +31,10 @@
       return d;
     };
     try {
-      return await fetchJson('data.json?v=68');
+      return await fetchJson('data.json?v=69');
     } catch (e1) {
       try {
-        return await fetchJson('data.json?v=68&r=' + Date.now());
+        return await fetchJson('data.json?v=69&r=' + Date.now());
       } catch (e2) {
         if (typeof caches !== 'undefined' && caches && typeof caches.match === 'function') {
           const cached = await caches.match('data.json', { ignoreSearch: true }).catch(() => null);
@@ -82,7 +82,8 @@
   Object.entries(OV.w || {}).forEach(([id, o]) => { const w = D.workouts.find(x => x.id == id); if (w) Object.assign(w, o); });
   Object.entries(OV.p || {}).forEach(([id, o]) => { const p = D.programs.find(x => x.id == id); if (p) { Object.assign(p, o); if (o.image) p.img = true; } });
   Object.entries(OV.e || {}).forEach(([id, o]) => { const e = D.exercises.find(x => x.id == id); if (e) Object.assign(e, o); });
-  const pImg = p => p.image || `img/programs/${p.id}.jpg`;
+  const cleanLegacyUpload = (url, pattern) => (url && !pattern.test(String(url))) ? url : '';
+  const pImg = p => cleanLegacyUpload(p.image, /content\/uploads\/program_7\.jpg/i) || `img/programs/${p.id}.jpg`;
   const ACCENT_THEMES = [
     { id: 'gold', hex: '#D6B36A', ru: 'Тёплое золото', en: 'Warm Gold' },
     { id: 'champagne', hex: '#E8CA86', ru: 'Шампань', en: 'Champagne' },
@@ -105,7 +106,7 @@
   (function theme() {
     applyAccent();
     const st = document.documentElement.style;
-    const logo = CFG.logo || 'img/logo.svg';
+    const logo = cleanLegacyUpload(CFG.logo, /content\/uploads\/logo\.(jpg|png)/i) || 'img/logo.svg';
     st.setProperty('--logo', `url(${logo})`);
     document.title = CFG.brand + ' — ' + (L == 'ru' ? 'тренировки и программы' : 'workouts & programs');
     const iconEl = document.querySelector('link[rel=icon]');
@@ -141,13 +142,13 @@
 
     if (!avBoxes.length) return;
     if (!logged) {
-      const guestSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.5" r="3.5"/><path d="M5.5 19.5c1.4-3.1 3.8-4.5 6.5-4.5s5.1 1.4 6.5 4.5"/></svg>`;
+      const guestSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 3 20 7.5 20 16.5 12 21 4 16.5 4 7.5 12 3"/><circle cx="12" cy="12" r="2.5"/></svg>`;
       avBoxes.forEach(box => { box.innerHTML = guestSvg; });
       return;
     }
     let loc = {};
     try { loc = JSON.parse(localStorage.athleteProfile || '{}'); } catch (e) {}
-    const avUrl = loc.avatar || localStorage.userAvatar || '';
+    const avUrl = cleanLegacyUpload(loc.avatar || localStorage.userAvatar || '', /athlete_avatar\.jpg/i);
     const uName = localStorage.userName || loc.name || 'A';
     const html = avUrl
       ? `<img src="${esc(avUrl)}" alt="">`
@@ -263,8 +264,8 @@
       settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
       snowflake: '<path d="M12 2v20M2 12h20M4.93 4.93l14.14 14.14M19.07 4.93L4.93 19.07"/>',
       bell: '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>',
-      users: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
-      user: '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+      users: '<polygon points="12 3 19.5 7.5 19.5 16.5 12 21 4.5 16.5 4.5 7.5 12 3"/><polygon points="12 8 15.5 10 15.5 14 12 16 8.5 14 8.5 10 12 8"/>',
+      user: '<polygon points="12 3 20 7.5 20 16.5 12 21 4 16.5 4 7.5 12 3"/><circle cx="12" cy="12" r="2.5"/>',
       video: '<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>',
       image: '<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>'
     };
@@ -654,10 +655,7 @@
   const tempLbl = v => ui('wt_temp_' + v);
   const exImg = (e, c) => e.img ? `<img src="img/ex/svg_norm_${e.id}.svg" alt="" decoding="async">` : '';
 
-  const getExVideo = e => {
-    if (!e) return null;
-    return e.video || null;
-  };
+  const getExVideo = e => null;
 
   const renderExVisual = (e, options = {}) => {
     if (!e) return uiSvg('dumbbell', 28);
@@ -803,31 +801,44 @@
     const m = detectMuscles(text);
     const hasAny = Object.values(m).some(Boolean);
     if (!hasAny) m.arms = m.chest = true;
+    const zones = Array.isArray(window.RIZZAFIT_MUSCLE_ZONES) && window.RIZZAFIT_MUSCLE_ZONES.length
+      ? window.RIZZAFIT_MUSCLE_ZONES
+      : [
+          { id: 'chest', ru: 'Грудь', en: 'Chest', focusRu: 'Жимовые движения и разведения', focusEn: 'Pressing and fly patterns' },
+          { id: 'back', ru: 'Спина', en: 'Back', focusRu: 'Вертикальные и горизонтальные тяги', focusEn: 'Vertical and horizontal pulls' },
+          { id: 'shoulders', ru: 'Плечи', en: 'Shoulders', focusRu: 'Жимы вверх и стабилизация дельт', focusEn: 'Overhead presses and delts' },
+          { id: 'arms', ru: 'Руки', en: 'Arms', focusRu: 'Сгибания и разгибания под нагрузкой', focusEn: 'Flexion and extension work' },
+          { id: 'abs', ru: 'Пресс / Кор', en: 'Core / Abs', focusRu: 'Антиротация и стабилизация корпуса', focusEn: 'Core bracing and anti-rotation' },
+          { id: 'legs', ru: 'Ноги', en: 'Legs', focusRu: 'Приседания, выпады и тазовый шарнир', focusEn: 'Squat, lunge and hip hinge' }
+        ];
     const labels = muscleLabelsMap();
-
-    const frontSvg = window.FITIFY_FRONT_SVG || '';
-    const backSvg = window.FITIFY_BACK_SVG || '';
 
     return `
     <div class="fitify-mannequin-card" id="m3d-box" data-muscles='${JSON.stringify(m)}'>
       <div class="m3d-header">
-        <div class="m3d-title">${uiSvg('dumbbell', 15)} ${L == 'ru' ? 'Целевые группы мышц' : 'Target Muscle Groups'}</div>
+        <div class="m3d-title">${uiSvg('dumbbell', 15)} ${L == 'ru' ? 'Целевые группы и фокус нагрузки' : 'Target Zones & Load Focus'}</div>
       </div>
 
-      <div class="fitify-stage">
-        <div class="fitify-mannequin-wrap">
-          <div class="m-lbl">${L == 'ru' ? 'Спереди' : 'Front'}</div>
-          <div id="m-front-slot">${frontSvg}</div>
-        </div>
-        <div class="fitify-mannequin-wrap">
-          <div class="m-lbl">${L == 'ru' ? 'Сзади' : 'Back'}</div>
-          <div id="m-back-slot">${backSvg}</div>
-        </div>
+      <div class="rf-muscle-matrix">
+        ${zones.map(z => {
+          const isActive = !!m[z.id];
+          const zName = L == 'ru' ? z.ru : z.en;
+          const zFocus = L == 'ru' ? z.focusRu : z.focusEn;
+          return `
+          <button type="button" class="rf-mz-card ${isActive ? 'active' : ''}" data-muscle="${z.id}">
+            <div class="rf-mz-top">
+              <b>${esc(zName)}</b>
+              <span class="rf-mz-state">${isActive ? (L == 'ru' ? 'Активна' : 'Primary') : (L == 'ru' ? 'Фон' : 'Assist')}</span>
+            </div>
+            <div class="rf-mz-bar"><i></i></div>
+            <small>${esc(zFocus)}</small>
+          </button>`;
+        }).join('')}
       </div>
 
       <div class="m3d-pills">
         ${Object.entries(labels).map(([k, name]) => `
-          <button class="m3d-pill ${m[k] ? 'active' : ''}" data-muscle="${k}">
+          <button type="button" class="m3d-pill ${m[k] ? 'active' : ''}" data-muscle="${k}">
             <span class="m3d-dot"></span>${name}
           </button>`).join('')}
       </div>
@@ -2347,7 +2358,7 @@
     let cur = {};
     try { cur = JSON.parse(localStorage.athleteProfile || '{}'); } catch (e) {}
     const base = Object.assign({}, window.AthleteProfile ? window.AthleteProfile.DEFAULTS : {}, CFG.athlete || {}, cur);
-    let pendingAv = base.avatar || '';
+    let pendingAv = cleanLegacyUpload(base.avatar || '', /athlete_avatar\.jpg/i);
 
     const isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
     const canPrompt = !!deferredInstallPrompt && !isStandalone;
@@ -3066,23 +3077,55 @@
 
       return `
       <section class="rf-hero rf-section-dark" aria-label="${L == 'ru' ? 'Главный экран RizzaFit' : 'RizzaFit Hero'}">
-        <picture class="rf-hero-media" aria-hidden="true">
-          <source srcset="img/brand/hero-luxury.webp" type="image/webp">
-          <img src="img/brand/hero-luxury.jpg" alt="" fetchpriority="high" decoding="async">
-        </picture>
-        <div class="rf-hero-scrim" aria-hidden="true"></div>
-        <div class="rf-hero-content">
-          <div class="rf-hero-eyebrow">${L == 'ru' ? 'RIZZAFIT · ПЕРСОНАЛЬНЫЙ ФИТНЕС' : 'RIZZAFIT · PERSONAL TRAINING'}</div>
-          <h1 class="rf-hero-title">${L == 'ru' ? 'СТАНЬ СИЛЬНЕЕ.<br><span class="rf-hero-gold">СТАНЬ ЛУЧШЕ.</span>' : 'GET STRONGER.<br><span class="rf-hero-gold">BECOME BETTER.</span>'}</h1>
-          <p class="rf-hero-sub">${L == 'ru' ? 'Персональные программы тренировок, база из более чем 1400 упражнений с анатомией и AI Coach — для зала и тренировок дома.' : 'Personal training programs, 1,400+ exercises with muscle anatomy, and an intelligent AI Coach — for gym and home.'}</p>
-          <div class="rf-hero-cta-row">
-            <a href="#/workouts" class="rf-btn rf-btn-primary rf-hero-cta">${L == 'ru' ? 'Начать тренировку' : 'Start workout'}</a>
-            <button type="button" class="rf-btn rf-btn-outline rf-hero-sec" id="rf-home-learn-more">${L == 'ru' ? 'Узнать больше' : 'Learn more'}</button>
+        <div class="rf-hero-geo" aria-hidden="true">
+          <svg viewBox="0 0 1200 540" preserveAspectRatio="xMidYMid slice" fill="none">
+            <defs>
+              <radialGradient id="rfHeroGlow" cx="76%" cy="48%" r="48%">
+                <stop offset="0%" stop-color="rgba(214,179,106,0.30)"/>
+                <stop offset="55%" stop-color="rgba(96,64,28,0.12)"/>
+                <stop offset="100%" stop-color="rgba(16,16,16,0)"/>
+              </radialGradient>
+              <linearGradient id="rfHeroBeam" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="rgba(232,202,134,0.34)"/>
+                <stop offset="100%" stop-color="rgba(214,179,106,0)"/>
+              </linearGradient>
+            </defs>
+            <rect width="1200" height="540" fill="url(#rfHeroGlow)"/>
+            <g stroke="rgba(214,179,106,0.08)" stroke-width="1">
+              <line x1="0" y1="108" x2="1200" y2="108"/><line x1="0" y1="216" x2="1200" y2="216"/>
+              <line x1="0" y1="324" x2="1200" y2="324"/><line x1="0" y1="432" x2="1200" y2="432"/>
+              <line x1="240" y1="0" x2="240" y2="540"/><line x1="480" y1="0" x2="480" y2="540"/>
+              <line x1="720" y1="0" x2="720" y2="540"/><line x1="960" y1="0" x2="960" y2="540"/>
+            </g>
+            <line x1="620" y1="0" x2="1080" y2="540" stroke="url(#rfHeroBeam)" stroke-width="1.5"/>
+            <line x1="740" y1="0" x2="1200" y2="540" stroke="rgba(214,179,106,0.14)" stroke-width="1"/>
+            <circle cx="910" cy="270" r="220" stroke="rgba(214,179,106,0.16)" stroke-width="1.2"/>
+            <circle cx="910" cy="270" r="158" stroke="rgba(232,202,134,0.22)" stroke-width="1" stroke-dasharray="6 8"/>
+            <polygon points="910,74 1080,172 1080,368 910,466 740,368 740,172" stroke="rgba(214,179,106,0.12)" stroke-width="1.2"/>
+          </svg>
+        </div>
+        <div class="rf-hero-layout">
+          <div class="rf-hero-content">
+            <div class="rf-hero-eyebrow">${L == 'ru' ? 'RIZZAFIT · ПЕРСОНАЛЬНЫЙ ФИТНЕС' : 'RIZZAFIT · PERSONAL TRAINING'}</div>
+            <h1 class="rf-hero-title">${L == 'ru' ? 'СТАНЬ СИЛЬНЕЕ.<br><span class="rf-hero-gold">СТАНЬ ЛУЧШЕ.</span>' : 'GET STRONGER.<br><span class="rf-hero-gold">BECOME BETTER.</span>'}</h1>
+            <p class="rf-hero-sub">${L == 'ru' ? 'Персональные программы тренировок, база из более чем 1400 упражнений с техникой выполнения и AI Coach — для зала и тренировок дома.' : 'Personal training programs, 1,400+ exercises with equipment schematics, and an intelligent AI Coach — for gym and home.'}</p>
+            <div class="rf-hero-cta-row">
+              <a href="#/workouts" class="rf-btn rf-btn-primary rf-hero-cta">${L == 'ru' ? 'Начать тренировку' : 'Start workout'}</a>
+              <button type="button" class="rf-btn rf-btn-outline rf-hero-sec" id="rf-home-learn-more">${L == 'ru' ? 'Узнать больше' : 'Learn more'}</button>
+            </div>
+            <div class="rf-hero-stats">
+              <span class="rf-hero-stat"><b>${D.programs.length}</b> ${esc(t('pr'))}</span>
+              <span class="rf-hero-stat"><b>${D.workouts.length}</b> ${esc(t('wo'))}</span>
+              <span class="rf-hero-stat"><b>${D.exercises.length}</b> ${esc(t('ex'))}</span>
+            </div>
           </div>
-          <div class="rf-hero-stats">
-            <span class="rf-hero-stat"><b>${D.programs.length}</b> ${esc(t('pr'))}</span>
-            <span class="rf-hero-stat"><b>${D.workouts.length}</b> ${esc(t('wo'))}</span>
-            <span class="rf-hero-stat"><b>${D.exercises.length}</b> ${esc(t('ex'))}</span>
+          <div class="rf-hero-brandmark" aria-hidden="true">
+            <div class="rf-hero-crest">
+              <img src="img/logo.svg" alt="">
+            </div>
+            <div class="rf-hero-wordmark">RIZZAFIT</div>
+            <div class="rf-hero-rule"></div>
+            <div class="rf-hero-tagline">STRENGTH · STRUCTURE · AI COACH</div>
           </div>
         </div>
       </section>
@@ -4966,62 +5009,23 @@
         try { m = JSON.parse(box.dataset.muscles || '{}'); } catch(e){}
 
         const applyHighlights = () => {
-          // Front mappings
-          box.querySelectorAll('#front_chest').forEach(el => el.classList.toggle('active', !!m.chest));
-          box.querySelectorAll('#front_abs, #front_obliques').forEach(el => el.classList.toggle('active', !!m.abs));
-          box.querySelectorAll('#front_biceps').forEach(el => el.classList.toggle('active', !!m.arms));
-          box.querySelectorAll('#front_quads').forEach(el => el.classList.toggle('active', !!m.legs));
-          box.querySelectorAll('#front_shoulders_front, #front_shoulders_side').forEach(el => el.classList.toggle('active', !!m.shoulders));
-          
-          // Back mappings
-          box.querySelectorAll('#back_lats, #back_lower_back').forEach(el => el.classList.toggle('active', !!m.back));
-          box.querySelectorAll('#back_traps').forEach(el => el.classList.toggle('active', !!m.back || !!m.shoulders));
-          box.querySelectorAll('#back_triceps').forEach(el => el.classList.toggle('active', !!m.arms));
-          box.querySelectorAll('#back_shoulders_back').forEach(el => el.classList.toggle('active', !!m.shoulders));
-          box.querySelectorAll('#back_glutes, #back_hams, #back_calves').forEach(el => el.classList.toggle('active', !!m.legs));
+          box.querySelectorAll('.m3d-pill, .rf-mz-card').forEach(el => {
+            const g = el.dataset.muscle;
+            if (g) el.classList.toggle('active', !!m[g]);
+            const st = el.querySelector('.rf-mz-state');
+            if (st) st.textContent = m[g] ? (L == 'ru' ? 'Активна' : 'Primary') : (L == 'ru' ? 'Фон' : 'Assist');
+          });
         };
 
         applyHighlights();
 
-        const pills = box.querySelectorAll('.m3d-pill');
-        pills.forEach(p => {
+        box.querySelectorAll('.m3d-pill, .rf-mz-card').forEach(p => {
           p.onclick = () => {
             vib(25);
             const k = p.dataset.muscle;
             m[k] = !m[k];
-            p.classList.toggle('active', m[k]);
             applyHighlights();
           };
-        });
-
-        const svgMap = {
-          'front_chest': 'chest',
-          'front_abs': 'abs',
-          'front_obliques': 'abs',
-          'front_biceps': 'arms',
-          'front_quads': 'legs',
-          'front_shoulders_front': 'shoulders',
-          'front_shoulders_side': 'shoulders',
-          'back_lats': 'back',
-          'back_lower_back': 'back',
-          'back_traps': 'back',
-          'back_triceps': 'arms',
-          'back_shoulders_back': 'shoulders',
-          'back_glutes': 'legs',
-          'back_hams': 'legs',
-          'back_calves': 'legs'
-        };
-        box.querySelectorAll('.muscle-layer').forEach(layer => {
-          const group = svgMap[layer.id];
-          if (group) {
-            layer.onclick = () => {
-              vib(25);
-              m[group] = !m[group];
-              const pill = box.querySelector(`.m3d-pill[data-muscle="${group}"]`);
-              if (pill) pill.classList.toggle('active', m[group]);
-              applyHighlights();
-            };
-          }
         });
       }
     }

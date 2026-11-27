@@ -1,4 +1,4 @@
-const CACHE_NAME = 'flexa-shell-v68';
+const CACHE_NAME = 'flexa-shell-v69';
 const MEDIA_CACHE_NAME = 'flexa-media-v1';
 const CORE_ASSETS = [
   './',
@@ -16,7 +16,6 @@ const CORE_ASSETS = [
   './fonts/manrope-vf-cyrillic.woff2',
   './fonts/manrope-vf-latin.woff2',
   './img/logo.svg',
-  './img/brand/hero-luxury.webp',
   './data.json',
   './content/config.json',
   './content/overrides.json'
