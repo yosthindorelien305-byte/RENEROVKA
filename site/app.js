@@ -31,10 +31,10 @@
       return d;
     };
     try {
-      return await fetchJson('data.json?v=67');
+      return await fetchJson('data.json?v=68');
     } catch (e1) {
       try {
-        return await fetchJson('data.json?v=67&r=' + Date.now());
+        return await fetchJson('data.json?v=68&r=' + Date.now());
       } catch (e2) {
         if (typeof caches !== 'undefined' && caches && typeof caches.match === 'function') {
           const cached = await caches.match('data.json', { ignoreSearch: true }).catch(() => null);
@@ -84,15 +84,16 @@
   Object.entries(OV.e || {}).forEach(([id, o]) => { const e = D.exercises.find(x => x.id == id); if (e) Object.assign(e, o); });
   const pImg = p => p.image || `img/programs/${p.id}.jpg`;
   const ACCENT_THEMES = [
-    { id: 'amber', hex: '#F0A830', ru: 'Янтарь', en: 'Amber' },
-    { id: 'teal', hex: '#2DD4BF', ru: 'Неон', en: 'Teal' },
-    { id: 'blue', hex: '#38BDF8', ru: 'Небо', en: 'Blue' },
-    { id: 'violet', hex: '#A78BFA', ru: 'Аметист', en: 'Violet' },
-    { id: 'mono', hex: '#E2E8F0', ru: 'Моно', en: 'Mono' }
+    { id: 'gold', hex: '#D6B36A', ru: 'Тёплое золото', en: 'Warm Gold' },
+    { id: 'champagne', hex: '#E8CA86', ru: 'Шампань', en: 'Champagne' },
+    { id: 'bronze', hex: '#B49048', ru: 'Бронза', en: 'Bronze' },
+    { id: 'sage', hex: '#84A98C', ru: 'Шалфей', en: 'Sage' },
+    { id: 'ivory', hex: '#FAF7F0', ru: 'Слоновая кость', en: 'Ivory' }
   ];
   function applyAccent(customHex) {
-    const raw = customHex || localStorage.accentTheme || CFG.accent || '#F0A830';
-    const hex = /^#[0-9a-f]{6}$/i.test(raw) ? raw : '#F0A830';
+    const legacyCfg = /^#(00d2ff|f0a830|2dd4bf)$/i.test(String(CFG.accent || '').trim()) ? '' : CFG.accent;
+    const raw = customHex || localStorage.accentTheme || legacyCfg || '#D6B36A';
+    const hex = /^#[0-9a-f]{6}$/i.test(raw) ? raw : '#D6B36A';
     const n = parseInt(hex.slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
     const mix = k => [r, g, b].map(v => Math.round(v + (k > 0 ? (255 - v) : v) * Math.abs(k))).join(',');
     const st = document.documentElement.style;
@@ -117,7 +118,9 @@
     if (!COACH.enabled) (CFG.hidden = (CFG.hidden || []).concat('coach'));
     const topCoachBtn = document.getElementById('top-coach-btn');
     if (topCoachBtn) topCoachBtn.style.display = (COACH.enabled && !(CFG.hidden || []).includes('coach')) ? '' : 'none';
-    (CFG.hidden || []).forEach(k => { const a = document.querySelector(`#nav a[data-k=${k}]`); if (a) a.style.display = 'none'; });
+    (CFG.hidden || []).forEach(k => {
+      document.querySelectorAll(`#nav a[data-k=${k}], #top-nav a[data-k=${k}]`).forEach(a => { a.style.display = 'none'; });
+    });
     const ft = document.querySelector('footer');
     if (ft) ft.textContent = '© ' + nm + ' · ' + ((CFG.t[L] || {}).footer || T[L].footer || '');
   })();
@@ -126,30 +129,30 @@
   }
 
   function syncNavAthlete() {
-    const avBox = document.getElementById('nav-ath-av');
-    const usersBtn = document.getElementById('nav-users-btn');
-    const msgBtn = document.getElementById('nav-messages-btn');
-    const msgBadge = document.getElementById('nav-msg-badge');
+    const avBoxes = [document.getElementById('nav-ath-av'), document.getElementById('top-ath-av')].filter(Boolean);
+    const usersBtns = [document.getElementById('nav-users-btn'), document.getElementById('top-users-btn')].filter(Boolean);
+    const msgBtns = [document.getElementById('nav-messages-btn'), document.getElementById('top-messages-btn')].filter(Boolean);
+    const msgBadges = [document.getElementById('nav-msg-badge'), document.getElementById('top-msg-badge')].filter(Boolean);
     const logged = isLoggedIn();
 
-    if (usersBtn) usersBtn.classList.toggle('hidden', !logged);
-    if (msgBtn) msgBtn.classList.toggle('hidden', !logged);
-    if (!logged && msgBadge) msgBadge.classList.add('hidden');
+    usersBtns.forEach(el => el.classList.toggle('hidden', !logged));
+    msgBtns.forEach(el => el.classList.toggle('hidden', !logged));
+    if (!logged) msgBadges.forEach(el => el.classList.add('hidden'));
 
-    if (!avBox) return;
+    if (!avBoxes.length) return;
     if (!logged) {
-      avBox.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.5" r="3.5"/><path d="M5.5 19.5c1.4-3.1 3.8-4.5 6.5-4.5s5.1 1.4 6.5 4.5"/></svg>`;
+      const guestSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.5" r="3.5"/><path d="M5.5 19.5c1.4-3.1 3.8-4.5 6.5-4.5s5.1 1.4 6.5 4.5"/></svg>`;
+      avBoxes.forEach(box => { box.innerHTML = guestSvg; });
       return;
     }
     let loc = {};
     try { loc = JSON.parse(localStorage.athleteProfile || '{}'); } catch (e) {}
     const avUrl = loc.avatar || localStorage.userAvatar || '';
     const uName = localStorage.userName || loc.name || 'A';
-    if (avUrl) {
-      avBox.innerHTML = `<img src="${esc(avUrl)}" alt="">`;
-    } else {
-      avBox.innerHTML = `<span class="nav-init">${esc(uName.charAt(0).toUpperCase())}</span>`;
-    }
+    const html = avUrl
+      ? `<img src="${esc(avUrl)}" alt="">`
+      : `<span class="nav-init">${esc(uName.charAt(0).toUpperCase())}</span>`;
+    avBoxes.forEach(box => { box.innerHTML = html; });
   }
   const exMap = {}; D.exercises.forEach(e => exMap[e.id] = e);
   const woMap = {}; D.workouts.forEach(w => woMap[w.id] = w);
@@ -980,7 +983,7 @@
       const x = +(idx * step + (step - barW) / 2).toFixed(1);
       const y = +(padT + chartH - bh).toFixed(1);
       const isToday = idx === slots.length - 1;
-      const fill = sl.mins ? (isToday ? '#2DD4BF' : '#F0A830') : 'rgba(255,255,255,0.08)';
+      const fill = sl.mins ? (isToday ? '#E8CA86' : '#D6B36A') : 'rgba(255,255,255,0.08)';
       return `<rect x="${x}" y="${y}" width="${barW.toFixed(1)}" height="${bh}" rx="3" fill="${fill}"><title>${sl.iso}: ${sl.mins} ${L == 'ru' ? 'мин' : 'min'}</title></rect>`
         + (sl.lbl ? `<text x="${(x + barW / 2).toFixed(1)}" y="${H - 3}" text-anchor="middle" fill="#8E97A4" font-size="9" font-weight="700">${esc(sl.lbl)}</text>` : '');
     }).join('');
@@ -1082,7 +1085,7 @@
         const y = +(28 - ((p.w - minW) / span) * 22 - 3).toFixed(1);
         return `${x},${y}`;
       }).join(' ');
-      spark = `<svg class="body-spark" viewBox="0 0 120 32" fill="none"><polyline points="${poly}" stroke="#2DD4BF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      spark = `<svg class="body-spark" viewBox="0 0 120 32" fill="none"><polyline points="${poly}" stroke="#D6B36A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
     }
     let subLead = '';
     if (bm.currentWeightCleared && logs.length) {
@@ -2853,7 +2856,7 @@
         g.fillText(new Date().toLocaleDateString(L, { day: 'numeric', month: 'short', year: 'numeric' }), 984, 130);
         g.textAlign = 'left';
 
-        g.fillStyle = '#2DD4BF';
+        g.fillStyle = '#D6B36A';
         g.font = '800 26px sans-serif';
         g.fillText(L == 'ru' ? 'ТРЕНИРОВКА ЗАВЕРШЕНА' : 'WORKOUT COMPLETE', 96, 255);
 
@@ -2873,9 +2876,9 @@
 
         const stats = [
           { v: `${opts.mins} ${L == 'ru' ? 'мин' : 'min'}`, l: L == 'ru' ? 'ДЛИТЕЛЬНОСТЬ' : 'DURATION', c: '#F8FAFC' },
-          { v: opts.vol > 0 ? `${opts.vol.toLocaleString()} ${L == 'ru' ? 'кг' : 'kg'}` : `~${opts.kcal} ${L == 'ru' ? 'ккал' : 'kcal'}`, l: opts.vol > 0 ? (L == 'ru' ? 'ТОННАЖ' : 'VOLUME') : (L == 'ru' ? 'РАСХОД' : 'BURNED'), c: '#2DD4BF' },
+          { v: opts.vol > 0 ? `${opts.vol.toLocaleString()} ${L == 'ru' ? 'кг' : 'kg'}` : `~${opts.kcal} ${L == 'ru' ? 'ккал' : 'kcal'}`, l: opts.vol > 0 ? (L == 'ru' ? 'ТОННАЖ' : 'VOLUME') : (L == 'ru' ? 'РАСХОД' : 'BURNED'), c: '#E8CA86' },
           { v: String(opts.reps || opts.ex), l: opts.reps ? (L == 'ru' ? 'ПОВТОРЕНИЙ' : 'REPS') : (L == 'ru' ? 'УПРАЖНЕНИЙ' : 'EXERCISES'), c: '#F8FAFC' },
-          { v: `+${opts.xp} XP`, l: L == 'ru' ? 'ОПЫТ' : 'EARNED', c: '#F0A830' }
+          { v: `+${opts.xp} XP`, l: L == 'ru' ? 'ОПЫТ' : 'EARNED', c: '#D6B36A' }
         ];
         const cardW = 428, cardH = 220, gap = 32, sx = 96, sy = 470;
         stats.forEach((st, idx) => {
@@ -2900,18 +2903,18 @@
         let badgeY = 995;
         if (opts.streak > 0) {
           rr(96, badgeY, 888, 74, 24);
-          g.fillStyle = 'rgba(240, 168, 48, 0.14)';
+          g.fillStyle = 'rgba(214, 179, 106, 0.14)';
           g.fill();
-          g.fillStyle = '#F0A830';
+          g.fillStyle = '#D6B36A';
           g.font = '800 28px sans-serif';
           g.fillText(L == 'ru' ? `Серия: ${opts.streak} дн. подряд` : `Streak: ${opts.streak} days in a row`, 128, badgeY + 47);
           badgeY += 96;
         }
         if (opts.prsCount > 0) {
           rr(96, badgeY, 888, 74, 24);
-          g.fillStyle = 'rgba(45, 212, 191, 0.14)';
+          g.fillStyle = 'rgba(232, 202, 134, 0.14)';
           g.fill();
-          g.fillStyle = '#2DD4BF';
+          g.fillStyle = '#E8CA86';
           g.font = '800 28px sans-serif';
           g.fillText(L == 'ru' ? `Новых рекордов: ${opts.prsCount}` : `New personal records: ${opts.prsCount}`, 128, badgeY + 47);
         }
@@ -3062,6 +3065,28 @@
       }).join('');
 
       return `
+      <section class="rf-hero rf-section-dark" aria-label="${L == 'ru' ? 'Главный экран RizzaFit' : 'RizzaFit Hero'}">
+        <picture class="rf-hero-media" aria-hidden="true">
+          <source srcset="img/brand/hero-luxury.webp" type="image/webp">
+          <img src="img/brand/hero-luxury.jpg" alt="" fetchpriority="high" decoding="async">
+        </picture>
+        <div class="rf-hero-scrim" aria-hidden="true"></div>
+        <div class="rf-hero-content">
+          <div class="rf-hero-eyebrow">${L == 'ru' ? 'RIZZAFIT · ПЕРСОНАЛЬНЫЙ ФИТНЕС' : 'RIZZAFIT · PERSONAL TRAINING'}</div>
+          <h1 class="rf-hero-title">${L == 'ru' ? 'СТАНЬ СИЛЬНЕЕ.<br><span class="rf-hero-gold">СТАНЬ ЛУЧШЕ.</span>' : 'GET STRONGER.<br><span class="rf-hero-gold">BECOME BETTER.</span>'}</h1>
+          <p class="rf-hero-sub">${L == 'ru' ? 'Персональные программы тренировок, база из более чем 1400 упражнений с анатомией и AI Coach — для зала и тренировок дома.' : 'Personal training programs, 1,400+ exercises with muscle anatomy, and an intelligent AI Coach — for gym and home.'}</p>
+          <div class="rf-hero-cta-row">
+            <a href="#/workouts" class="rf-btn rf-btn-primary rf-hero-cta">${L == 'ru' ? 'Начать тренировку' : 'Start workout'}</a>
+            <button type="button" class="rf-btn rf-btn-outline rf-hero-sec" id="rf-home-learn-more">${L == 'ru' ? 'Узнать больше' : 'Learn more'}</button>
+          </div>
+          <div class="rf-hero-stats">
+            <span class="rf-hero-stat"><b>${D.programs.length}</b> ${esc(t('pr'))}</span>
+            <span class="rf-hero-stat"><b>${D.workouts.length}</b> ${esc(t('wo'))}</span>
+            <span class="rf-hero-stat"><b>${D.exercises.length}</b> ${esc(t('ex'))}</span>
+          </div>
+        </div>
+      </section>
+
       <div class="rf-home-top">
         <div class="rf-home-top-main">
           <div class="frosted-search">
@@ -3078,12 +3103,12 @@
           </div>` : ''}
         </div>
         ${COACH.enabled && !(CFG.hidden || []).includes('coach') ? `
-        <a class="coachcard" href="#/coach" id="home-coach-card">
+        <a class="coachcard rf-section-dark" href="#/coach" id="home-coach-card">
           <div class="orb sm"><span>AI</span></div>
           <div class="coachcard-copy">
             <div class="coachcard-top">
               <b>${esc(t('coachBanner'))}</b>
-              <span class="coachcard-badge">AI</span>
+              <span class="coachcard-badge">AI COACH</span>
             </div>
             <small>${esc(t('coachSub'))}</small>
           </div>
@@ -3091,6 +3116,43 @@
         </a>` : ''}
       </div>
 
+      ${on('featured') ? `
+      <section class="rf-section-cream rf-home-editorial" id="rf-home-overview">
+        <div class="rf-editorial-head">
+          <div>
+            <span class="rf-kicker">${L == 'ru' ? 'ПЕРСОНАЛЬНАЯ СИСТЕМА' : 'CURATED SYSTEM'}</span>
+            <h2>${t('prev')}</h2>
+            <p class="rf-editorial-sub">${L == 'ru' ? 'Готовые многодневные курсы, структурированные по уровню подготовки, темпу и цели.' : 'Structured multi-week programs tailored to your pace, equipment, and training goal.'}</p>
+          </div>
+          <a href="#/workouts/programs" class="rf-editorial-all">${esc(t('seeAll'))} ›</a>
+        </div>
+        <div class="grid rf-home-programs">${star.map(programCard).join('')}</div>
+        <div class="rf-pillars rf-grid-3">
+          <a class="rf-pillar-card" href="#/workouts/programs">
+            <span class="rf-pillar-ic">${uiSvg('dumbbell', 18)}</span>
+            <b>${L == 'ru' ? 'Персональные программы' : 'Personal Programs'}</b>
+            <small>${L == 'ru' ? 'Планы от базовой выносливости до гипертрофии с отметкой выполненных дней.' : 'Guided multi-week tracks with day-by-day completion logs.'}</small>
+          </a>
+          <a class="rf-pillar-card" href="#/coach">
+            <span class="rf-pillar-ic">${uiSvg('sparkles', 18)}</span>
+            <b>AI Coach</b>
+            <small>${L == 'ru' ? 'Интеллектуальный подбор тренировок, питания и восстановления с учётом профиля.' : 'Adaptive workout, recovery, and nutrition guidance synced to your profile.'}</small>
+          </a>
+          <a class="rf-pillar-card" href="#/profile">
+            <span class="rf-pillar-ic">${uiSvg('trend', 18)}</span>
+            <b>${L == 'ru' ? 'Прогресс и привычки' : 'Progress & Habits'}</b>
+            <small>${L == 'ru' ? 'Фиксация рекордов, динамика веса, серия дней и недельная регулярность.' : 'Track personal records, body metrics, streaks, and weekly consistency.'}</small>
+          </a>
+        </div>
+      </section>` : ''}
+
+      <section class="rf-section-dark rf-home-dashboard" id="rf-home-dashboard">
+        <div class="rf-dashboard-head">
+          <div>
+            <span class="rf-kicker">${L == 'ru' ? 'АНАЛИТИКА И ПЛАН' : 'ANALYTICS & SCHEDULE'}</span>
+            <h2>${L == 'ru' ? 'Ваш тренировочный ритм' : 'Your Training Rhythm'}</h2>
+          </div>
+        </div>
       <div class="ss-bento">
         <div class="rf-bento-main">
           <div class="ss-card ss-viability">
@@ -3104,9 +3166,9 @@
                 <svg class="ss-ring-svg" viewBox="0 0 100 100" aria-hidden="true">
                   <defs>
                     <linearGradient id="ssRingGrad" x1="0" y1="0" x2="1" y2="1">
-                      <stop offset="0%" stop-color="#F8C96C"/>
-                      <stop offset="55%" stop-color="#F0A830"/>
-                      <stop offset="100%" stop-color="#2DD4BF"/>
+                      <stop offset="0%" stop-color="#E8CA86"/>
+                      <stop offset="55%" stop-color="#D6B36A"/>
+                      <stop offset="100%" stop-color="#B49048"/>
                     </linearGradient>
                   </defs>
                   <circle class="ss-ring-bg" cx="50" cy="50" r="40"/>
@@ -3181,7 +3243,7 @@
               <a href="${esc(hLink)}" class="ss-droplet-ring">
                 <svg class="ss-prog-ring" viewBox="0 0 88 88" aria-hidden="true">
                   <circle class="ss-ring-bg" cx="44" cy="44" r="36"/>
-                  <circle class="ss-ring-fg" cx="44" cy="44" r="36" stroke="${activeP ? '#2DD4BF' : '#F0A830'}" style="stroke-dasharray:226.2;stroke-dashoffset:${pOff};"/>
+                  <circle class="ss-ring-fg" cx="44" cy="44" r="36" stroke="${activeP ? '#E8CA86' : '#D6B36A'}" style="stroke-dasharray:226.2;stroke-dashoffset:${pOff};"/>
                 </svg>
                 <span class="ss-droplet-core">
                   <b>${useP.days ? (pDone ? `${pDone}/${useP.days}` : useP.days + 'd') : '30m'}</b>
@@ -3195,14 +3257,14 @@
         <div class="ss-card ss-curve-card">
           <div class="ss-card-title">
             <b>${L == 'ru' ? 'Кривая прогресса (7 дней)' : 'Progress Curve (7d)'}</b>
-            ${COACH.enabled ? `<a href="#/coach" style="color:var(--green);font-weight:800;display:inline-flex;align-items:center;gap:4px;">${uiSvg('sparkles', 13)} ${esc(t('coachBanner'))} ›</a>` : `<span>${allH.length ? `${mins} ${L == 'ru' ? 'мин' : 'min'}` : (L == 'ru' ? 'Нет данных' : 'No data')}</span>`}
+            ${COACH.enabled ? `<a href="#/coach" style="color:var(--ac-l);font-weight:800;display:inline-flex;align-items:center;gap:4px;">${uiSvg('sparkles', 13)} ${esc(t('coachBanner'))} ›</a>` : `<span>${allH.length ? `${mins} ${L == 'ru' ? 'мин' : 'min'}` : (L == 'ru' ? 'Нет данных' : 'No data')}</span>`}
           </div>
           ${allH.length ? `
             <svg class="ss-curve-svg" viewBox="0 0 800 120" preserveAspectRatio="none">
               <defs>
                 <linearGradient id="gcGold" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stop-color="#F0A830" stop-opacity="0.28"/>
-                  <stop offset="100%" stop-color="#F0A830" stop-opacity="0"/>
+                  <stop offset="0%" stop-color="#D6B36A" stop-opacity="0.28"/>
+                  <stop offset="100%" stop-color="#D6B36A" stop-opacity="0"/>
                 </linearGradient>
               </defs>
               <g stroke="rgba(255,255,255,0.06)" stroke-width="1">
@@ -3210,8 +3272,8 @@
                 <line x1="160" y1="0" x2="160" y2="120"/><line x1="320" y1="0" x2="320" y2="120"/><line x1="480" y1="0" x2="480" y2="120"/><line x1="640" y1="0" x2="640" y2="120"/>
               </g>
               <path d="${goldArea}" fill="url(#gcGold)"/>
-              <path d="${goldLine}" fill="none" stroke="#F0A830" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-              <path d="${greenLine}" fill="none" stroke="#2DD4BF" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="${goldLine}" fill="none" stroke="#D6B36A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="${greenLine}" fill="none" stroke="#84A98C" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>` : `
             <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px;background:var(--card-inset);border:1px solid var(--line);border-radius:12px;">
               <span style="font-size:12px;color:var(--mut);">${L == 'ru' ? 'Завершите первую тренировку, чтобы увидеть реальный график роста.' : 'Complete your first workout to track real progress.'}</span>
@@ -3249,8 +3311,7 @@
         </div>` : ''}
         </div><!-- /.rf-bento-side -->
       </div>
-
-      ${on('featured') ? `<div class="rf-page-head"><h2>${t('prev')}<a href="#/workouts/programs">${esc(t('seeAll'))}</a></h2></div><div class="grid rf-home-programs">${star.map(programCard).join('')}</div>` : ''}`;
+      </section>`;
     },
     coach() {
       if (!COACH.enabled) return `<h1 style="display:flex;align-items:center;gap:8px;">${uiSvg('sparkles', 22)} ${esc(t('coachTitle'))}</h1><div class="empty">${esc(t('coachOff'))}</div>`;
@@ -4169,6 +4230,14 @@
   }
   function after(name) {
     if (name == 'home') {
+      const learnBtn = document.getElementById('rf-home-learn-more');
+      if (learnBtn) {
+        learnBtn.onclick = () => {
+          const target = document.getElementById('rf-home-overview') || document.getElementById('rf-home-dashboard');
+          if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          else location.hash = '#/workouts/programs';
+        };
+      }
       const hs = document.getElementById('hsearch');
       if (hs) {
         hs.onkeydown = e => {
@@ -7122,6 +7191,8 @@
       topCoachBtn.setAttribute('aria-label', lbl);
     }
     document.body.classList.toggle('view-messages', key === 'messages');
+    const isProgRoute = key === 'programs' || key === 'program' || (key === 'workouts' && a === 'programs');
+    const isWoRoute = (key === 'workouts' && a !== 'programs') || key === 'workout' || key === 'builder';
     document.querySelectorAll('#nav a').forEach(x => {
       const b = x.querySelector('b');
       if (b && x.dataset.i) b.textContent = t(x.dataset.i);
@@ -7134,6 +7205,26 @@
         (key == 'exercise' && x.dataset.k == 'exercises')
       );
     });
+    document.querySelectorAll('#top-nav a, #top-profile-btn').forEach(x => {
+      const b = x.querySelector('b');
+      if (b && x.dataset.i) b.textContent = t(x.dataset.i);
+      const dk = x.dataset.k;
+      const active =
+        (dk === 'home' && key === 'home') ||
+        (dk === 'programs' && isProgRoute) ||
+        (dk === 'workouts' && isWoRoute) ||
+        (dk === 'exercises' && (key === 'exercises' || key === 'exercise')) ||
+        (dk === 'users' && (key === 'users' || key === 'user' || key === 'friends')) ||
+        (dk === 'messages' && key === 'messages') ||
+        (dk === 'history' && key === 'profile');
+      x.classList.toggle('on', active);
+    });
+    const profBtn = document.getElementById('top-profile-btn');
+    if (profBtn) {
+      const pl = t('history');
+      profBtn.title = pl;
+      profBtn.setAttribute('aria-label', pl);
+    }
     if (langBtn) {
       const codeEl = langBtn.querySelector('.lang-code');
       if (codeEl) codeEl.textContent = L.toUpperCase();
@@ -7234,15 +7325,15 @@
     lastUnreadCheck = now;
     try {
       const data = await socialApi('/api/messages/unread-count');
-      const badge = document.getElementById('nav-msg-badge');
-      if (badge) {
+      const badges = [document.getElementById('nav-msg-badge'), document.getElementById('top-msg-badge')].filter(Boolean);
+      badges.forEach(badge => {
         if (data.unreadCount > 0) {
           badge.textContent = data.unreadCount > 99 ? '99+' : String(data.unreadCount);
           badge.classList.remove('hidden');
         } else {
           badge.classList.add('hidden');
         }
-      }
+      });
       if (data.latestMessage && data.latestMessage.id > lastNotifiedMsgId) {
         lastNotifiedMsgId = data.latestMessage.id;
         try { localStorage.setItem('last_notified_msg_id', String(data.latestMessage.id)); } catch (e) {}

@@ -1124,9 +1124,9 @@ class TestAICoachPersonalization(IsolatedServerTestCase):
         clr_block = js_src.split("localStorage.exLogs = '{}';", 1)[1].split("render();", 1)[0]
         self.assertIn("scheduleCloudSync()", clr_block)
 
-        self.assertIn("app.js?v=67", html_src)
-        self.assertIn("style.css?v=67", html_src)
-        self.assertIn("flexa-shell-v67", sw_src)
+        self.assertIn("app.js?v=68", html_src)
+        self.assertIn("style.css?v=68", html_src)
+        self.assertIn("flexa-shell-v68", sw_src)
 
     def test_program_progress_counts_only_unique_valid_dates(self):
         """Duplicate same-day entries and malformed logs must not inflate completed days or %."""

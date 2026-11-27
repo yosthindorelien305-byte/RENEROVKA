@@ -26,16 +26,17 @@ class TestResponsiveDesignSystem(unittest.TestCase):
             sw_js = f.read()
 
         for html_src, name in ((index_html, "index.html"), (admin_html, "admin.html")):
-            for token in ("tokens.css?v=67", "ui-kit.css?v=67", "style.css?v=67", "ui_components.js?v=67"):
+            for token in ("tokens.css?v=68", "ui-kit.css?v=68", "style.css?v=68", "ui_components.js?v=68"):
                 self.assertIn(token, html_src, msg=f"{token} missing in {name}")
 
-        self.assertIn("admin.css?v=67", admin_html)
-        self.assertIn("admin.js?v=67", admin_html)
-        self.assertIn("app.js?v=67", index_html)
+        self.assertIn("admin.css?v=68", admin_html)
+        self.assertIn("admin.js?v=68", admin_html)
+        self.assertIn("app.js?v=68", index_html)
         self.assertIn("G-XSBKDCY4CS", index_html)
         self.assertIn('id="nav"', index_html)
+        self.assertIn('id="top-nav"', index_html)
 
-        self.assertIn("flexa-shell-v67", sw_js)
+        self.assertIn("flexa-shell-v68", sw_js)
         for asset in ("./tokens.css", "./ui-kit.css", "./ui_components.js"):
             self.assertIn(asset, sw_js)
 
@@ -55,12 +56,12 @@ class TestResponsiveDesignSystem(unittest.TestCase):
         for cls in (".rf-card", ".rf-btn-primary", ".rf-pill", ".rf-status-approved", ".rf-source-meta", ".rf-grid-4"):
             self.assertIn(cls, uikit_css)
 
-        # Main site responsive breakpoints (Mobile / Tablet rail / Desktop sidebar)
+        # Main site responsive breakpoints (Mobile bottom nav + sticky header, Tablet/Desktop top nav)
         self.assertIn("@media (max-width: 639px)", style_css)
         self.assertIn("@media (min-width: 640px)", style_css)
         self.assertIn("@media (min-width: 1024px)", style_css)
-        self.assertIn("var(--rf-rail-w, 76px)", style_css)
-        self.assertIn("var(--rf-sidebar-w, 236px)", style_css)
+        self.assertIn(".top-nav", style_css)
+        self.assertIn(".top-profile-btn", style_css)
 
         # Admin Obsidian shell + responsive drawer
         self.assertIn(".adm-shell", admin_css)
