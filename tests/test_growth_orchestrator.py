@@ -1570,9 +1570,9 @@ class TestGrowthOrchestrator(IsolatedServerTestCase):
         self.assertIn('href="#/coach"', index_html)
         nav_section = index_html.split('<nav id="nav">')[1].split('</nav>')[0]
         self.assertNotIn('data-k="coach"', nav_section)
-        self.assertIn("app.js?v=66", index_html)
-        self.assertIn("style.css?v=66", index_html)
-        self.assertIn("flexa-shell-v66", sw_js)
+        self.assertIn("app.js?v=67", index_html)
+        self.assertIn("style.css?v=67", index_html)
+        self.assertIn("flexa-shell-v67", sw_js)
 
         self.assertIn("fetch('/api/coach/status')", app_js)
         self.assertIn("fetch('/api/coach/history'", app_js)
@@ -1885,8 +1885,8 @@ class TestGrowthOrchestrator(IsolatedServerTestCase):
         self.assertIn("GEMINI_DEFAULT_MODEL = 'gemini-flash-lite-latest'", admin_js)
         self.assertEqual(server.AI_DEFAULT["model"], "gemini-flash-lite-latest")
         self.assertIn("if (prov === 'openai')", admin_js)
-        self.assertIn("admin.js?v=66", admin_html)
-        self.assertIn("style.css?v=66", admin_html)
+        self.assertIn("admin.js?v=67", admin_html)
+        self.assertIn("style.css?v=67", admin_html)
 
     def test_gemini_model_fallback_404_503_429_context_and_provider_config_preserved(self):
         """Проверяет последовательный fallback моделей Gemini:

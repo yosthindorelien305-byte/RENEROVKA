@@ -1,4 +1,4 @@
-const CACHE_NAME = 'flexa-shell-v66';
+const CACHE_NAME = 'flexa-shell-v67';
 const MEDIA_CACHE_NAME = 'flexa-media-v1';
 const CORE_ASSETS = [
   './',

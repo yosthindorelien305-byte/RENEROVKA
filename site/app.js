@@ -31,10 +31,10 @@
       return d;
     };
     try {
-      return await fetchJson('data.json?v=66');
+      return await fetchJson('data.json?v=67');
     } catch (e1) {
       try {
-        return await fetchJson('data.json?v=66&r=' + Date.now());
+        return await fetchJson('data.json?v=67&r=' + Date.now());
       } catch (e2) {
         if (typeof caches !== 'undefined' && caches && typeof caches.match === 'function') {
           const cached = await caches.match('data.json', { ignoreSearch: true }).catch(() => null);
