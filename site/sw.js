@@ -1,4 +1,4 @@
-const CACHE_NAME = 'flexa-shell-v67';
+const CACHE_NAME = 'flexa-shell-v69';
 const MEDIA_CACHE_NAME = 'flexa-media-v1';
 const CORE_ASSETS = [
   './',
@@ -13,6 +13,8 @@ const CORE_ASSETS = [
   './ui_components.js',
   './app.js',
   './manifest.json',
+  './fonts/manrope-vf-cyrillic.woff2',
+  './fonts/manrope-vf-latin.woff2',
   './img/logo.svg',
   './data.json',
   './content/config.json',
@@ -40,8 +42,8 @@ self.addEventListener('fetch', event => {
   if (url.origin !== self.location.origin) return;
   if (url.pathname.includes('/api/')) return;
 
-  // Cache-first for static heavy media (exercises SVG, photos, uploaded covers, audio)
-  if (url.pathname.includes('/img/') || url.pathname.includes('/audio/') || url.pathname.includes('/content/uploads/')) {
+  // Cache-first for static heavy media (exercises SVG, photos, uploaded covers, audio, fonts)
+  if (url.pathname.includes('/img/') || url.pathname.includes('/audio/') || url.pathname.includes('/fonts/') || url.pathname.includes('/content/uploads/')) {
     event.respondWith(
       caches.open(MEDIA_CACHE_NAME).then(mediaCache =>
         mediaCache.match(req).then(hit => {

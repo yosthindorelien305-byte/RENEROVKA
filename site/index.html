@@ -15,7 +15,7 @@
   });
 </script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#0F1218">
+<meta name="theme-color" content="#101010">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="RizzaFit">
@@ -24,26 +24,24 @@
 <link rel="canonical" href="https://rizzafit.ru/">
 <meta name="robots" content="index, follow">
 
-<meta property="og:type" content="website">
-<meta property="og:url" content="https://rizzafit.ru/">
-<meta property="og:title" content="RizzaFit — тренировки и программы упражнений">
-<meta property="og:description" content="Готовые программы тренировок, видеобаза упражнений, отслеживание прогресса и сообщество атлетов.">
-<meta property="og:image" content="https://rizzafit.ru/content/uploads/logo.png">
-<meta property="og:site_name" content="RizzaFit">
-<meta property="og:locale" content="ru_RU">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://rizzafit.ru/">
+  <meta property="og:title" content="RizzaFit — тренировки и программы упражнений">
+  <meta property="og:description"
+    content="Готовые программы тренировок, видеобаза упражнений, отслеживание прогресса и сообщество атлетов.">
+  <meta property="og:image" content="https://rizzafit.ru/content/uploads/logo.png">
+  <meta property="og:site_name" content="RizzaFit">
+  <meta property="og:locale" content="ru_RU">
 
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="RizzaFit — тренировки и программы упражнений">
-<meta name="twitter:description" content="Фитнес-платформа для тренировок дома и в зале.">
-<meta name="twitter:image" content="https://rizzafit.ru/content/uploads/logo.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="RizzaFit — тренировки и программы упражнений">
+  <meta name="twitter:description" content="Фитнес-платформа для тренировок дома и в зале.">
+  <meta name="twitter:image" content="https://rizzafit.ru/content/uploads/logo.png">
 
-<link rel="icon" href="img/logo.svg">
-<link rel="apple-touch-icon" href="img/logo.svg">
-<link rel="manifest" href="manifest.json">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<script type="application/ld+json">
+  <link rel="icon" href="img/logo.svg">
+  <link rel="apple-touch-icon" href="img/logo.svg">
+  <link rel="manifest" href="manifest.json">
+  <script type="application/ld+json">
 {
   "@context": "https://schema.org",
   "@graph": [
@@ -72,102 +70,150 @@
   ]
 }
 </script>
-<link rel="stylesheet" href="tokens.css?v=67">
-<link rel="stylesheet" href="ui-kit.css?v=67">
-<link rel="stylesheet" href="style.css?v=67">
+  <link rel="stylesheet" href="tokens.css?v=69">
+  <link rel="stylesheet" href="ui-kit.css?v=69">
+  <link rel="stylesheet" href="style.css?v=69">
 </head>
+
 <body class="mob-app">
-<header class="top">
-  <a class="brand" href="#/">
-    <span class="brand-crest"><img src="img/logo.svg" alt=""></span>
-    <span class="brand-txt"><span class="brand-name">RIZZAFI<em>T</em></span></span>
-  </a>
-  <div class="top-actions">
-    <a id="top-coach-btn" class="top-coach-btn" href="#/coach" aria-label="AI Coach" title="AI Coach">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"/>
-        <path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16z"/>
-      </svg>
-      <span class="top-coach-label">AI Coach</span>
+  <header class="top">
+    <a class="brand" href="#/">
+      <span class="brand-crest"><img src="img/logo.svg" alt=""></span>
+      <span class="brand-txt"><span class="brand-name">RIZZAFI<em>T</em></span></span>
     </a>
-    <button id="snd-btn" class="top-btn" aria-label="Звук" title="Звук">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.8 5.8a9 9 0 0 1 0 12.4"/></svg>
-    </button>
-    <button id="lang" class="lang" aria-label="Сменить язык" title="Сменить язык">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3.6 9h16.8M3.6 15h16.8M12 3a13.5 13.5 0 0 1 0 18M12 3a13.5 13.5 0 0 0 0 18"/></svg>
-      <span class="lang-code">RU</span>
-    </button>
-  </div>
-</header>
-<main id="app">
-  <section class="rf-seo-fallback" style="max-width:760px;margin:28px auto;padding:24px 20px;border-radius:18px;background:var(--card,#161B24);border:1px solid var(--card-border,rgba(255,255,255,.08))">
-    <h1 style="margin:0 0 10px;font-size:26px;line-height:1.2">RizzaFit — программы тренировок, база упражнений и AI-тренер</h1>
-    <p style="margin:0 0 16px;color:var(--tx-sub,#A9B1BD);font-size:15px;line-height:1.55">Персональная фитнес-платформа для тренировок дома и в зале: 15 готовых программ, более 1400 упражнений с анатомией целевых мышц, трекинг рекордов и AI Coach на базе Gemini.</p>
-    <nav aria-label="Разделы RizzaFit" style="display:flex;flex-wrap:wrap;gap:10px">
-      <a href="/programs.html" class="btn alt" style="display:inline-flex;align-items:center;padding:10px 14px;border-radius:10px;text-decoration:none;font-weight:700">Программы тренировок</a>
-      <a href="/exercises.html" class="btn alt" style="display:inline-flex;align-items:center;padding:10px 14px;border-radius:10px;text-decoration:none;font-weight:700">Каталог упражнений</a>
-      <a href="/ai-coach.html" class="btn alt" style="display:inline-flex;align-items:center;padding:10px 14px;border-radius:10px;text-decoration:none;font-weight:700">AI-тренер RizzaFit</a>
+    <nav class="top-nav" id="top-nav" aria-label="Основная навигация">
+      <a href="#/" data-k="home" data-i="home"><b>Главная</b></a>
+      <a href="#/workouts/programs" data-k="programs" data-i="programs"><b>Программы</b></a>
+      <a href="#/workouts" data-k="workouts" data-i="workouts"><b>Тренировки</b></a>
+      <a href="#/exercises" data-k="exercises" data-i="exercises"><b>Упражнения</b></a>
+      <a href="#/users" data-k="users" data-i="users" id="top-users-btn" class="top-nav-social hidden"><b>Пользователи</b></a>
+      <a href="#/messages" data-k="messages" data-i="messages" id="top-messages-btn" class="top-nav-social hidden"><b>Сообщения</b><span id="top-msg-badge" class="top-nav-badge hidden">0</span></a>
     </nav>
-  </section>
-</main>
-<nav id="nav">
-  <a href="#/" data-k="home" data-i="home">
-    <i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M3 10.5L12 3l9 7.5V20a1.5 1.5 0 0 1-1.5 1.5H4.5A1.5 1.5 0 0 1 3 20v-9.5z"/>
-      <path d="M9.5 21.5v-6.5h5v6.5"/>
-    </svg></i><b></b>
-  </a>
-  <a href="#/workouts" data-k="workouts" data-i="workouts">
-    <i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M4 18V6M20 18V6M7 16V8M17 16V8M7 12h10"/>
-    </svg></i><b></b>
-  </a>
-  <a href="#/exercises" data-k="exercises" data-i="exercises">
-    <i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-      <rect x="3" y="3" width="8" height="8" rx="2"/>
-      <rect x="13" y="3" width="8" height="8" rx="2"/>
-      <rect x="3" y="13" width="8" height="8" rx="2"/>
-      <rect x="13" y="13" width="8" height="8" rx="2"/>
-    </svg></i><b></b>
-  </a>
-  <a href="#/users" data-k="users" data-i="users" id="nav-users-btn" class="nav-social hidden">
-    <i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-      <circle cx="9" cy="7" r="4"/>
-      <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-      <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-    </svg></i><b></b>
-  </a>
-  <a href="#/messages" data-k="messages" data-i="messages" id="nav-messages-btn" class="nav-social hidden">
-    <i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
-    </svg></i><span id="nav-msg-badge" class="nav-badge hidden">0</span><b></b>
-  </a>
-  <a href="#/profile" data-k="history" data-i="history">
-    <i><span class="nav-user-av" id="nav-ath-av"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.5" r="3.5"/><path d="M5.5 19.5c1.4-3.1 3.8-4.5 6.5-4.5s5.1 1.4 6.5 4.5"/></svg></span></i><b></b>
-  </a>
-</nav>
-<div id="player" class="player hidden"></div>
-<script src="texts.js?v=67"></script>
-<script src="muscles.js?v=67"></script>
-<script src="athlete_profile.js?v=67"></script>
-<script src="analytics.js?v=67"></script>
-<script src="ui_components.js?v=67"></script>
-<script src="app.js?v=67"></script>
-<script>
-if ('serviceWorker' in navigator) {
-  let refreshing = false;
-  const hadController = !!navigator.serviceWorker.controller;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (hadController && !refreshing) {
-      refreshing = true;
-      window.location.reload();
+    <div class="top-actions">
+      <a id="top-coach-btn" class="top-coach-btn" href="#/coach" aria-label="AI Coach" title="AI Coach">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z" />
+          <path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16z" />
+        </svg>
+        <span class="top-coach-label">AI Coach</span>
+      </a>
+      <a id="top-profile-btn" class="top-profile-btn" href="#/profile" data-k="history" data-i="history" aria-label="Профиль" title="Профиль">
+        <span class="nav-user-av" id="top-ath-av"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="8.5" r="3.5" />
+            <path d="M5.5 19.5c1.4-3.1 3.8-4.5 6.5-4.5s5.1 1.4 6.5 4.5" />
+          </svg></span>
+        <b class="top-profile-label">Профиль</b>
+      </a>
+      <button id="snd-btn" class="top-btn" aria-label="Звук" title="Звук">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"
+          stroke-linejoin="round">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+          <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+          <path d="M18.8 5.8a9 9 0 0 1 0 12.4" />
+        </svg>
+      </button>
+      <button id="lang" class="lang" aria-label="Сменить язык" title="Сменить язык">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"
+          stroke-linejoin="round">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M3.6 9h16.8M3.6 15h16.8M12 3a13.5 13.5 0 0 1 0 18M12 3a13.5 13.5 0 0 0 0 18" />
+        </svg>
+        <span class="lang-code">RU</span>
+      </button>
+    </div>
+  </header>
+  <main id="app">
+    <section class="rf-seo-fallback"
+      style="max-width:760px;margin:28px auto;padding:24px 20px;border-radius:18px;background:var(--card,#212121);border:1px solid var(--card-border,rgba(255,255,255,.08))">
+      <h1 style="margin:0 0 10px;font-size:26px;line-height:1.2">RizzaFit — программы тренировок, база упражнений и
+        AI-тренер</h1>
+      <p style="margin:0 0 16px;color:var(--tx-sub,#CFCAC0);font-size:15px;line-height:1.55">Персональная
+        фитнес-платформа для тренировок дома и в зале: 15 готовых программ, более 1400 упражнений с анатомией целевых
+        мышц, трекинг рекордов и AI Coach на базе Gemini.</p>
+      <nav aria-label="Разделы RizzaFit" style="display:flex;flex-wrap:wrap;gap:10px">
+        <a href="/programs.html" class="btn alt"
+          style="display:inline-flex;align-items:center;padding:10px 14px;border-radius:10px;text-decoration:none;font-weight:700">Программы
+          тренировок</a>
+        <a href="/exercises.html" class="btn alt"
+          style="display:inline-flex;align-items:center;padding:10px 14px;border-radius:10px;text-decoration:none;font-weight:700">Каталог
+          упражнений</a>
+        <a href="/ai-coach.html" class="btn alt"
+          style="display:inline-flex;align-items:center;padding:10px 14px;border-radius:10px;text-decoration:none;font-weight:700">AI-тренер
+          RizzaFit</a>
+      </nav>
+    </section>
+  </main>
+  <nav id="nav">
+    <a href="#/" data-k="home" data-i="home">
+      <i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"
+          stroke-linejoin="round">
+          <path d="M3 10.5L12 3l9 7.5V20a1.5 1.5 0 0 1-1.5 1.5H4.5A1.5 1.5 0 0 1 3 20v-9.5z" />
+          <path d="M9.5 21.5v-6.5h5v6.5" />
+        </svg></i><b></b>
+    </a>
+    <a href="#/workouts" data-k="workouts" data-i="workouts">
+      <i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"
+          stroke-linejoin="round">
+          <path d="M4 18V6M20 18V6M7 16V8M17 16V8M7 12h10" />
+        </svg></i><b></b>
+    </a>
+    <a href="#/exercises" data-k="exercises" data-i="exercises">
+      <i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"
+          stroke-linejoin="round">
+          <rect x="3" y="3" width="8" height="8" rx="2" />
+          <rect x="13" y="3" width="8" height="8" rx="2" />
+          <rect x="3" y="13" width="8" height="8" rx="2" />
+          <rect x="13" y="13" width="8" height="8" rx="2" />
+        </svg></i><b></b>
+    </a>
+    <a href="#/users" data-k="users" data-i="users" id="nav-users-btn" class="nav-social hidden">
+      <i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"
+          stroke-linejoin="round">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+          <circle cx="9" cy="7" r="4" />
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+        </svg></i><b></b>
+    </a>
+    <a href="#/messages" data-k="messages" data-i="messages" id="nav-messages-btn" class="nav-social hidden">
+      <i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"
+          stroke-linejoin="round">
+          <path
+            d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+        </svg></i><span id="nav-msg-badge" class="nav-badge hidden">0</span><b></b>
+    </a>
+    <a href="#/profile" data-k="history" data-i="history">
+      <i><span class="nav-user-av" id="nav-ath-av"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="8.5" r="3.5" />
+            <path d="M5.5 19.5c1.4-3.1 3.8-4.5 6.5-4.5s5.1 1.4 6.5 4.5" />
+          </svg></span></i><b></b>
+    </a>
+  </nav>
+  <div id="player" class="player hidden"></div>
+  <script src="texts.js?v=69"></script>
+  <script src="muscles.js?v=69"></script>
+  <script src="athlete_profile.js?v=69"></script>
+  <script src="analytics.js?v=69"></script>
+  <script src="ui_components.js?v=69"></script>
+  <script src="app.js?v=69"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      let refreshing = false;
+      const hadController = !!navigator.serviceWorker.controller;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (hadController && !refreshing) {
+          refreshing = true;
+          window.location.reload();
+        }
+      });
+      navigator.serviceWorker.register('./sw.js').then(reg => {
+        reg.update().catch(() => { });
+      }).catch(() => { });
     }
-  });
-  navigator.serviceWorker.register('./sw.js').then(reg => {
-    reg.update().catch(() => {});
-  }).catch(() => {});
-}
-</script>
+  </script>
 </body>
+
 </html>
